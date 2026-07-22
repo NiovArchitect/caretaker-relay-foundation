@@ -20,7 +20,8 @@ Post-crash inventory found this repo already committed and pushed on `checkpoint
 | Relation | Forked/working copy used for Caretaker Relay care runtime |
 | Original `niov-foundation` | **Unmodified** by this campaign; do not push Caretaker work onto it by default |
 | Checkpoint branch | `checkpoint/caretaker-relay-track1-2026-07-22` |
-| Checkpoint SHA | `fed2f594f7a39c02961d3ecdbe8f60d26363c255` |
+| Product checkpoint SHA | `fed2f594f7a39c02961d3ecdbe8f60d26363c255` |
+| Recovery tip SHA | `434cd4ff8292f50199062047298387ec85bfeafc` (docs verification) |
 | Remote origin | GitHub private `NiovArchitect/caretaker-relay-foundation` |
 | Remote branch | `origin/checkpoint/caretaker-relay-track1-2026-07-22` |
 | Push verified | **YES** (local HEAD == remote SHA after fetch) |
