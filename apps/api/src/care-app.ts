@@ -103,7 +103,7 @@ export async function startCareApiServer(
 
 if (process.argv[1]?.includes("care-app")) {
   startCareApiServer().catch((err) => {
-    console.error(err);
+    logger.error({ err }, "Failed to start Caretaker Relay care API");
     process.exit(1);
   });
 }

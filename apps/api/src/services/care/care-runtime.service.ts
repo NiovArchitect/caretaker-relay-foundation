@@ -197,7 +197,10 @@ export class CareRuntimeService {
             c.roles,
           );
         } else {
-          console.warn("[care] seed principal failed", c.email, err);
+          logger.warn(
+            { err, email: c.email },
+            "[care] seed principal failed",
+          );
         }
       }
     }
