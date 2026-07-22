@@ -1,8 +1,8 @@
 {
-  "name": "niov-foundation",
-  "version": "0.0.1",
+  "name": "caretaker-relay-foundation",
+  "version": "0.1.0",
   "private": true,
-  "description": "NIOV Labs Foundation -- Internet of Value protocol platform",
+  "description": "Caretaker Relay Foundation — care coordination substrate forked from niov-foundation for the ACL Caregiver AI Challenge. Independent of Otzar.",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -15,6 +15,9 @@
     "test:integration": "vitest --config vitest.integration.config.ts --run",
     "test:real-llm": "vitest --config vitest.real-llm.config.ts --run",
     "test:no-leak": "vitest run tests/unit/no-leak-guard.test.ts",
+    "test:isolation": "vitest run tests/unit/isolation/product-isolation.test.ts",
+    "test:care": "vitest --config vitest.unit.config.ts --run tests/unit/care/",
+    "care:api": "npm --workspace @niov/api run care:start",
     "test:all": "npm run test:unit && npm run test:integration",
     "test:db-push-wrapper": "bash scripts/test-db-push-wrapper.sh",
     "db:test:up": "bash scripts/test-db-up.sh",

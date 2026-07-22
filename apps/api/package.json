@@ -14,9 +14,13 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts"
+    "start": "tsx src/server.ts",
+    "care:dev": "tsx watch src/care-app.ts",
+    "care:start": "tsx src/care-app.ts"
   },
   "dependencies": {
+    "@caretaker-relay/care-domain": "*",
+    "@caretaker-relay/product-identity": "*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.0.2",

@@ -179,6 +179,8 @@ import { Avp2AccessService } from "./services/foundation/avp2-access.service.js"
 import { registerSystemRuntimeRoutes } from "./routes/system-runtime.routes.js";
 import { registerWorkOsLedgerRoutes } from "./routes/work-os-ledger.routes.js";
 import { registerAdminLlmStatusRoutes } from "./routes/admin-llm-status.routes.js";
+import { registerCareRoutes } from "./routes/care.routes.js";
+import { CareRuntimeService } from "./services/care/care-runtime.service.js";
 import { registerAuthRoutes } from "./routes/auth.routes.js";
 import { registerInboundSignalRoutes } from "./routes/inbound-signal.routes.js";
 import { registerCosmpRoutes } from "./routes/cosmp.routes.js";
@@ -917,6 +919,28 @@ export async function buildApp(
   await registerSystemRuntimeRoutes(app, authService);
   await registerWorkOsLedgerRoutes(app, authService);
   await registerAdminLlmStatusRoutes(app, authService);
+
+  // Caretaker Relay care boundary — same routes as buildCareApp().
+  // Prefer Prisma when DATABASE_URL is set; FileCareStore when CARE_STORE_PATH set.
+  const careRuntime = await CareRuntimeService.create({
+    jwtSecret,
+    storeBackend: process.env.CARE_STORE_BACKEND as
+      | "memory"
+      | "file"
+      | "prisma"
+      | undefined,
+    storePath: process.env.CARE_STORE_PATH
+      ? CareRuntimeService.defaultStorePath()
+      : undefined,
+    seedOlivia: true,
+    seedFoundationAuth: process.env.CARE_SEED_FOUNDATION_AUTH !== "0",
+    understandMode:
+      process.env.CARE_UNDERSTAND_MODE === "llm" ? "llm" : "fixture",
+    llmProvider: otzarLLM,
+  });
+  await registerCareRoutes(app, careRuntime);
+  (app as unknown as { careRuntime?: CareRuntimeService }).careRuntime =
+    careRuntime;
 
   // Idempotent seed on every boot so a fresh DB has the seven
   // spec frameworks ready before the first request lands.

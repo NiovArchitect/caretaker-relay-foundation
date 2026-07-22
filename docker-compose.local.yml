@@ -1,42 +1,32 @@
-# Local-development docker compose.
+# Local-development docker compose — Caretaker Relay Foundation
 #
-# Brings up the full Foundation + Otzar stack on a single host:
-#   - postgres (16 + pgvector)
-#   - foundation-api (Fastify + Prisma)
-#   - python-intelligence (FastAPI ranker + forecaster)
-#   - collaboration-supervisor (BEAM Elixir/OTP)
-#
-# Control Tower runs separately via Vite (`npm run dev`) and points at
-# the Foundation API at http://localhost:3000.
+# Isolated from Otzar / niov-foundation local stacks:
+#   - postgres on 5434 (not 5433)
+#   - database caretaker_relay_dev
+#   - containers prefixed cr-local-*
+#   - API on 3100 (not 3000)
 #
 # Boot:
 #   docker compose -f docker-compose.local.yml up --build -d
-#   npm run db:push:test    # apply Prisma schema to the compose Postgres
-#   npx tsx scripts/apply-audit-triggers.ts
 #
 # Tear down:
 #   docker compose -f docker-compose.local.yml down -v
-#
-# Customer connector keys do NOT live in this file. Per the
-# three-tier credential separation in docs/deployment/cloud-portability.md,
-# only NIOV PLATFORM secrets (JWT_SECRET / ENCRYPTION_KEY / DATABASE_URL)
-# appear here.
 
 services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg16-trixie
-    container_name: niov-local-pg
+    container_name: cr-local-pg
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "5434:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: foundation_test
+      POSTGRES_USER: caretaker
+      POSTGRES_PASSWORD: caretaker_local_only
+      POSTGRES_DB: caretaker_relay_dev
     volumes:
-      - niov_local_pg:/var/lib/postgresql/data
+      - cr_local_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d foundation_test"]
+      test: ["CMD-SHELL", "pg_isready -U caretaker -d caretaker_relay_dev"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -46,7 +36,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: niov-local-foundation-api
+    container_name: cr-local-foundation-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -56,28 +46,28 @@ services:
       collaboration-supervisor:
         condition: service_started
     ports:
-      - "3000:3000"
+      - "3100:3100"
     environment:
-      # Foundation platform secrets — these are the LOCAL-DEV-ONLY values.
-      # Do NOT use these strings in any deployed environment. Production
-      # values must come from Azure Key Vault / AWS Secrets Manager per
-      # docs/deployment/cloud-portability.md §2.1.
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/foundation_test
-      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/foundation_test
-      JWT_SECRET: local-dev-jwt-secret-not-for-production-use
-      ENCRYPTION_KEY: local-dev-encryption-key-32-bytes!
-      CORS_ORIGIN: http://localhost:5173
-      PUBLIC_APP_URL: http://localhost:3000
-      CONTROL_TOWER_URL: http://localhost:5173
+      PRODUCT_ID: caretaker-relay
+      PRODUCT_NAMESPACE: cr
+      PORT: "3100"
+      DATABASE_URL: postgresql://caretaker:caretaker_local_only@postgres:5432/caretaker_relay_dev
+      DIRECT_URL: postgresql://caretaker:caretaker_local_only@postgres:5432/caretaker_relay_dev
+      JWT_SECRET: cr-local-dev-jwt-secret-not-for-production
+      ENCRYPTION_KEY: cr-local-dev-encryption-key-32b!
+      ENCRYPTION_NAMESPACE: caretaker-relay
+      REDIS_KEY_PREFIX: "cr:"
+      CORS_ORIGIN: http://localhost:5180
+      PUBLIC_APP_URL: http://localhost:3100
+      CARETAKER_APP_URL: http://localhost:5180
       LOG_LEVEL: info
       AUDIT_LOG_LEVEL: info
+      AUDIT_PRODUCT_TAG: caretaker-relay
       METRICS_ENABLED: "false"
       CONNECTOR_WRITE_ENABLED: "false"
       PAYMENT_RAILS_ENABLED: "false"
       LIVE_MIC_CAPTURE_ENABLED: "false"
       RAW_AUDIO_RETENTION_ENABLED: "false"
-      # Internal runtime wiring — these point at sibling services on the
-      # compose network.
       PYTHON_INTELLIGENCE_RUNTIME_URL: http://python-intelligence:8000
       PYTHON_RUNTIME_ENABLED: "true"
       BEAM_RUNTIME_URL: http://collaboration-supervisor:4001
@@ -86,10 +76,10 @@ services:
   python-intelligence:
     build:
       context: ./services/python-intelligence
-    container_name: niov-local-python-intelligence
+    container_name: cr-local-python-intelligence
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8100:8000"
     healthcheck:
       test:
         - CMD
@@ -105,12 +95,13 @@ services:
     build:
       context: .
       dockerfile: apps/collaboration_supervisor/Dockerfile
-    container_name: niov-local-collaboration-supervisor
+    container_name: cr-local-collaboration-supervisor
     restart: unless-stopped
     ports:
-      - "4001:4001"
+      - "4101:4001"
     environment:
       COLLAB_SUPERVISOR_PORT: "4001"
+      PRODUCT_ID: caretaker-relay
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:4001/health || exit 1"]
       interval: 30s
@@ -119,5 +110,5 @@ services:
       start_period: 15s
 
 volumes:
-  niov_local_pg:
-    name: niov-local-pg-data
+  cr_local_pg:
+    name: cr-local-pg-data

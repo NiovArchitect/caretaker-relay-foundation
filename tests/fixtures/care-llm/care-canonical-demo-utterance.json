@@ -1,0 +1,49 @@
+{
+  "fixtureKey": "care-canonical-demo-utterance",
+  "fixtureVersion": "1.0.0",
+  "promptSchemaVersion": "care-extract-v1",
+  "recordedAt": "2026-07-22T00:00:00.000Z",
+  "provider": "care-scripted-fixture",
+  "model": "fixture-script",
+  "evidenceClass": "RECORDED_FIXTURE",
+  "note": "Recorded structured extraction for CI. Not live provider traffic.",
+  "input": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.",
+  "response": {
+    "candidates": [
+      {
+        "eventType": "meal",
+        "statement": "Meal around noon",
+        "confidence": 0.9,
+        "epistemicStatus": "REPORTED",
+        "timeLabel": "around noon"
+      },
+      {
+        "eventType": "observation",
+        "statement": "Caregiver reported: seemed more tired than usual",
+        "confidence": 0.75,
+        "epistemicStatus": "REPORTED"
+      },
+      {
+        "eventType": "appointment_change",
+        "statement": "PT moved to Thursday at 2:30 PM",
+        "confidence": 0.88,
+        "epistemicStatus": "REPORTED",
+        "timeLabel": "2:30 PM",
+        "dateLabel": "Thursday"
+      },
+      {
+        "eventType": "medication_administration",
+        "statement": "Lunch medication marked as given (as scheduled)",
+        "confidence": 0.85,
+        "epistemicStatus": "REPORTED"
+      },
+      {
+        "eventType": "communication_request",
+        "statement": "Update ready for Maya",
+        "confidence": 0.9,
+        "intendedRecipientName": "Maya"
+      }
+    ],
+    "uncertainties": []
+  }
+}

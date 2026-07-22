@@ -1,0 +1,9 @@
+{
+  "evidenceClass": "LIVE_MODEL_TEST",
+  "status": "BLOCKED",
+  "reason": "No ANTHROPIC_API_KEY or OPENAI_API_KEY in process env or known local env files",
+  "timestamp": "2026-07-22T15:44:42Z",
+  "path_attempted": "Foundation getLLMProvider() / mode=llm understandCareInput",
+  "canonical_input": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.",
+  "note": "No secrets. Recorded fixtures remain the CI path."
+}

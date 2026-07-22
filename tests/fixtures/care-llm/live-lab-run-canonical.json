@@ -1,0 +1,31 @@
+{
+  "evidenceClass": "LIVE_MODEL_LAB_RUN",
+  "note": "Provider interface exercised with scripted response (no API key).",
+  "provider": "care-scripted-fixture",
+  "model": "fixture-script",
+  "timestamp": "2026-07-22T15:57:28.996Z",
+  "promptSchemaVersion": "care-extract-v1",
+  "candidateCount": 5,
+  "epistemicSample": [
+    {
+      "type": "meal",
+      "epistemic": "REPORTED"
+    },
+    {
+      "type": "observation",
+      "epistemic": "REPORTED"
+    },
+    {
+      "type": "appointment_change",
+      "epistemic": "REPORTED"
+    },
+    {
+      "type": "medication_administration",
+      "epistemic": "REPORTED"
+    },
+    {
+      "type": "communication_request",
+      "epistemic": "REPORTED"
+    }
+  ]
+}

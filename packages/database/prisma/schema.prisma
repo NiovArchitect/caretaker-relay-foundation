@@ -4956,3 +4956,314 @@ model AuthSetupToken {
   @@index([org_entity_id])
   @@map("auth_setup_tokens")
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Caretaker Relay care domain (product-isolated tables)
+// Maps caregiver concepts without renaming Otzar Work OS nouns.
+// product_id always "caretaker-relay". Never share with Otzar tenants.
+// ─────────────────────────────────────────────────────────────────
+
+model CarePrincipalLink {
+  id              String   @id @default(uuid()) @db.Uuid
+  entity_id       String   @unique @db.Uuid
+  care_person_id  String   @unique
+  display_name    String
+  roles           String[] @default([])
+  product_id      String   @default("caretaker-relay")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([product_id])
+  @@map("cr_care_principal_links")
+}
+
+model CareHousehold {
+  id         String   @id
+  name       String
+  product_id String   @default("caretaker-relay")
+  created_at DateTime @default(now())
+
+  recipients CareRecipientRow[]
+
+  @@map("cr_care_households")
+}
+
+model CareRecipientRow {
+  id           String   @id
+  household_id String
+  display_name String
+  preferred_name String?
+  time_zone    String   @default("America/New_York")
+  product_id   String   @default("caretaker-relay")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  household CareHousehold @relation(fields: [household_id], references: [id], onDelete: Cascade)
+
+  @@index([household_id])
+  @@index([product_id])
+  @@map("cr_care_recipients")
+}
+
+model CarePersonRow {
+  id           String   @id
+  display_name String
+  kind         String
+  product_id   String   @default("caretaker-relay")
+  created_at   DateTime @default(now())
+
+  @@map("cr_care_people")
+}
+
+model CareRelationshipRow {
+  id                 String   @id
+  care_recipient_id  String
+  person_id          String
+  role               String
+  role_label         String
+  responsibilities   Json     @default("[]")
+  access             Json
+  status             String   @default("active")
+  start_date         String?
+  end_date           String?
+  contact_preference String?
+  schedule_notes     String?
+  product_id         String   @default("caretaker-relay")
+  updated_at         DateTime @updatedAt
+
+  @@unique([care_recipient_id, person_id])
+  @@index([care_recipient_id])
+  @@index([person_id])
+  @@map("cr_care_relationships")
+}
+
+model CareConsentRow {
+  id                 String   @id
+  care_recipient_id  String
+  grantee_person_id  String
+  scope              Json
+  status             String
+  granted_at         String
+  revoked_at         String?
+  product_id         String   @default("caretaker-relay")
+  updated_at         DateTime @updatedAt
+
+  @@unique([care_recipient_id, grantee_person_id])
+  @@map("cr_care_consents")
+}
+
+model CareEventRow {
+  id                    String   @id
+  care_recipient_id     String
+  household_id          String
+  type                  String
+  title                 String
+  statement             String
+  occurred_at           String
+  notes                 String?
+  epistemic_status      String
+  safety_class          String
+  source                Json
+  confidence            Float?
+  intended_recipient_person_id String?
+  superseded_by_id      String?
+  evidence_mode         String
+  product_id            String   @default("caretaker-relay")
+  created_at            DateTime @default(now())
+
+  @@index([care_recipient_id, occurred_at])
+  @@index([household_id])
+  @@map("cr_care_events")
+}
+
+model CareObservationRow {
+  id                String   @id
+  care_recipient_id String
+  summary           String
+  observed_at       String
+  tags              String[] @default([])
+  epistemic_status  String
+  source            Json
+  product_id        String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@map("cr_care_observations")
+}
+
+model CareAppointmentRow {
+  id                String   @id
+  care_recipient_id String
+  title             String
+  starts_at         String
+  starts_at_label   String?
+  ends_at           String?
+  location          String?
+  status            String
+  epistemic_status  String
+  source            Json?
+  time_zone         String?
+  original_phrase   String?
+  product_id        String   @default("caretaker-relay")
+  updated_at        DateTime @updatedAt
+
+  @@index([care_recipient_id])
+  @@map("cr_care_appointments")
+}
+
+model CareTaskRow {
+  id                   String   @id
+  care_recipient_id    String
+  title                String
+  due_at               String?
+  status               String
+  assignee_person_id   String?
+  safety_class         String
+  epistemic_status     String
+  source               Json?
+  product_id           String   @default("caretaker-relay")
+  updated_at           DateTime @updatedAt
+
+  @@index([care_recipient_id])
+  @@map("cr_care_tasks")
+}
+
+model CareMedScheduleRow {
+  id                String   @id
+  care_recipient_id String
+  name              String
+  dose              String
+  schedule_label    String
+  authorized_by     String
+  authorized_at     String
+  source            Json
+  product_id        String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@map("cr_care_med_schedules")
+}
+
+model CareMedAdminRow {
+  id                       String   @id
+  care_recipient_id        String
+  schedule_id              String?
+  name                     String
+  dose_recorded            String
+  administered_at          String
+  administered_by_person_id String
+  status                   String
+  discrepancy              Json?
+  epistemic_status         String
+  source                   Json
+  content_hash             String?
+  product_id               String   @default("caretaker-relay")
+  created_at               DateTime @default(now())
+
+  @@index([care_recipient_id])
+  @@index([content_hash])
+  @@map("cr_care_med_admins")
+}
+
+model CareHandoffRow {
+  id                String   @id
+  care_recipient_id String
+  from_person_id    String?
+  to_person_id      String?
+  what_changed      Json
+  still_needs       Json
+  watch             Json
+  sources           Json
+  created_at        String
+  evidence_mode     String
+  content_hash      String?
+  product_id        String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@index([content_hash])
+  @@map("cr_care_handoffs")
+}
+
+model CareUpdateRow {
+  id                String   @id
+  care_recipient_id String
+  to_person_id      String
+  summary           String
+  status            String
+  safety_class      String
+  source            Json
+  content_hash      String?
+  product_id        String   @default("caretaker-relay")
+  created_at        DateTime @default(now())
+
+  @@index([care_recipient_id])
+  @@index([content_hash])
+  @@map("cr_care_updates")
+}
+
+model CareCorrectionRow {
+  id                      String   @id
+  care_recipient_id       String
+  target_event_id         String
+  previous_value          String
+  corrected_value         String
+  corrected_by_person_id  String
+  corrected_at            String
+  preserved_evidence_ids  Json
+  source                  Json
+  product_id              String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@map("cr_care_corrections")
+}
+
+model CareSafetyReviewRow {
+  id                String   @id
+  care_recipient_id String
+  safety_class      String
+  reason            String
+  status            String
+  created_at        String
+  target_ids        Json
+  product_id        String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@map("cr_care_safety_reviews")
+}
+
+model CarePreferenceRow {
+  person_id                  String   @id
+  summary_length             String
+  reminder_timing_minutes    Int
+  language                   String
+  accessibility              Json
+  handoff_format             String
+  communication_preference   String
+  provenance                 Json
+  product_id                 String   @default("caretaker-relay")
+  updated_at                 DateTime @updatedAt
+
+  @@map("cr_care_preferences")
+}
+
+model CareAuditRow {
+  id                String   @id @default(uuid())
+  at                String
+  actor_person_id   String
+  action            String
+  care_recipient_id String?
+  household_id      String?
+  details           Json
+  product_id        String   @default("caretaker-relay")
+
+  @@index([care_recipient_id])
+  @@index([household_id])
+  @@map("cr_care_audits")
+}
+
+model CareIdempotencyRow {
+  key        String   @id
+  body       Json
+  at         String
+  product_id String   @default("caretaker-relay")
+
+  @@map("cr_care_idempotency")
+}
