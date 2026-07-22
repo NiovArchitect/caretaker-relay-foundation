@@ -1,0 +1,123 @@
+{
+  "ok": true,
+  "kind": "verify",
+  "verification_bundle_id": "vb-s655swz6-mrwbtq8p",
+  "bundle": {
+    "title": "I got this",
+    "items": [
+      {
+        "id": "v-cand-1-mrwbtq8o",
+        "candidateId": "cand-1-mrwbtq8o",
+        "label": "Meal recorded",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "low",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": false
+      },
+      {
+        "id": "v-cand-2-mrwbtq8o",
+        "candidateId": "cand-2-mrwbtq8o",
+        "label": "Lunch medication marked as given (5 mg)",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "high",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true,
+        "discrepancy": {
+          "recordedDose": "5 mg",
+          "authorizedDose": "2.5 mg",
+          "authorizedSourceLabel": "Dr. Shah · 2026-07-18",
+          "message": "Recorded dose does not match the authorized care instruction. Relay will not choose."
+        }
+      }
+    ],
+    "understood": {
+      "candidates": [
+        {
+          "id": "cand-1-mrwbtq8o",
+          "eventType": "meal",
+          "statement": "Meal recorded",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.7,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "low",
+          "sourceReference": {
+            "id": "src-61ca8179-5997-45ff-897d-7e04f94bd3c9-mrwbtq8o",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:58:33.624Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "I gave the lunch medication 5 mg."
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-2-mrwbtq8o",
+          "eventType": "medication_administration",
+          "statement": "Lunch medication marked as given (5 mg)",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "timeLabel": "lunch",
+          "confidence": 0.85,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "high",
+          "recordedDose": "5 mg",
+          "sourceReference": {
+            "id": "src-61ca8179-5997-45ff-897d-7e04f94bd3c9-mrwbtq8o",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:58:33.624Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "I gave the lunch medication 5 mg."
+          },
+          "actionable": false
+        }
+      ],
+      "meals": [
+        "Meal recorded"
+      ],
+      "observations": [],
+      "appointmentChanges": [],
+      "medicationEvents": [
+        "Lunch medication marked as given (5 mg)"
+      ],
+      "communicationRequests": [],
+      "tasks": [],
+      "uncertainties": [],
+      "rawText": "I gave the lunch medication 5 mg.",
+      "careRecipientId": "cr-olivia",
+      "careRecipientName": "Olivia",
+      "evidenceMode": "FIXTURE"
+    },
+    "evidenceMode": "FIXTURE"
+  },
+  "evidence_mode": "FIXTURE",
+  "temporal_policy": {
+    "originalExpression": "I gave the lunch medication 5 mg.",
+    "status": "AMBIGUOUS",
+    "timeZoneUsed": "America/New_York",
+    "notes": [
+      "Time-of-day without full date context",
+      "Would use care-recipient TZ America/New_York if confirmed"
+    ]
+  },
+  "timezone_policy": [
+    "Machine storage is always UTC ISO when resolved.",
+    "Human expressions are preserved until caregiver confirms.",
+    "Cross-zone: show both caregiver and care-recipient local labels.",
+    "DST: use IANA zones via runtime Intl; never fixed UTC-5 assumptions for display.",
+    "Appointment provider timezone may differ from household."
+  ],
+  "transcript_meta": null,
+  "auth_mode": "foundation_auth_service",
+  "correlation_id": "56d1beb5-f9cf-4f82-8e19-daebcf61ee18",
+  "note": "Candidates only. Confirm via POST /api/v1/care/confirm before durable truth."
+}

@@ -157,21 +157,27 @@ export function seedOliviaScenario(store: CareStore): void {
     status: "active",
   });
 
-  store.upsertRelationship({
-    id: "rel-maya",
-    careRecipientId: careRecipient.id,
-    personId: people.maya.id,
-    role: "adult_child",
-    roleLabel: "Daughter",
-    responsibilities: ["Visits", "Updates"],
-    access: {
-      informationCategories: ["Daily updates", "Appointments", "Care plan"],
-      allowedActions: ["receive_updates", "view_plan", "view_appointments"],
-      canEscalate: true,
-      authorityLimits: ["Cannot change medication schedule"],
-    },
-    status: "active",
-  });
+  // Relationships: seed only if missing — do not revive revoked access via relationship overwrite.
+  const mayaRel = store
+    .getRelationships(careRecipient.id)
+    .find((r) => r.personId === people.maya.id);
+  if (!mayaRel) {
+    store.upsertRelationship({
+      id: "rel-maya",
+      careRecipientId: careRecipient.id,
+      personId: people.maya.id,
+      role: "adult_child",
+      roleLabel: "Daughter",
+      responsibilities: ["Visits", "Updates"],
+      access: {
+        informationCategories: ["Daily updates", "Appointments", "Care plan"],
+        allowedActions: ["receive_updates", "view_plan", "view_appointments"],
+        canEscalate: true,
+        authorityLimits: ["Cannot change medication schedule"],
+      },
+      status: "active",
+    });
+  }
 
   store.upsertRelationship({
     id: "rel-walter",
@@ -213,31 +219,42 @@ export function seedOliviaScenario(store: CareStore): void {
     status: "active",
   });
 
-  store.upsertConsent({
-    id: "consent-maya",
-    careRecipientId: careRecipient.id,
-    granteePersonId: people.maya.id,
-    scope: {
-      informationCategories: ["Daily updates", "Appointments", "Care plan"],
-      allowedActions: ["receive_updates", "view_plan"],
-      canEscalate: true,
-      authorityLimits: [],
-    },
-    status: "active",
-    grantedAt: "2026-07-01T00:00:00Z",
-  });
+  // Do NOT re-activate revoked consent on every seed (restart continuity).
+  const existingMayaConsent = store.getConsent(
+    careRecipient.id,
+    people.maya.id,
+  );
+  if (!existingMayaConsent) {
+    store.upsertConsent({
+      id: "consent-maya",
+      careRecipientId: careRecipient.id,
+      granteePersonId: people.maya.id,
+      scope: {
+        informationCategories: ["Daily updates", "Appointments", "Care plan"],
+        allowedActions: ["receive_updates", "view_plan"],
+        canEscalate: true,
+        authorityLimits: [],
+      },
+      status: "active",
+      grantedAt: "2026-07-01T00:00:00Z",
+    });
+  }
+  // If consent exists (including revoked), leave authority state intact.
 
   store.upsertMedSchedule(medicationSchedule);
 
-  store.upsertAppointment({
-    id: "apt-pt",
-    careRecipientId: careRecipient.id,
-    title: "Physical therapy",
-    startsAt: "2026-07-24T14:00:00Z",
-    startsAtLabel: "Thursday (prior time)",
-    status: "scheduled",
-    epistemicStatus: "CONFIRMED",
-  });
+  // Do NOT overwrite appointments if care activity already exists (restart continuity).
+  if (store.getAppointments(careRecipient.id).length === 0) {
+    store.upsertAppointment({
+      id: "apt-pt",
+      careRecipientId: careRecipient.id,
+      title: "Physical therapy",
+      startsAt: "2026-07-24T14:00:00Z",
+      startsAtLabel: "Thursday (prior time)",
+      status: "scheduled",
+      epistemicStatus: "CONFIRMED",
+    });
+  }
 
   store.writeAudit({
     at: new Date().toISOString(),

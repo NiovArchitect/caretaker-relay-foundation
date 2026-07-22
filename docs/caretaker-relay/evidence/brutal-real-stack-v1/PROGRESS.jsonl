@@ -1,0 +1,26 @@
+{"t":"2026-07-22T19:33:19.785Z","msg":"beforeAll: buildCareApp (single)"}
+{"t":"2026-07-22T19:33:22.283Z","msg":"beforeAll: buildCareApp done 2497ms"}
+{"t":"2026-07-22T19:33:29.305Z","msg":"RESET Maya ACTIVE (suite baseline)"}
+{"t":"2026-07-22T19:33:32.549Z","msg":"BEGIN block 019-038 medication"}
+{"t":"2026-07-22T19:33:33.975Z","msg":"CR-STRESS-019 PASS 1427ms | completed admin path exists"}
+{"t":"2026-07-22T19:33:35.402Z","msg":"CR-STRESS-020 PASS 1427ms | negation → admin"}
+{"t":"2026-07-22T19:33:36.900Z","msg":"CR-STRESS-021 PASS 1497ms | future intent → completed admin"}
+{"t":"2026-07-22T19:33:38.367Z","msg":"CR-STRESS-022 PASS 1466ms | uncertain → authoritative admin"}
+{"t":"2026-07-22T19:33:39.800Z","msg":"CR-STRESS-023 PASS 1433ms | may-have → admin"}
+{"t":"2026-07-22T19:33:41.316Z","msg":"CR-STRESS-024 PASS 1515ms | third-party claim collapsed"}
+{"t":"2026-07-22T19:33:42.758Z","msg":"CR-STRESS-025 PASS 1442ms | forgot → false certainty"}
+{"t":"2026-07-22T19:33:44.178Z","msg":"CR-STRESS-026 PASS 1420ms | maybe → admin"}
+{"t":"2026-07-22T19:33:45.602Z","msg":"CR-STRESS-027 PASS 1423ms | definite negation → admin"}
+{"t":"2026-07-22T19:33:47.052Z","msg":"CR-STRESS-028 PASS 1449ms | wrong dose silent accept"}
+{"t":"2026-07-22T19:33:48.498Z","msg":"CR-STRESS-029 PASS 1446ms | missing dose as scheduled risk"}
+{"t":"2026-07-22T19:33:49.937Z","msg":"CR-STRESS-030 PASS 1438ms | wrong units 2.5 g vs 2.5 mg (1000×)"}
+{"t":"2026-07-22T19:33:51.426Z","msg":"CR-STRESS-031 PASS 1489ms | fabricated dose change"}
+{"t":"2026-07-22T19:33:52.941Z","msg":"CR-STRESS-032 PASS 1514ms | protocol injection med state"}
+{"t":"2026-07-22T19:33:54.438Z","msg":"CR-STRESS-033 PASS 1497ms | prompt injection med"}
+{"t":"2026-07-22T19:34:03.439Z","msg":"CR-STRESS-034 PASS 8999ms | Duplicate logical MAR via different idempotency keys"}
+{"t":"2026-07-22T19:34:07.968Z","msg":"CR-STRESS-035 PASS 4528ms | Same key not replayed"}
+{"t":"2026-07-22T19:34:14.031Z","msg":"CR-STRESS-036 PASS 6063ms | Same idempotency key with different payload overwrites"}
+{"t":"2026-07-22T19:34:18.578Z","msg":"CR-STRESS-037 PASS 4547ms | Dose conflict auto-finalized as recorded"}
+{"t":"2026-07-22T19:34:22.130Z","msg":"CR-STRESS-038 PASS 3552ms | Malformed/noisy inputs crash or invent"}
+{"t":"2026-07-22T19:34:22.136Z","msg":"RESET Maya ACTIVE (afterAll cleanup)"}
+{"t":"2026-07-22T19:34:25.764Z","msg":"afterAll complete"}

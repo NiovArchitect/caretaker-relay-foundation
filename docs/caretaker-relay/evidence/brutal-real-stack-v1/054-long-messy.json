@@ -1,0 +1,186 @@
+{
+  "ok": true,
+  "kind": "verify",
+  "verification_bundle_id": "vb-cu9l9y79-mrwgtqeu",
+  "bundle": {
+    "title": "I got this",
+    "items": [
+      {
+        "id": "v-cand-1-mrwgtqeu",
+        "candidateId": "cand-1-mrwgtqeu",
+        "label": "Meal around noon",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "low",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": false
+      },
+      {
+        "id": "v-cand-2-mrwgtqeu",
+        "candidateId": "cand-2-mrwgtqeu",
+        "label": "Caregiver reported: seemed more tired than usual",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-3-mrwgtqeu",
+        "candidateId": "cand-3-mrwgtqeu",
+        "label": "Appointment time changed",
+        "detail": "Status: UNCERTAIN (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "UNCERTAIN",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-4-mrwgtqeu",
+        "candidateId": "cand-4-mrwgtqeu",
+        "label": "Uncertain medication report (e.g. thinks someone may have given it) — not confirmed administration",
+        "detail": "Status: UNCERTAIN (not confirmed care truth yet)",
+        "safetyClass": "high",
+        "epistemicStatus": "UNCERTAIN",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-5-mrwgtqeu",
+        "candidateId": "cand-5-mrwgtqeu",
+        "label": "Update ready for Maya",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-6-mrwgtqeu",
+        "candidateId": "cand-6-mrwgtqeu",
+        "label": "Confirm transportation",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-unc-7",
+        "candidateId": "uncertainty",
+        "label": "New appointment time not fully clear",
+        "safetyClass": "low",
+        "epistemicStatus": "UNCERTAIN",
+        "requiresConfirmation": false
+      },
+      {
+        "id": "v-unc-8",
+        "candidateId": "uncertainty",
+        "label": "Uncertain medication attribution — do not record as given without verification",
+        "safetyClass": "low",
+        "epistemicStatus": "UNCERTAIN",
+        "requiresConfirmation": false
+      }
+    ],
+    "understood": {
+      "candidates": [
+        {
+          "id": "cand-1-mrwgtqeu",
+          "eventType": "meal",
+          "statement": "Meal around noon",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "timeLabel": "around noon",
+          "confidence": 0.9,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "low",
+          "sourceReference": {
+            "id": "src-f0f268c4-c133-4bbd-8bdc-0bc31cc66aa5-mrwgtqet",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T19:18:31.925Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "So um I got there around noon-ish and Olivia she actually did eat a little soup maybe half a bowl and then she seemed more tired than usual like she wanted to nap and PT called and said Thursday is moving wait no maybe Friday? no they said Thursday at like two thirty or was it th"
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-2-mrwgtqeu",
+          "eventType": "observation",
+          "statement": "Caregiver reported: seemed more tired than usual",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.75,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "moderate",
+          "sourceReference": {
+            "id": "src-f0f268c4-c133-4bbd-8bdc-0bc31cc66aa5-mrwgtqet",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T19:18:31.925Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "So um I got there around noon-ish and Olivia she actually did eat a little soup maybe half a bowl and then she seemed more tired than usual like she wanted to nap and PT called and said Thursday is moving wait no maybe Friday? no they said Thursday at like two thirty or was it th"
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-3-mrwgtqeu",
+          "eventType": "appointment_change",
+          "statement": "Appointment time changed",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.5,
+          "epistemicStatus": "UNCERTAIN",
+          "consequentiality": "moderate",
+          "sourceReference": {
+            "id": "src-f0f268c4-c133-4bbd-8bdc-0bc31cc66aa5-mrwgtqet",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T19:18:31.925Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "So um I got there around noon-ish and Olivia she actually did eat a little soup maybe half a bowl and then she seemed more tired than usual like she wanted to nap and PT called and said Thursday is moving wait no maybe Friday? no they said Thursday at like two thirty or was it th"
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-4-mrwgtqeu",
+          "eventType": "note",
+          "statement": "Uncertain medication report (e.g. thinks someone may have given it) — not confirmed administration",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.4,
+          "epistemicStatus": "UNCERTAIN",
+          "consequentiality": "high",
+          "sourceReference": {
+            "id": "src-f0f268c4-c133-4bbd-8bdc-0bc31cc66aa5-mrwgtqet",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T19:18:31.925Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "So um I got there around noon-ish and Olivia she actually did eat a little soup maybe half a bowl and then she seemed more tired than usual like she wanted to nap and PT called and said Thursday is moving wait no maybe Friday? no they said Thursday at like two thirty or was it th"
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-5-mrwgtqeu",
+          "eventType": "communication_request",
+          "statement": "Update ready for Maya",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.9,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "moderate",
+          "intendedRecipientName": "Maya",
+          "intended

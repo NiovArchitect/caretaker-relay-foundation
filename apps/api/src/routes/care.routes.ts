@@ -72,6 +72,10 @@ const CARE_PERSON_EMAIL: Record<string, { email: string; password: string }> = {
     email: "unauthorized.care@caretaker-relay.test",
     password: "unauth-lab-password",
   },
+  "p-other-hh": {
+    email: "other-hh.care@caretaker-relay.test",
+    password: "other-hh-lab-password",
+  },
 };
 
 export async function registerCareRoutes(

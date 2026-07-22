@@ -57,6 +57,9 @@ export class PrismaCareStore implements CareStore {
   private memory = new MemoryCareStore();
   private idempotency = new Map<string, { body: unknown; at: string }>();
   private dirty = false;
+  /** Avoid re-upserting immutable audit rows on every flush (O(n) → O(delta)). */
+  private knownAuditIds = new Set<string>();
+  private knownIdempotencyKeys = new Set<string>();
   readonly backend = "prisma" as const;
 
   static async create(opts?: { load?: boolean }): Promise<PrismaCareStore> {
@@ -70,6 +73,8 @@ export class PrismaCareStore implements CareStore {
   async load(): Promise<void> {
     this.memory.clear();
     this.idempotency.clear();
+    this.knownAuditIds.clear();
+    this.knownIdempotencyKeys.clear();
 
     const [
       people,
@@ -313,9 +318,11 @@ export class PrismaCareStore implements CareStore {
         householdId: a.household_id ?? undefined,
         details: a.details as unknown as Record<string, unknown>,
       });
+      this.knownAuditIds.add(a.id);
     }
     for (const i of idems) {
       this.idempotency.set(i.key, { body: i.body, at: i.at });
+      this.knownIdempotencyKeys.add(i.key);
     }
     this.dirty = false;
   }
@@ -678,7 +685,9 @@ export class PrismaCareStore implements CareStore {
         },
       });
     }
+    // Audits are append-only: skip rows already flushed (prevents O(n) on every confirm).
     for (const a of snap.audit) {
+      if (this.knownAuditIds.has(a.id)) continue;
       await prisma.careAuditRow.upsert({
         where: { id: a.id },
         create: {
@@ -693,8 +702,10 @@ export class PrismaCareStore implements CareStore {
         },
         update: {},
       });
+      this.knownAuditIds.add(a.id);
     }
     for (const [key, v] of this.idempotency) {
+      if (this.knownIdempotencyKeys.has(key)) continue;
       await prisma.careIdempotencyRow.upsert({
         where: { key },
         create: {
@@ -705,6 +716,7 @@ export class PrismaCareStore implements CareStore {
         },
         update: { body: v.body as object, at: v.at },
       });
+      this.knownIdempotencyKeys.add(key);
     }
     this.dirty = false;
   }
@@ -719,6 +731,7 @@ export class PrismaCareStore implements CareStore {
 
   putIdempotent(key: string, body: unknown): void {
     this.idempotency.set(key, { body, at: new Date().toISOString() });
+    this.knownIdempotencyKeys.delete(key); // force flush of new/updated body
     this.dirty = true;
   }
 

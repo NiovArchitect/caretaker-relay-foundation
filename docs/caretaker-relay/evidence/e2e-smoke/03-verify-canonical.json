@@ -1,0 +1,224 @@
+{
+  "ok": true,
+  "kind": "verify",
+  "verification_bundle_id": "vb-jx1l56wr-mrwbrpqy",
+  "bundle": {
+    "title": "I got this",
+    "items": [
+      {
+        "id": "v-cand-1-mrwbrpqx",
+        "candidateId": "cand-1-mrwbrpqx",
+        "label": "Meal around noon",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "low",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": false
+      },
+      {
+        "id": "v-cand-2-mrwbrpqx",
+        "candidateId": "cand-2-mrwbrpqx",
+        "label": "Caregiver reported: seemed more tired than usual",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-3-mrwbrpqx",
+        "candidateId": "cand-3-mrwbrpqx",
+        "label": "PT moved to Thursday at 2:30 PM",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-4-mrwbrpqy",
+        "candidateId": "cand-4-mrwbrpqy",
+        "label": "Lunch medication marked as given (as scheduled)",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "high",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      },
+      {
+        "id": "v-cand-5-mrwbrpqy",
+        "candidateId": "cand-5-mrwbrpqy",
+        "label": "Update ready for Maya",
+        "detail": "Status: REPORTED (not confirmed care truth yet)",
+        "safetyClass": "moderate",
+        "epistemicStatus": "REPORTED",
+        "requiresConfirmation": true
+      }
+    ],
+    "understood": {
+      "candidates": [
+        {
+          "id": "cand-1-mrwbrpqx",
+          "eventType": "meal",
+          "statement": "Meal around noon",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "timeLabel": "around noon",
+          "confidence": 0.9,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "low",
+          "sourceReference": {
+            "id": "src-1abe85ff-0e1b-4fa1-aeb3-7341733723ab-mrwbrpqx",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:56:59.673Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know."
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-2-mrwbrpqx",
+          "eventType": "observation",
+          "statement": "Caregiver reported: seemed more tired than usual",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.75,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "moderate",
+          "sourceReference": {
+            "id": "src-1abe85ff-0e1b-4fa1-aeb3-7341733723ab-mrwbrpqx",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:56:59.673Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know."
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-3-mrwbrpqx",
+          "eventType": "appointment_change",
+          "statement": "PT moved to Thursday at 2:30 PM",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "timeLabel": "2:30 PM",
+          "dateLabel": "Thursday",
+          "confidence": 0.88,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "moderate",
+          "sourceReference": {
+            "id": "src-1abe85ff-0e1b-4fa1-aeb3-7341733723ab-mrwbrpqx",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:56:59.673Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know."
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-4-mrwbrpqy",
+          "eventType": "medication_administration",
+          "statement": "Lunch medication marked as given (as scheduled)",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "timeLabel": "lunch",
+          "confidence": 0.85,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "high",
+          "sourceReference": {
+            "id": "src-1abe85ff-0e1b-4fa1-aeb3-7341733723ab-mrwbrpqx",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:56:59.673Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know."
+          },
+          "actionable": false
+        },
+        {
+          "id": "cand-5-mrwbrpqy",
+          "eventType": "communication_request",
+          "statement": "Update ready for Maya",
+          "careRecipientId": "cr-olivia",
+          "careRecipientName": "Olivia",
+          "sourceSpeakerPersonId": "p-sadeil",
+          "sourceSpeakerName": "Sadeil",
+          "confidence": 0.9,
+          "epistemicStatus": "REPORTED",
+          "consequentiality": "moderate",
+          "intendedRecipientName": "Maya",
+          "intendedRecipientPersonId": "p-maya",
+          "sourceReference": {
+            "id": "src-1abe85ff-0e1b-4fa1-aeb3-7341733723ab-mrwbrpqx",
+            "kind": "caregiver_text",
+            "label": "Caregiver care update",
+            "actorName": "Sadeil",
+            "actorPersonId": "p-sadeil",
+            "recordedAt": "2026-07-22T16:56:59.673Z",
+            "whyVisible": "Sadeil shared a care update in this session.",
+            "rawExcerpt": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know."
+          },
+          "actionable": false
+        }
+      ],
+      "meals": [
+        "Meal around noon"
+      ],
+      "observations": [
+        "Caregiver reported: seemed more tired than usual"
+      ],
+      "appointmentChanges": [
+        "PT moved to Thursday at 2:30 PM"
+      ],
+      "medicationEvents": [
+        "Lunch medication marked as given (as scheduled)"
+      ],
+      "communicationRequests": [
+        "Update ready for Maya"
+      ],
+      "tasks": [],
+      "uncertainties": [],
+      "rawText": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.",
+      "careRecipientId": "cr-olivia",
+      "careRecipientName": "Olivia",
+      "evidenceMode": "FIXTURE"
+    },
+    "evidenceMode": "FIXTURE"
+  },
+  "evidence_mode": "FIXTURE",
+  "temporal_policy": {
+    "originalExpression": "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.",
+    "resolvedLocalLabel": "around noon",
+    "timeZoneUsed": "America/New_York",
+    "status": "AMBIGUOUS",
+    "notes": [
+      "Retained human expression; noon relative to care-recipient TZ America/New_York",
+      "Exact calendar date not specified — AMBIGUOUS without care-day anchor"
+    ]
+  },
+  "timezone_policy": [
+    "Machine storage is always UTC ISO when resolved.",
+    "Human expressions are preserved until caregiver confirms.",
+    "Cross-zone: show both caregiver and care-recipient local labels.",
+    "DST: use IANA zones via runtime Intl; never fixed UTC-5 assumptions for display.",
+    "Appointment provider timezone may differ from household."
+  ],
+  "transcript_meta": null,
+  "auth_mode": "foundation_auth_service",
+  "correlation_id": "bec18347-3e78-40aa-89b3-aac3c486cdc0",
+  "note": "Candidates only. Confirm via POST /api/v1/care/confirm before durable truth."
+}

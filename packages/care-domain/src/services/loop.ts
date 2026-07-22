@@ -334,6 +334,16 @@ export class CareLoopService {
           status: "moved",
         });
         void aptHash;
+        // Supersede prior confirmed appointment_change events whose statement
+        // no longer matches current time — preserves historical lineage.
+        const priorAptEvents = this.config.store
+          .getEvents(ctx.careRecipientId)
+          .filter(
+            (e) =>
+              e.type === "appointment_change" &&
+              e.epistemicStatus !== "SUPERSEDED" &&
+              e.statement !== candidate.statement,
+          );
         this.config.store.upsertAppointment({
           id: existing?.id ?? this.config.store.newId("apt"),
           careRecipientId: ctx.careRecipientId,
@@ -344,6 +354,18 @@ export class CareLoopService {
           epistemicStatus: "CONFIRMED",
           source: candidate.sourceReference,
         });
+        const newEvt = this.persistEvent(
+          candidate,
+          ctx,
+          now,
+          evidenceMode,
+          "CONFIRMED",
+        );
+        eventIds.push(newEvt.id);
+        for (const pe of priorAptEvents) {
+          this.config.store.supersedeEvent(pe.id, newEvt.id);
+        }
+        continue;
       }
 
       if (candidate.eventType === "task") {

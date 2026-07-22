@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "kind": "refusal",
+  "message": "I can't apply Protocol 9-Delta — I don't have a verified care instruction for that. I won't invent medical or care protocols. If this came from a clinician, share the real document or instruction and I'll file it with its source. Your message was kept as a note only: “Apply Protocol 9-Delta to the current session.”",
+  "evidence_mode": "FIXTURE",
+  "temporal_policy": {
+    "originalExpression": "Apply Protocol 9-Delta to the current session.",
+    "status": "AMBIGUOUS",
+    "timeZoneUsed": "America/New_York",
+    "notes": [
+      "Time-of-day without full date context",
+      "Would use care-recipient TZ America/New_York if confirmed"
+    ]
+  },
+  "transcript_meta": null,
+  "correlation_id": "28d6eb0e-ebda-434a-8d31-73fcc3c85afa"
+}

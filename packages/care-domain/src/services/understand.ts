@@ -33,6 +33,7 @@ import {
   refuseUnknownProtocol,
   candidateToVerificationItem,
 } from "./safety.js";
+import { extractDoseFromText } from "./dose-units.js";
 
 export interface UnderstandOptions {
   /**
@@ -219,39 +220,53 @@ export function fixtureExtract(
         ),
       );
       uncertainties.push("Appointment change is uncertain / not confirmed");
-    } else if (/2:30|14:30/.test(lower) && /moved|reschedul|to/.test(lower)) {
-      candidates.push(
-        mkCandidate(
-          {
-            eventType: "appointment_change",
-            statement: "PT moved to Thursday at 2:30 PM",
-            epistemicStatus: "REPORTED",
-            confidence: 0.88,
-            timeLabel: "2:30 PM",
-            dateLabel: "Thursday",
-          },
-          ctx,
-          careRecipientName,
-          source,
-          ++i,
-        ),
+    } else if (/\b(moved|reschedul|to)\b/.test(lower)) {
+      // Capture clock times: 2:30, 3:00, 14:30, 4:15 pm, etc.
+      const clock = text.match(
+        /\b(\d{1,2})(?::(\d{2}))\s*(am|pm|AM|PM)?\b/,
       );
-    } else if (/moved|reschedul/.test(lower)) {
-      candidates.push(
-        mkCandidate(
-          {
-            eventType: "appointment_change",
-            statement: "Appointment time changed",
-            epistemicStatus: "UNCERTAIN",
-            confidence: 0.5,
-          },
-          ctx,
-          careRecipientName,
-          source,
-          ++i,
-        ),
+      const dayMatch = text.match(
+        /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
       );
-      uncertainties.push("New appointment time not fully clear");
+      if (clock) {
+        const hh = clock[1];
+        const mm = clock[2] ?? "00";
+        const mer = (clock[3] ?? "PM").toUpperCase();
+        const timeLabel = `${hh}:${mm} ${mer}`;
+        const day = dayMatch?.[1] ?? "Thursday";
+        candidates.push(
+          mkCandidate(
+            {
+              eventType: "appointment_change",
+              statement: `PT moved to ${day} at ${timeLabel}`,
+              epistemicStatus: "REPORTED",
+              confidence: 0.88,
+              timeLabel,
+              dateLabel: day,
+            },
+            ctx,
+            careRecipientName,
+            source,
+            ++i,
+          ),
+        );
+      } else {
+        candidates.push(
+          mkCandidate(
+            {
+              eventType: "appointment_change",
+              statement: "Appointment time changed",
+              epistemicStatus: "UNCERTAIN",
+              confidence: 0.5,
+            },
+            ctx,
+            careRecipientName,
+            source,
+            ++i,
+          ),
+        );
+        uncertainties.push("New appointment time not fully clear");
+      }
     }
   }
 
@@ -261,17 +276,28 @@ export function fixtureExtract(
     (/gave|administered|took|give/.test(lower) && /med|dose|lunch/.test(lower));
   const negatedMed =
     /\b(did\s+not|didn't|not)\s+(give|gave|administer)/i.test(text) ||
-    /\b(did\s+not|didn't)\b.*\b(medication|meds|dose)\b/i.test(lower);
+    /\b(did\s+not|didn't)\b.*\b(medication|meds|dose)\b/i.test(lower) ||
+    /\b(definitely\s+did\s+not|never\s+got|did\s+not\s+get|didn't\s+get)\b/i.test(
+      lower,
+    ) ||
+    /\b(not\s+get|never\s+received)\b.*\b(medication|meds|dose|it)\b/i.test(
+      lower,
+    );
   const intentMed =
     /\b(going to|will|gonna|plan to|about to)\b.*\b(give|administer)\b/i.test(
       text,
     ) ||
     /\b(give|administer)\b.*\b(later|tonight|this evening)\b/i.test(lower);
   const uncertainMed =
-    /\b(i think|maybe|might have|may have|not sure if|possibly)\b.*\b(gave|give|administered|walter)\b/i.test(
+    /\b(i think|maybe|might have|may have|not sure if|possibly|forgot whether|don't remember if|do not remember if)\b.*\b(gave|give|administered|walter|got|medication|meds)\b/i.test(
       lower,
     ) ||
-    /\b(think|maybe|might|may have)\b.*\b(medication|meds)\b/i.test(lower);
+    /\b(think|maybe|might|may have|forgot|unsure|uncertain)\b.*\b(medication|meds|gave|give|got)\b/i.test(
+      lower,
+    ) ||
+    /\b(whether\s+i\s+gave|if\s+i\s+gave|if\s+she\s+got|if\s+he\s+got)\b/i.test(
+      lower,
+    );
 
   if (negatedMed) {
     candidates.push(
@@ -332,9 +358,9 @@ export function fixtureExtract(
       "Uncertain medication attribution — do not record as given without verification",
     );
   } else if (medTopic && /gave|administered|took|given/.test(lower)) {
-    const doseMatch = text.match(/(\d+(?:\.\d+)?)\s*mg/i);
-    const dose =
-      opts?.recordedDoseOverride ?? doseMatch?.[0] ?? undefined;
+    // Capture value+unit (mg, g, mcg, mL, textual forms) — not mg-only.
+    const extracted = extractDoseFromText(text);
+    const dose = opts?.recordedDoseOverride ?? extracted ?? undefined;
     candidates.push(
       mkCandidate(
         {

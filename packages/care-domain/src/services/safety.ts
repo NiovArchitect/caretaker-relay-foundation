@@ -12,6 +12,7 @@ import type {
   SafetyClass,
   VerificationItem,
 } from "../types.js";
+import { compareMedicationDoses } from "./dose-units.js";
 
 export function classifyConsequentiality(
   eventType: CareCandidate["eventType"],
@@ -44,8 +45,6 @@ export function detectMedicationDiscrepancy(
   scheduleNameHint = "lunch",
 ): MedicationDiscrepancy | undefined {
   if (!recordedDose) return undefined;
-  const doseMatch = recordedDose.match(/(\d+(?:\.\d+)?)\s*mg/i);
-  if (!doseMatch) return undefined;
 
   const schedule =
     schedules.find((s) =>
@@ -53,20 +52,16 @@ export function detectMedicationDiscrepancy(
     ) ?? schedules[0];
   if (!schedule) return undefined;
 
-  const recordedNum = parseFloat(doseMatch[1] ?? "");
-  const authMatch = schedule.dose.match(/(\d+(?:\.\d+)?)/);
-  const authNum = authMatch?.[1] != null ? parseFloat(authMatch[1]) : NaN;
-  if (!Number.isFinite(recordedNum) || !Number.isFinite(authNum)) {
-    return undefined;
-  }
-  if (recordedNum === authNum) return undefined;
+  // Unit-aware comparison (mass/volume/count). Never treats "2.5 g" as "2.5 mg".
+  const cmp = compareMedicationDoses(recordedDose, schedule.dose);
+  if (!cmp) return undefined;
+  if (cmp.status === "match") return undefined;
 
   return {
-    recordedDose: doseMatch[0].replace(/\s+/g, " "),
-    authorizedDose: schedule.dose,
+    recordedDose: cmp.recordedDose,
+    authorizedDose: cmp.authorizedDose,
     authorizedSourceLabel: `${schedule.authorizedBy} · ${schedule.authorizedAt}`,
-    message:
-      "Recorded dose does not match the authorized care instruction. Relay will not choose.",
+    message: cmp.message,
   };
 }
 
@@ -87,7 +82,7 @@ export function refuseUnknownProtocol(text: string): string {
 }
 
 export function isMedicalDosageRequest(text: string): boolean {
-  return /what\s+dose\s+should|how\s+much\s+should\s+(i|we)\s+give|recommend\s+a\s+dose|prescribe|change\s+her\s+dose|double\s+\w*\s*dose|increase\s+the\s+dose/i.test(
+  return /what\s+dose\s+should|how\s+much\s+should\s+(i|we)\s+give|recommend\s+a\s+dose|prescribe|change\s+her\s+dose|double\s+.{0,40}\bdose\b|increase\s+the\s+dose|told\s+me\s+to\s+double/i.test(
     text,
   );
 }

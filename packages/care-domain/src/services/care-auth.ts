@@ -67,6 +67,12 @@ export function defaultLabDirectory(): CarePrincipalDirectoryEntry[] {
       roles: ["family_caregiver"],
       passwordLab: "unauth-lab-password",
     },
+    {
+      carePersonId: people.otherHouseholdCaregiver.id,
+      displayName: people.otherHouseholdCaregiver.displayName,
+      roles: ["family_caregiver"],
+      passwordLab: "other-hh-lab-password",
+    },
   ];
 }
 

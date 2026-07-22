@@ -165,6 +165,12 @@ export class CareRuntimeService {
         password: "unauth-lab-password",
         roles: ["family_caregiver"],
       },
+      {
+        person: people.otherHouseholdCaregiver,
+        email: "other-hh.care@caretaker-relay.test",
+        password: "other-hh-lab-password",
+        roles: ["family_caregiver"],
+      },
     ];
 
     const { getEntityByEmail } = await import("@niov/database");
@@ -414,6 +420,13 @@ export class CareRuntimeService {
       await this.prismaStore.flush();
     } else if (this.store instanceof FileCareStore) {
       this.store.persist();
+    }
+  }
+
+  /** Reload Prisma-backed care memory from DB (tests / restart simulation). */
+  async reloadFromDatabase(): Promise<void> {
+    if (this.prismaStore) {
+      await this.prismaStore.load();
     }
   }
 

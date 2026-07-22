@@ -1,0 +1,29 @@
+{
+  "id": "ho-64selvfj-mrwavkcq",
+  "careRecipientId": "cr-olivia",
+  "fromPersonId": "p-sadeil",
+  "toPersonId": "p-maya",
+  "whatChanged": [
+    "PT moved to Thursday at 3:00 PM"
+  ],
+  "stillNeedsAttention": [
+    "Confirm any open transportation or evening medication"
+  ],
+  "watch": [
+    "No new watch items"
+  ],
+  "sources": [
+    {
+      "id": "src-fa199a76-2130-4e67-b15c-aa37cfa7aa6a-mrwavjae",
+      "kind": "caregiver_text",
+      "label": "Caregiver care update",
+      "actorName": "Sadeil",
+      "rawExcerpt": "PT moved Thursday's appointment to 3:00.",
+      "recordedAt": "2026-07-22T16:31:58.310Z",
+      "whyVisible": "Sadeil shared a care update in this session.",
+      "actorPersonId": "p-sadeil"
+    }
+  ],
+  "createdAt": "2026-07-22T16:31:59.690Z",
+  "evidenceMode": "SYNTHETIC_FOUNDATION_BACKED"
+}

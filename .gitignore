@@ -61,3 +61,6 @@ services/python-intelligence/*.egg-info/
 # OTZAR working scratch (untracked, never committed)
 docs/*.tmp.md
 scripts/repair-live-demo-twins.ts
+
+# Local detached care dev service PIDs/logs
+.care-dev-run/

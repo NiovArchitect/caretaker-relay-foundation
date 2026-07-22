@@ -59,11 +59,44 @@ export async function buildCareApp(
     logger: config.logger ?? false,
   });
 
+  /**
+   * Local lab CORS for Caretaker Relay Vite app (browser E2E / founder demo).
+   * Not a production multi-origin policy — only loopback caregiver UI ports.
+   */
+  const labOrigins = new Set(
+    (
+      process.env.CARE_CORS_ORIGINS ??
+      "http://127.0.0.1:5180,http://localhost:5180,http://127.0.0.1:5173,http://localhost:5173"
+    )
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+
   app.addHook("onRequest", async (request, reply) => {
     const id =
       (request.headers["x-request-id"] as string | undefined) ??
       `req-${Date.now().toString(36)}`;
     reply.header("x-request-id", id);
+
+    const origin = request.headers.origin;
+    if (origin && labOrigins.has(origin)) {
+      reply.header("access-control-allow-origin", origin);
+      reply.header("access-control-allow-credentials", "true");
+      reply.header(
+        "access-control-allow-headers",
+        "authorization,content-type,x-request-id,x-correlation-id",
+      );
+      reply.header(
+        "access-control-allow-methods",
+        "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      );
+      reply.header("vary", "Origin");
+    }
+
+    if (request.method === "OPTIONS") {
+      return reply.code(204).send();
+    }
   });
 
   await registerCareRoutes(app, runtime);
