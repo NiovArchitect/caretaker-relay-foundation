@@ -1,0 +1,69 @@
+# Caretaker Relay Care API — focused care-app runtime (not full Otzar API).
+# DEPLOYMENT REQUIREMENT for ACL online evaluator / caregiver research.
+#
+# Build from foundation repo root:
+#   docker build -f Dockerfile.care -t caretaker-relay-care-api .
+#
+# Run:
+#   docker run --rm -p 3100:3100 \
+#     -e DATABASE_URL=... -e JWT_SECRET=... \
+#     -e CARE_CORS_ORIGINS=https://care.example.com \
+#     caretaker-relay-care-api
+
+FROM node:22.11-bookworm-slim AS deps
+
+ENV NODE_ENV=production
+WORKDIR /repo
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates curl tini && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json* ./
+COPY apps/api/package.json apps/api/package.json
+COPY packages/auth/package.json packages/auth/package.json
+COPY packages/database/package.json packages/database/package.json
+COPY packages/care-domain/package.json packages/care-domain/package.json
+COPY packages/product-identity/package.json packages/product-identity/package.json
+
+RUN --mount=type=cache,target=/root/.npm \
+    NODE_ENV=development npm ci --no-audit --no-fund
+
+COPY packages/database/prisma packages/database/prisma
+RUN npm --workspace @niov/database run db:generate || npx prisma generate --schema packages/database/prisma/schema.prisma
+
+FROM node:22.11-bookworm-slim AS runtime
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates curl tini && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production \
+    PORT=3100 \
+    NPM_CONFIG_LOGLEVEL=warn
+
+WORKDIR /repo
+
+COPY --from=deps /repo/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+COPY tsconfig.base.json* ./
+COPY apps/api apps/api
+COPY packages/auth packages/auth
+COPY packages/database packages/database
+COPY packages/care-domain packages/care-domain
+COPY packages/product-identity packages/product-identity
+
+COPY --from=deps /repo/packages/auth/node_modules ./packages/auth/node_modules 2>/dev/null || true
+
+RUN groupadd --system --gid 1001 niov && \
+    useradd --system --uid 1001 --gid niov --home /repo niov && \
+    chown -R niov:niov /repo
+USER niov
+
+EXPOSE 3100
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:3100/api/v1/health || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["npm", "--workspace", "@niov/api", "run", "care:start"]

@@ -60,16 +60,25 @@ export async function buildCareApp(
   });
 
   /**
-   * Local lab CORS for Caretaker Relay Vite app (browser E2E / founder demo).
-   * Not a production multi-origin policy — only loopback caregiver UI ports.
+   * CORS for Caretaker Relay caregiver UI.
+   * Lab defaults remain loopback. Online deploy must set CARE_CORS_ORIGINS and/or
+   * CARETAKER_APP_URL / PUBLIC_APP_URL to the HTTPS frontend origin.
+   * DEPLOYMENT REQUIREMENT — not a product-behavior redesign.
    */
+  const defaultLab =
+    "http://127.0.0.1:5180,http://localhost:5180,http://127.0.0.1:5173,http://localhost:5173";
+  const fromEnv = [
+    process.env.CARE_CORS_ORIGINS,
+    process.env.CARETAKER_APP_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.CORS_ORIGIN,
+  ]
+    .filter(Boolean)
+    .join(",");
   const labOrigins = new Set(
-    (
-      process.env.CARE_CORS_ORIGINS ??
-      "http://127.0.0.1:5180,http://localhost:5180,http://127.0.0.1:5173,http://localhost:5173"
-    )
+    (fromEnv || defaultLab)
       .split(",")
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/\/$/, ""))
       .filter(Boolean),
   );
 

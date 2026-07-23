@@ -1,0 +1,47 @@
+# Render Blueprint — Caretaker Relay Care API (focused care-app)
+#
+# Isolated product. Do NOT point at Otzar production databases or secrets.
+#
+# Apply from: caretaker-relay-foundation repo
+# Branch: set to the branch you deploy (e.g. checkpoint/caretaker-relay-track1-2026-07-22
+# or a dedicated deploy branch). Secrets: paste in Render dashboard (sync: false).
+#
+# Health: GET /api/v1/health
+
+services:
+  - type: web
+    runtime: docker
+    name: caretaker-relay-care-api
+    branch: checkpoint/caretaker-relay-track1-2026-07-22
+    rootDir: .
+    dockerfilePath: ./Dockerfile.care
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    plan: starter
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PRODUCT_ID
+        value: caretaker-relay
+      - key: PRODUCT_NAMESPACE
+        value: cr
+      - key: AUDIT_PRODUCT_TAG
+        value: caretaker-relay
+      - key: PORT
+        value: "3100"
+      - key: CARE_UNDERSTAND_MODE
+        value: fixture
+      - key: CARE_STORE_BACKEND
+        value: prisma
+      # Public HTTPS origin of the caregiver UI (required for browser CORS)
+      - key: CARETAKER_APP_URL
+        sync: false
+      - key: CARE_CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
