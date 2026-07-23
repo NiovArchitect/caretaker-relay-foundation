@@ -15,8 +15,10 @@ FROM node:22.11-bookworm-slim AS deps
 ENV NODE_ENV=production
 WORKDIR /repo
 
+# python3/make/g++: bcrypt native addon may need compile on slim if prebuild misses.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends openssl ca-certificates curl tini && \
+    apt-get install -y --no-install-recommends \
+      openssl ca-certificates curl tini python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
@@ -27,7 +29,10 @@ COPY packages/care-domain/package.json packages/care-domain/package.json
 COPY packages/product-identity/package.json packages/product-identity/package.json
 
 RUN --mount=type=cache,target=/root/.npm \
-    NODE_ENV=development npm ci --no-audit --no-fund
+    NODE_ENV=development npm ci --no-audit --no-fund && \
+    (test -d packages/auth/node_modules/bcrypt || test -d node_modules/bcrypt) && \
+    node -e "try{require('bcrypt');console.log('bcrypt:root-ok')}catch(e){require('./packages/auth/node_modules/bcrypt');console.log('bcrypt:nested-ok')}" && \
+    mkdir -p packages/auth/node_modules
 
 COPY packages/database/prisma packages/database/prisma
 RUN npm --workspace @niov/database run db:generate || npx prisma generate --schema packages/database/prisma/schema.prisma
@@ -53,8 +58,9 @@ COPY packages/database packages/database
 COPY packages/care-domain packages/care-domain
 COPY packages/product-identity packages/product-identity
 
-# Workspace deps are hoisted into /repo/node_modules by npm ci (copied above).
-# Do not shell-redirect in COPY — BuildKit rejects "2>/dev/null || true" as a path.
+# bcrypt is a native module npm nests under packages/auth (not always hoisted).
+# Bring nested node_modules from deps stage. No shell redirects in COPY.
+COPY --from=deps /repo/packages/auth/node_modules ./packages/auth/node_modules
 
 RUN groupadd --system --gid 1001 niov && \
     useradd --system --uid 1001 --gid niov --home /repo niov && \
