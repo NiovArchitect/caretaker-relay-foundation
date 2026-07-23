@@ -161,14 +161,27 @@ export function fixtureExtract(
   // Meal
   if (/ate|meal|lunch|breakfast|dinner|noon/.test(lower)) {
     const aroundNoon = /around noon|at noon|noon|12\s*pm|12:00/.test(lower);
+    const aroundNine =
+      /around nine|at nine|about nine|9\s*(am|a\.m\.)?|nine o'?clock/.test(
+        lower,
+      );
+    const timeLabel = aroundNoon
+      ? "around noon"
+      : aroundNine
+        ? "around 9:00"
+        : undefined;
     candidates.push(
       mkCandidate(
         {
           eventType: "meal",
-          statement: aroundNoon ? "Meal around noon" : "Meal recorded",
+          statement: aroundNoon
+            ? "Meal around noon"
+            : aroundNine
+              ? "Breakfast / meal around 9:00"
+              : "Meal recorded",
           epistemicStatus: "REPORTED",
-          confidence: aroundNoon ? 0.9 : 0.7,
-          timeLabel: aroundNoon ? "around noon" : undefined,
+          confidence: timeLabel ? 0.9 : 0.7,
+          timeLabel,
         },
         ctx,
         careRecipientName,
@@ -179,17 +192,24 @@ export function fixtureExtract(
   }
 
   // Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
-  if (/tired|fatigue|fatigued|exhausted|weaker|seemed/.test(lower)) {
+  if (
+    /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
+      lower,
+    )
+  ) {
     const soft = /seemed|a little|more tired than usual/.test(lower);
+    const dizzy = /dizzy|dizziness|light[- ]?headed/.test(lower);
     candidates.push(
       mkCandidate(
         {
           eventType: "observation",
-          statement: soft
-            ? "Caregiver reported: seemed more tired than usual"
-            : "Caregiver reported tiredness",
-          epistemicStatus: soft ? "REPORTED" : "UNCERTAIN",
-          confidence: soft ? 0.75 : 0.55,
+          statement: dizzy
+            ? "Caregiver reported: dizziness when getting up"
+            : soft
+              ? "Caregiver reported: seemed more tired than usual"
+              : "Caregiver reported tiredness",
+          epistemicStatus: soft || dizzy ? "REPORTED" : "UNCERTAIN",
+          confidence: soft || dizzy ? 0.75 : 0.55,
         },
         ctx,
         careRecipientName,
@@ -199,9 +219,16 @@ export function fixtureExtract(
     );
   }
 
-  // Appointment
-  if (/pt|physical therapy|appointment/.test(lower)) {
+  // Appointment / schedule changes (PT or caregiver visit timing)
+  const hasPt = /pt|physical therapy|appointment/.test(lower);
+  const mayaTiming =
+    /\bmaya\b/.test(lower) &&
+    /\b(coming|arriving|visit|instead of|around three|around 3|3\s*pm|2\s*pm)\b/.test(
+      lower,
+    );
+  if (hasPt || mayaTiming) {
     if (
+      hasPt &&
       /\b(might|may|maybe|possibly)\b/.test(lower) &&
       /\b(move|moved|reschedul\w*)\b/.test(lower)
     ) {
@@ -220,7 +247,32 @@ export function fixtureExtract(
         ),
       );
       uncertainties.push("Appointment change is uncertain / not confirmed");
-    } else if (/\b(moved|reschedul|to)\b/.test(lower)) {
+    } else if (mayaTiming) {
+      const toThree =
+        /around three|around 3|3\s*(pm|p\.m\.)?|three o'?clock/.test(lower);
+      const insteadOfTwo = /instead of two|instead of 2/.test(lower);
+      candidates.push(
+        mkCandidate(
+          {
+            eventType: "appointment_change",
+            statement: toThree
+              ? insteadOfTwo
+                ? "Maya visit time changed to around 3:00 (was ~2:00)"
+                : "Maya visit around 3:00"
+              : "Maya visit time change reported",
+            epistemicStatus: "REPORTED",
+            confidence: 0.82,
+            timeLabel: toThree ? "around 3:00" : undefined,
+            intendedRecipientName: "Maya",
+            intendedRecipientPersonId: "p-maya",
+          },
+          ctx,
+          careRecipientName,
+          source,
+          ++i,
+        ),
+      );
+    } else if (hasPt && /\b(moved|reschedul|to)\b/.test(lower)) {
       // Capture clock times: 2:30, 3:00, 14:30, 4:15 pm, etc.
       const clock = text.match(
         /\b(\d{1,2})(?::(\d{2}))\s*(am|pm|AM|PM)?\b/,
@@ -272,8 +324,11 @@ export function fixtureExtract(
 
   // Medication states must NOT collapse: negation / intent / completed / uncertain
   const medTopic =
-    /medication|meds|dose|mg|lunch med/i.test(lower) ||
-    (/gave|administered|took|give/.test(lower) && /med|dose|lunch/.test(lower));
+    /medication|meds|dose|mg|lunch med|pills?|tablets?|blue pills?/i.test(
+      lower,
+    ) ||
+    (/gave|administered|took|take|give/.test(lower) &&
+      /med|dose|lunch|pill|tablet/.test(lower));
   const negatedMed =
     /\b(did\s+not|didn't|not)\s+(give|gave|administer)/i.test(text) ||
     /\b(did\s+not|didn't)\b.*\b(medication|meds|dose)\b/i.test(lower) ||
@@ -357,21 +412,47 @@ export function fixtureExtract(
     uncertainties.push(
       "Uncertain medication attribution — do not record as given without verification",
     );
-  } else if (medTopic && /gave|administered|took|given/.test(lower)) {
+  } else if (medTopic && /gave|administered|took|taken|given/.test(lower)) {
     // Capture value+unit (mg, g, mcg, mL, textual forms) — not mg-only.
-    const extracted = extractDoseFromText(text);
-    const dose = opts?.recordedDoseOverride ?? extracted ?? undefined;
+    // Also capture count phrases like "two of the blue pills" without inventing strength.
+    let extracted = opts?.recordedDoseOverride ?? extractDoseFromText(text);
+    const bluePills = /(?:two|2)\s+(?:of\s+the\s+)?blue\s+pills?\b/i.test(text);
+    const pillCount = text.match(
+      /\b(one|two|three|four|five|1|2|3|4|5)\s+(?:of\s+(?:the\s+)?)?(?:blue\s+)?pills?\b/i,
+    );
+    if (!extracted && pillCount) {
+      const word = pillCount[1]!.toLowerCase();
+      const n =
+        word === "one"
+          ? "1"
+          : word === "two"
+            ? "2"
+            : word === "three"
+              ? "3"
+              : word === "four"
+                ? "4"
+                : word === "five"
+                  ? "5"
+                  : word;
+      extracted = `${n} tablets`;
+    }
+    const dose = extracted ?? undefined;
+    const ambiguousColorPills = bluePills || (!dose && /pills?|tablets?/.test(lower));
     candidates.push(
       mkCandidate(
         {
           eventType: "medication_administration",
-          statement: dose
-            ? `Lunch medication marked as given (${dose})`
-            : "Lunch medication marked as given (as scheduled)",
-          epistemicStatus: "REPORTED",
-          confidence: 0.85,
+          statement: ambiguousColorPills
+            ? dose
+              ? `Medication reported given (${dose}) — identity/strength needs checking`
+              : "Medication reported given — amount/identity unclear"
+            : dose
+              ? `Lunch medication marked as given (${dose})`
+              : "Lunch medication marked as given (as scheduled)",
+          epistemicStatus: ambiguousColorPills ? "UNCERTAIN" : "REPORTED",
+          confidence: ambiguousColorPills ? 0.55 : 0.85,
           recordedDose: dose,
-          timeLabel: "lunch",
+          timeLabel: ambiguousColorPills ? undefined : "lunch",
           consequentiality: "high",
         },
         ctx,
@@ -380,10 +461,21 @@ export function fixtureExtract(
         ++i,
       ),
     );
+    if (ambiguousColorPills) {
+      uncertainties.push(
+        "Medication report is ambiguous (e.g. color/count without matching strength). Relay will not guess the dose.",
+      );
+    }
   }
 
-  // Communication
-  if (/let maya know|tell maya|update maya|maya know/.test(lower)) {
+  // Communication / keep another caregiver in the loop
+  if (
+    /let maya know|tell maya|update maya|maya know|make sure she knows|make sure maya|can you make sure she|caught up|what.?s going on/.test(
+      lower,
+    ) &&
+    (/\bmaya\b/.test(lower) ||
+      /make sure she knows|what.?s going on/.test(lower))
+  ) {
     candidates.push(
       mkCandidate(
         {

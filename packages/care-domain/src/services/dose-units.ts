@@ -241,7 +241,19 @@ export function parseDose(input: string): ParsedDose | null {
 
 /** Extract first dose phrase from a caregiver utterance. */
 export function extractDoseFromText(text: string): string | undefined {
-  const normalized = normalizeNumericWords(text);
+  let normalized = normalizeNumericWords(text);
+  // Expand remaining small word numbers before dose extraction
+  normalized = normalized.replace(
+    /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+    (w) => String(WORD_NUMBERS[w] ?? w),
+  );
+  // "two of the blue pills" / "2 of the pills" → count for human review (not mg guess)
+  const ofThePills = normalized.match(
+    /(\d+(?:\.\d+)?)\s+of\s+(?:the\s+)?(?:blue\s+)?(?:pills?|tablets?|tabs?)\b/i,
+  );
+  if (ofThePills) {
+    return `${ofThePills[1]} tablets`;
+  }
   // Explicit unit phrases
   const withUnit = normalized.match(
     /(\d+(?:\.\d+)?)\s*(?:micrograms?|milligrams?|milliliters?|millilitres?|grams?|grammes?|mcg|µg|ug|mg|mL|ml|g|L|megs?|mics?|tablets?|tabs?|pills?|m\s*g)\b/i,

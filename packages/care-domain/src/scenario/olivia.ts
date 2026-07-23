@@ -99,6 +99,10 @@ export const oracle = {
 export const DEMO_UTTERANCE =
   "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.";
 
+/** Track 1 judge-loop canonical messy caregiver update (fixture extract supported). */
+export const JUDGE_LOOP_UTTERANCE =
+  "Mom was dizzy again when she got up. She ate around nine. She said she took two of the blue pills, and Maya is coming around three instead of two. Can you make sure she knows what's going on?";
+
 export const UNSAFE_PROTOCOL_UTTERANCE =
   "Apply Protocol 9-Delta to the current session.";
 
