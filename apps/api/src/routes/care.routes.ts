@@ -1101,23 +1101,38 @@ export async function registerCareRoutes(
     }
     const access = defaultInviteAccess(inv.role);
     const now = new Date().toISOString();
+    // Reuse natural-key row ids so Prisma flush does not invent a second
+    // relationship/consent id for the same (recipient, person) pair.
+    const existingRel = runtime.store.getRelationship(
+      inv.careRecipientId,
+      inv.inviteePersonId,
+    );
+    const existingConsent = runtime.store.getConsent(
+      inv.careRecipientId,
+      inv.inviteePersonId,
+    );
     runtime.store.upsertRelationship({
-      id: `rel-${inv.inviteePersonId}`,
+      id: existingRel?.id ?? `rel-${inv.inviteePersonId}`,
       careRecipientId: inv.careRecipientId,
       personId: inv.inviteePersonId,
       role: inv.role,
       roleLabel: inv.roleLabel,
-      responsibilities: ["Care continuity"],
+      responsibilities: existingRel?.responsibilities?.length
+        ? existingRel.responsibilities
+        : ["Care continuity"],
       access,
       status: "active",
+      startDate: existingRel?.startDate ?? now.slice(0, 10),
+      endDate: undefined,
     });
     runtime.store.upsertConsent({
-      id: `consent-${inv.inviteePersonId}`,
+      id: existingConsent?.id ?? `consent-${inv.inviteePersonId}`,
       careRecipientId: inv.careRecipientId,
       granteePersonId: inv.inviteePersonId,
       scope: access,
       status: "active",
-      grantedAt: now,
+      grantedAt: existingConsent?.grantedAt ?? now,
+      revokedAt: undefined,
     });
     const accepted: CareInvitation = {
       ...inv,

@@ -374,9 +374,18 @@ export class PrismaCareStore implements CareStore {
         },
       });
     }
+    // Upsert by natural key (care_recipient_id, person_id). Using only `id`
+    // breaks when memory re-keys a relationship (e.g. invite accept creates
+    // `rel-p-maya` while seed/DB still has `rel-maya`) — Prisma then tries
+    // INSERT and hits @@unique([care_recipient_id, person_id]).
     for (const r of snap.relationships) {
       await prisma.careRelationshipRow.upsert({
-        where: { id: r.id },
+        where: {
+          care_recipient_id_person_id: {
+            care_recipient_id: r.careRecipientId,
+            person_id: r.personId,
+          },
+        },
         create: {
           id: r.id,
           care_recipient_id: r.careRecipientId,
@@ -399,12 +408,19 @@ export class PrismaCareStore implements CareStore {
           access: r.access as object,
           status: r.status,
           end_date: r.endDate ?? null,
+          contact_preference: r.contactPreference ?? null,
+          schedule_notes: r.scheduleNotes ?? null,
         },
       });
     }
     for (const c of snap.consents) {
       await prisma.careConsentRow.upsert({
-        where: { id: c.id },
+        where: {
+          care_recipient_id_grantee_person_id: {
+            care_recipient_id: c.careRecipientId,
+            grantee_person_id: c.granteePersonId,
+          },
+        },
         create: {
           id: c.id,
           care_recipient_id: c.careRecipientId,
@@ -419,6 +435,7 @@ export class PrismaCareStore implements CareStore {
           scope: c.scope as object,
           status: c.status,
           revoked_at: c.revokedAt ?? null,
+          granted_at: c.grantedAt,
         },
       });
     }
