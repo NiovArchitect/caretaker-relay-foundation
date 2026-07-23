@@ -191,7 +191,63 @@ export function fixtureExtract(
     );
   }
 
-  // Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
+  
+  // Uncertain medication by color/description — never invent identity/dose
+  if (/blue (one|pill|pills)|pink (one|pill)|white (one|pill)|took (the |some )?pills?|not (sure|positive)|might have taken|already set some pills/.test(lower)) {
+    const uncertain = /not (sure|positive)|think|maybe|might|not certain|i'?m not/.test(lower);
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "medication_administration",
+          statement: uncertain
+            ? "Medication reported with uncertainty (color/description only — identity and dose unknown)"
+            : "Medication reported without matching authorized identity",
+          epistemicStatus: "UNCERTAIN",
+          confidence: 0.4,
+          recordedDose: /blue/.test(lower) ? "unidentified blue tablet(s)" : "unidentified tablet(s)",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+    uncertainties.push(
+      "Medication identity/dose not established from color or vague description. Human verification required.",
+    );
+  }
+
+  // Provider / PT schedule refusal or unavailability
+  if (
+    /(pt|physical therapy|thursday|appointment).{0,40}(won'?t work|will not work|can'?t make|cannot make|doesn'?t work)/.test(
+      lower,
+    ) ||
+    /(won'?t work|will not work).{0,40}(pt|physical therapy|thursday|appointment)/.test(
+      lower,
+    ) ||
+    /pt (called|said).{0,60}(won'?t|will not|can'?t|cannot)/.test(lower)
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "appointment_change",
+          statement:
+            "PT/appointment timing problem reported (needs reschedule confirmation)",
+          epistemicStatus: "REPORTED",
+          confidence: 0.7,
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+    uncertainties.push(
+      "New appointment time not specified — needs human confirmation.",
+    );
+  }
+
+// Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
   if (
     /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
       lower,

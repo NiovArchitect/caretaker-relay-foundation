@@ -12,7 +12,18 @@ import {
   timezonePolicyNotes,
   careRecipient as olivia,
   people,
+  encodeInvitationUpdate,
+  decodeInvitationFromUpdate,
+  listInvitations,
+  findInvitationByTokenGlobal,
+  encodeCoordinationUpdate,
+  listCoordination,
+  defaultInviteAccess,
+  newInviteToken,
   type VerificationBundle,
+  type CareInvitation,
+  type CareCoordinationMessage,
+  type CareRelationshipRole,
 } from "@caretaker-relay/care-domain";
 
 function correlationId(request: FastifyRequest): string {
@@ -703,6 +714,426 @@ export async function registerCareRoutes(
     }
     return reply.code(200).send({
       ...result,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Authenticated principal identity (server-established). */
+  app.get("/api/v1/care/me", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    return reply.code(200).send({
+      ok: true,
+      care_person_id: principal.carePersonId,
+      display_name: principal.displayName,
+      roles: principal.roles,
+      session_id: principal.sessionId,
+      auth_mode: principal.authMode,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /**
+   * Lab principal directory for explicit multi-principal product entry.
+   * Does not authenticate; passwords never returned.
+   */
+  app.get("/api/v1/care/auth/lab-principals", async (_request, reply) => {
+    const rows = [
+      {
+        care_person_id: people.sadeil.id,
+        display_name: people.sadeil.displayName,
+        role_label: "Primary family caregiver",
+      },
+      {
+        care_person_id: people.maya.id,
+        display_name: people.maya.displayName,
+        role_label: "Family / friend caregiver",
+      },
+      {
+        care_person_id: people.walter.id,
+        display_name: people.walter.displayName,
+        role_label: "Professional caregiver",
+      },
+    ];
+    return reply.code(200).send({
+      ok: true,
+      principals: rows,
+      note: "Synthetic lab directory. Sign in via POST /auth/login with care_person_id + password.",
+    });
+  });
+
+  /** Create invitation (authorized primary / * access). */
+  app.post<{
+    Body: {
+      invitee_care_person_id?: string;
+      invitee_display_name?: string;
+      role?: string;
+      role_label?: string;
+    };
+  }>("/api/v1/care/recipients/:id/invitations", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (
+      !access.allowed ||
+      !(
+        access.scope.informationCategories.includes("*") ||
+        access.scope.allowedActions.includes("*") ||
+        access.scope.allowedActions.includes("invite")
+      )
+    ) {
+      return reply.code(403).send({
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Only controlling authority can invite caregivers",
+        correlation_id: correlationId(request),
+      });
+    }
+    const body = request.body ?? {};
+    const inviteeId =
+      typeof body.invitee_care_person_id === "string"
+        ? body.invitee_care_person_id
+        : "";
+    if (!inviteeId) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "invitee_care_person_id required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const invitee =
+      runtime.store.getPerson(inviteeId) ??
+      Object.values(people).find((p) => p.id === inviteeId);
+    if (!invitee) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Invitee principal not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (!runtime.store.getPerson(inviteeId)) {
+      runtime.store.upsertPerson(invitee as typeof people.maya);
+    }
+    const existing = runtime.store.getRelationship(id, inviteeId);
+    if (existing?.status === "active") {
+      return reply.code(409).send({
+        ok: false,
+        code: "ALREADY_MEMBER",
+        message: "Invitee already has active membership",
+        correlation_id: correlationId(request),
+      });
+    }
+    const role = (body.role as CareRelationshipRole) || "family_caregiver";
+    const inv: CareInvitation = {
+      id: runtime.store.newId("inv"),
+      careRecipientId: id,
+      token: newInviteToken(),
+      inviterPersonId: principal.carePersonId,
+      inviteePersonId: inviteeId,
+      inviteeDisplayName:
+        typeof body.invitee_display_name === "string"
+          ? body.invitee_display_name
+          : invitee.displayName,
+      role,
+      roleLabel:
+        typeof body.role_label === "string"
+          ? body.role_label
+          : role === "paid_caregiver"
+            ? "Professional caregiver"
+            : "Family / friend caregiver",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+    };
+    const source = {
+      id: runtime.store.newId("src"),
+      kind: "system_derived" as const,
+      label: "Care invitation",
+      actorName: principal.displayName,
+      actorPersonId: principal.carePersonId,
+      recordedAt: inv.createdAt,
+      whyVisible: "Invitation created by authorized caregiver",
+    };
+    runtime.store.addUpdate(encodeInvitationUpdate(inv, source));
+    runtime.store.writeAudit({
+      at: inv.createdAt,
+      actorPersonId: principal.carePersonId,
+      action: "INVITATION_CREATED",
+      careRecipientId: id,
+      details: {
+        invitation_id: inv.id,
+        invitee: inviteeId,
+        role,
+      },
+    });
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      invitation: {
+        id: inv.id,
+        care_recipient_id: inv.careRecipientId,
+        token: inv.token,
+        invitee_care_person_id: inv.inviteePersonId,
+        invitee_display_name: inv.inviteeDisplayName,
+        role: inv.role,
+        role_label: inv.roleLabel,
+        status: inv.status,
+        created_at: inv.createdAt,
+        expires_at: inv.expiresAt,
+      },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/recipients/:id/invitations", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const list = listInvitations(runtime.store, id).map((inv) => ({
+      id: inv.id,
+      care_recipient_id: inv.careRecipientId,
+      invitee_care_person_id: inv.inviteePersonId,
+      invitee_display_name: inv.inviteeDisplayName,
+      role: inv.role,
+      role_label: inv.roleLabel,
+      status: inv.status,
+      created_at: inv.createdAt,
+      expires_at: inv.expiresAt,
+      accepted_at: inv.acceptedAt,
+      // token only for inviter with * control
+      token:
+        access.scope.allowedActions.includes("*") ||
+        access.scope.informationCategories.includes("*")
+          ? inv.token
+          : undefined,
+    }));
+    return reply.code(200).send({
+      ok: true,
+      invitations: list,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Accept invitation as authenticated invitee. */
+  app.post("/api/v1/care/invitations/:token/accept", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { token } = request.params as { token: string };
+    const inv = findInvitationByTokenGlobal(
+      runtime.store,
+      [olivia.id],
+      token,
+    );
+    if (!inv) {
+      return reply.code(404).send({
+        ok: false,
+        code: "INVITE_NOT_FOUND",
+        message: "Invitation not found or invalid",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (inv.status !== "pending") {
+      return reply.code(409).send({
+        ok: false,
+        code: "INVITE_NOT_PENDING",
+        message: `Invitation is ${inv.status}`,
+        correlation_id: correlationId(request),
+      });
+    }
+    if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
+      return reply.code(410).send({
+        ok: false,
+        code: "INVITE_EXPIRED",
+        message: "Invitation expired",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (principal.carePersonId !== inv.inviteePersonId) {
+      return reply.code(403).send({
+        ok: false,
+        code: "WRONG_PRINCIPAL",
+        message: "Authenticated principal is not the invitee",
+        correlation_id: correlationId(request),
+      });
+    }
+    const access = defaultInviteAccess(inv.role);
+    const now = new Date().toISOString();
+    runtime.store.upsertRelationship({
+      id: `rel-${inv.inviteePersonId}`,
+      careRecipientId: inv.careRecipientId,
+      personId: inv.inviteePersonId,
+      role: inv.role,
+      roleLabel: inv.roleLabel,
+      responsibilities: ["Care continuity"],
+      access,
+      status: "active",
+    });
+    runtime.store.upsertConsent({
+      id: `consent-${inv.inviteePersonId}`,
+      careRecipientId: inv.careRecipientId,
+      granteePersonId: inv.inviteePersonId,
+      scope: access,
+      status: "active",
+      grantedAt: now,
+    });
+    const accepted: CareInvitation = {
+      ...inv,
+      status: "accepted",
+      acceptedAt: now,
+    };
+    const source = {
+      id: runtime.store.newId("src"),
+      kind: "system_derived" as const,
+      label: "Invitation accepted",
+      actorName: principal.displayName,
+      actorPersonId: principal.carePersonId,
+      recordedAt: now,
+      whyVisible: "Membership established via invitation",
+    };
+    runtime.store.addUpdate(encodeInvitationUpdate(accepted, source));
+    runtime.store.writeAudit({
+      at: now,
+      actorPersonId: principal.carePersonId,
+      action: "INVITATION_ACCEPTED",
+      careRecipientId: inv.careRecipientId,
+      details: { invitation_id: inv.id },
+    });
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      invitation: {
+        id: accepted.id,
+        status: accepted.status,
+        care_recipient_id: accepted.careRecipientId,
+        accepted_at: accepted.acceptedAt,
+      },
+      membership: {
+        person_id: inv.inviteePersonId,
+        care_recipient_id: inv.careRecipientId,
+        role: inv.role,
+        role_label: inv.roleLabel,
+        status: "active",
+      },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Human coordination messages (not AI Relay). */
+  app.get(
+    "/api/v1/care/recipients/:id/coordination",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const messages = listCoordination(runtime.store, id).map((m) => ({
+        id: m.id,
+        care_recipient_id: m.careRecipientId,
+        from_person_id: m.fromPersonId,
+        from_display_name: m.fromDisplayName,
+        to_person_id: m.toPersonId,
+        body: m.body,
+        created_at: m.createdAt,
+        kind: m.kind,
+      }));
+      return reply.code(200).send({
+        ok: true,
+        messages,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { body?: string; to_person_id?: string };
+  }>("/api/v1/care/recipients/:id/coordination", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const text =
+      typeof request.body?.body === "string" ? request.body.body.trim() : "";
+    if (!text) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "body required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const now = new Date().toISOString();
+    const msg: CareCoordinationMessage = {
+      id: runtime.store.newId("coord"),
+      careRecipientId: id,
+      fromPersonId: principal.carePersonId,
+      fromDisplayName: principal.displayName,
+      toPersonId:
+        typeof request.body?.to_person_id === "string"
+          ? request.body.to_person_id
+          : undefined,
+      body: text,
+      createdAt: now,
+      kind: "coordination",
+    };
+    const source = {
+      id: runtime.store.newId("src"),
+      kind: "caregiver_text" as const,
+      label: "Care coordination message",
+      actorName: principal.displayName,
+      actorPersonId: principal.carePersonId,
+      recordedAt: now,
+      whyVisible: "Human coordination in this care space",
+      rawExcerpt: text.slice(0, 500),
+    };
+    runtime.store.addUpdate(encodeCoordinationUpdate(msg, source));
+    runtime.store.writeAudit({
+      at: now,
+      actorPersonId: principal.carePersonId,
+      action: "COORDINATION_POSTED",
+      careRecipientId: id,
+      details: { coordination_id: msg.id },
+    });
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      message: {
+        id: msg.id,
+        care_recipient_id: msg.careRecipientId,
+        from_person_id: msg.fromPersonId,
+        from_display_name: msg.fromDisplayName,
+        to_person_id: msg.toPersonId,
+        body: msg.body,
+        created_at: msg.createdAt,
+        kind: msg.kind,
+      },
       correlation_id: correlationId(request),
     });
   });

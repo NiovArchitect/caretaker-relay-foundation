@@ -264,6 +264,45 @@ export interface CareUpdate {
   source: SourceRef;
 }
 
+/**
+ * Invitation lifecycle for care-space membership.
+ * Durable via CareUpdate rows with structured summary (INVITE_V1:…).
+ */
+export type CareInvitationStatus =
+  | "pending"
+  | "accepted"
+  | "revoked"
+  | "expired"
+  | "consumed";
+
+export interface CareInvitation {
+  id: string;
+  careRecipientId: string;
+  token: string;
+  inviterPersonId: string;
+  inviteePersonId: string;
+  inviteeDisplayName: string;
+  inviteeEmail?: string;
+  role: CareRelationshipRole;
+  roleLabel: string;
+  status: CareInvitationStatus;
+  createdAt: string;
+  expiresAt?: string;
+  acceptedAt?: string;
+}
+
+/** Human coordination note (not AI Relay). */
+export interface CareCoordinationMessage {
+  id: string;
+  careRecipientId: string;
+  fromPersonId: string;
+  fromDisplayName: string;
+  toPersonId?: string;
+  body: string;
+  createdAt: string;
+  kind: "coordination";
+}
+
 export interface ConsentRecord {
   id: string;
   careRecipientId: string;
