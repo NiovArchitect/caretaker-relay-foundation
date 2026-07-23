@@ -225,7 +225,13 @@ export function defaultInviteAccess(role: CareRelationshipRole) {
   }
   return {
     informationCategories: ["Daily updates", "Appointments", "Care plan"],
-    allowedActions: ["receive_updates", "view_plan", "view_appointments"],
+    allowedActions: [
+      "receive_updates",
+      "view_plan",
+      "view_appointments",
+      "correct",
+      "record_observations",
+    ],
     canEscalate: true,
     authorityLimits: ["Cannot change medication schedule"],
   };

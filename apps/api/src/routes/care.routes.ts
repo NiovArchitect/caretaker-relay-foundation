@@ -760,6 +760,22 @@ export async function registerCareRoutes(
       });
     }
     const result = runtime.loop.applyCorrection(target, value, mapped.ctx);
+    if (result.kind === "access_denied") {
+      return reply.code(403).send({
+        ok: false,
+        code: "ACCESS_DENIED",
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    if (result.kind === "refusal") {
+      return reply.code(400).send({
+        ok: false,
+        code: "REFUSAL",
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
     await runtime.flush();
     return reply.code(200).send({
       ok: true,

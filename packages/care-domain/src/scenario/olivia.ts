@@ -173,7 +173,15 @@ export function seedOliviaScenario(store: CareStore): void {
     responsibilities: ["Visits", "Updates"],
     access: {
       informationCategories: ["Daily updates", "Appointments", "Care plan"],
-      allowedActions: ["receive_updates", "view_plan", "view_appointments"],
+      // "correct" lets Maya supersede wrong household facts (appointment time, etc.)
+      // without granting full primary/wildcard control.
+      allowedActions: [
+        "receive_updates",
+        "view_plan",
+        "view_appointments",
+        "correct",
+        "record_observations",
+      ],
       canEscalate: true,
       authorityLimits: ["Cannot change medication schedule"],
     },
@@ -227,7 +235,13 @@ export function seedOliviaScenario(store: CareStore): void {
     granteePersonId: people.maya.id,
     scope: {
       informationCategories: ["Daily updates", "Appointments", "Care plan"],
-      allowedActions: ["receive_updates", "view_plan"],
+      allowedActions: [
+        "receive_updates",
+        "view_plan",
+        "view_appointments",
+        "correct",
+        "record_observations",
+      ],
       canEscalate: true,
       authorityLimits: [],
     },

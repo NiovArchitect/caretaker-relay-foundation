@@ -504,11 +504,14 @@ export class CareLoopService {
     correctedValue: string,
     ctx: AuthCareContext,
   ): CareLoopResult {
+    // Corrections rewrite durable care truth — require explicit correct authority
+    // (or wildcard). Professional paid caregivers with task/observation scope only
+    // must not silently supersede household care assertions.
     const soft = evaluateAccess(
       this.config.store,
       ctx.actorPersonId,
       ctx.careRecipientId,
-      { householdId: ctx.householdId },
+      { householdId: ctx.householdId, requiredAction: "correct" },
     );
     if (!soft.allowed) {
       return {
