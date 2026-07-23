@@ -53,7 +53,8 @@ COPY packages/database packages/database
 COPY packages/care-domain packages/care-domain
 COPY packages/product-identity packages/product-identity
 
-COPY --from=deps /repo/packages/auth/node_modules ./packages/auth/node_modules 2>/dev/null || true
+# Workspace deps are hoisted into /repo/node_modules by npm ci (copied above).
+# Do not shell-redirect in COPY — BuildKit rejects "2>/dev/null || true" as a path.
 
 RUN groupadd --system --gid 1001 niov && \
     useradd --system --uid 1001 --gid niov --home /repo niov && \
