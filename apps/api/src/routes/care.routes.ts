@@ -397,8 +397,10 @@ export async function registerCareRoutes(
     }
 
     const temporal = interpretHumanTime(text);
+    // Prefer explicit body.mode; otherwise runtime production default (llm when keys present)
+    const mode = body.mode ?? runtime.understandMode;
     const result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
-      mode: body.mode,
+      mode,
     });
 
     if (result.kind === "access_denied") {
@@ -590,6 +592,140 @@ export async function registerCareRoutes(
     }
 
     return reply.code(200).send(response);
+  });
+
+  /**
+   * Grounded care Q&A from durable authorized state (not canned chat).
+   * Answers "what happened / what needs me / schedule" from current truth.
+   */
+  app.post<{
+    Body: { question?: string; care_recipient_id?: string };
+  }>("/api/v1/care/answer", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const question =
+      typeof request.body?.question === "string"
+        ? request.body.question.trim()
+        : "";
+    const careRecipientId =
+      typeof request.body?.care_recipient_id === "string"
+        ? request.body.care_recipient_id
+        : olivia.id;
+    if (!question) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "question required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const access = runtime.access(principal.carePersonId, careRecipientId);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const state = runtime.store.getCurrentState(careRecipientId);
+    const handoffs = runtime.store.getHandoffs(careRecipientId);
+    const latest = handoffs[handoffs.length - 1];
+    const corrections = runtime.store.getCorrections(careRecipientId);
+    const q = question.toLowerCase();
+    const lines: string[] = [];
+    if (
+      /what happened|what changed|since|continuity|caught up|going on/.test(q)
+    ) {
+      const events = (state?.events ?? []).slice(-8);
+      if (events.length === 0 && !latest) {
+        lines.push(
+          `I don't have confirmed care changes for this person yet that you're authorized to see.`,
+        );
+      } else {
+        lines.push(`Here's the current care continuity picture:`);
+        for (const e of events) {
+          lines.push(
+            `• [${e.epistemicStatus}] ${e.statement}${e.source?.actorName ? ` (from ${e.source.actorName})` : ""}`,
+          );
+        }
+        if (latest?.whatChanged?.length) {
+          lines.push(`Latest handoff notes:`);
+          for (const w of latest.whatChanged) lines.push(`• ${w}`);
+        }
+        if (corrections.length) {
+          const c = corrections[corrections.length - 1]!;
+          lines.push(
+            `Most recent correction: "${c.previousValue}" → "${c.correctedValue}" by ${c.correctedByPersonId}.`,
+          );
+        }
+      }
+    } else if (/still need|needs me|attention|left to do/.test(q)) {
+      const open = (state?.openSafetyReviews ?? []).filter(
+        (s) => s.status === "open",
+      );
+      const next = latest?.stillNeedsAttention ?? [];
+      if (!open.length && !next.length) {
+        lines.push("Nothing is currently flagged as needing attention.");
+      } else {
+        lines.push("Still needs attention:");
+        for (const s of open) lines.push(`• ${s.reason}`);
+        for (const n of next) lines.push(`• ${n}`);
+      }
+    } else if (/medication|dose|pill|meds/.test(q)) {
+      const sched = state?.medicationSchedules ?? [];
+      if (!sched.length) {
+        lines.push(
+          "I don't have an authorized medication schedule on file for this person in your view.",
+        );
+      } else {
+        lines.push("Authorized medication context:");
+        for (const s of sched) {
+          lines.push(
+            `• ${s.name}: ${s.dose} (${s.scheduleLabel}) — by ${s.authorizedBy}`,
+          );
+        }
+        lines.push(
+          "This is the authorized instruction on file — not a new prescription from Relay.",
+        );
+      }
+    } else if (/appointment|pt|physical therapy|schedule/.test(q)) {
+      const apts = state?.appointments ?? [];
+      if (!apts.length) {
+        lines.push("No appointments are on file in your authorized view.");
+      } else {
+        lines.push("Appointments:");
+        for (const a of apts) {
+          lines.push(
+            `• ${a.title}: ${a.startsAtLabel ?? a.startsAt} (${a.status}${a.epistemicStatus ? `, ${a.epistemicStatus}` : ""})`,
+          );
+        }
+      }
+    } else {
+      lines.push(
+        `I can answer from authorized care truth for this person — try asking what changed, what still needs attention, medications, or appointments.`,
+      );
+      const events = (state?.events ?? []).slice(-3);
+      if (events.length) {
+        lines.push("Recent facts:");
+        for (const e of events) lines.push(`• ${e.statement}`);
+      }
+    }
+    runtime.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: principal.carePersonId,
+      action: "CARE_ANSWER",
+      careRecipientId,
+      details: { question: question.slice(0, 200) },
+    });
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      answer: lines.join("\n"),
+      grounded: true,
+      understand_mode: runtime.understandMode,
+      correlation_id: correlationId(request),
+    });
   });
 
   app.post<{
@@ -901,6 +1037,7 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    // Tokens are one-time at create; listing never re-exposes raw tokens (hash-only storage).
     const list = listInvitations(runtime.store, id).map((inv) => ({
       id: inv.id,
       care_recipient_id: inv.careRecipientId,
@@ -912,12 +1049,6 @@ export async function registerCareRoutes(
       created_at: inv.createdAt,
       expires_at: inv.expiresAt,
       accepted_at: inv.acceptedAt,
-      // token only for inviter with * control
-      token:
-        access.scope.allowedActions.includes("*") ||
-        access.scope.informationCategories.includes("*")
-          ? inv.token
-          : undefined,
     }));
     return reply.code(200).send({
       ok: true,

@@ -748,6 +748,12 @@ export async function understandCareInput(
     }
     const now = opts.now ?? new Date().toISOString();
     const source = sourceRef(ctx, text, now);
+    const scheduleSummary = (opts.schedules ?? []).map((s) => ({
+      name: s.name,
+      dose: s.dose,
+      schedule: s.scheduleLabel,
+      authorizedBy: s.authorizedBy,
+    }));
     const result = await opts.provider.generateResponse({
       system: EXTRACTION_SYSTEM,
       user: text,
@@ -755,7 +761,8 @@ export async function understandCareInput(
         careRecipientId: ctx.careRecipientId,
         careRecipientName,
         actor: ctx.actorDisplayName,
-        note: "Candidates only; do not execute actions.",
+        authorizedMedicationSchedules: scheduleSummary,
+        note: "Candidates only; do not execute actions. Do not invent doses or diagnoses. If caregiver uses color-only pill language, mark UNCERTAIN.",
       }),
     });
     if (!result.ok) {

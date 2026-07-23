@@ -30,8 +30,16 @@ services:
         value: caretaker-relay
       - key: PORT
         value: "3100"
+      # Prefer llm when ANTHROPIC_API_KEY or OPENAI_API_KEY is configured in dashboard.
+      # Auto-detects keys at runtime; set explicitly to "fixture" only for deterministic lab.
       - key: CARE_UNDERSTAND_MODE
-        value: fixture
+        value: llm
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: CARE_STORE_BACKEND
         value: prisma
       # Public HTTPS origin of the caregiver UI (required for browser CORS)

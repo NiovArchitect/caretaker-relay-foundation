@@ -61,6 +61,8 @@ export class CareRuntimeService {
   >();
   private jwtSecret: string;
   private nonceStore: NonceStore;
+  private readonly _understandMode: "fixture" | "llm";
+  private readonly _llmReady: boolean;
 
   private constructor(config: CareRuntimeConfig, store: CareStore, backend: CareStoreBackend) {
     this.jwtSecret = config.jwtSecret;
@@ -69,6 +71,8 @@ export class CareRuntimeService {
     this.storeBackend = backend;
     this.durable = backend === "file" || backend === "prisma";
     this.storePath = config.storePath;
+    this._understandMode = config.understandMode ?? "fixture";
+    this._llmReady = Boolean(config.llmProvider) && this._understandMode === "llm";
     this.labAuth = new CareAuthService(config.jwtSecret);
     this.foundationAuth =
       config.authService ??
@@ -81,7 +85,7 @@ export class CareRuntimeService {
     }
     this.loop = new CareLoopService({
       store: this.store,
-      defaultMode: config.understandMode ?? "fixture",
+      defaultMode: this._understandMode,
       provider: config.llmProvider,
     });
   }
@@ -444,6 +448,14 @@ export class CareRuntimeService {
     return this.pendingBundles.get(id);
   }
 
+  get understandMode(): "fixture" | "llm" {
+    return this._understandMode;
+  }
+
+  get llmReady(): boolean {
+    return this._llmReady;
+  }
+
   productMeta() {
     return {
       product_id: PRODUCT_ID,
@@ -451,6 +463,8 @@ export class CareRuntimeService {
       store_backend: this.storeBackend,
       store_path: this.storePath ?? null,
       foundation_auth: Boolean(this.foundationAuth),
+      understand_mode: this._understandMode,
+      llm_ready: this._llmReady,
     };
   }
 

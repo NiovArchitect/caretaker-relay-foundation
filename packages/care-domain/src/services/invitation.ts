@@ -29,11 +29,10 @@ export function encodeInvitationUpdate(
   inv: CareInvitation,
   source: SourceRef,
 ): CareUpdate {
+  // SECURITY: persist token HASH only — never re-store raw token after create response.
   const payload = {
     kind: "invitation",
     tokenHash: hashToken(inv.token),
-    // Token only stored once at create for lab accept via API memory; clients get opaque token once
-    token: inv.token,
     inviterPersonId: inv.inviterPersonId,
     inviteePersonId: inv.inviteePersonId,
     inviteeDisplayName: inv.inviteeDisplayName,
@@ -71,7 +70,8 @@ export function decodeInvitationFromUpdate(u: CareUpdate): CareInvitation | null
     return {
       id: u.id,
       careRecipientId: u.careRecipientId,
-      token: String(raw.token ?? ""),
+      // Token not re-exposed from storage; only hash is durable
+      token: "",
       inviterPersonId: String(raw.inviterPersonId ?? ""),
       inviteePersonId: String(raw.inviteePersonId ?? u.toPersonId),
       inviteeDisplayName: String(raw.inviteeDisplayName ?? ""),
@@ -86,6 +86,33 @@ export function decodeInvitationFromUpdate(u: CareUpdate): CareInvitation | null
   } catch {
     return null;
   }
+}
+
+/** Match invitation by hashing the presented token against stored tokenHash. */
+export function matchInvitationToken(
+  store: CareStore,
+  careRecipientId: string,
+  presentedToken: string,
+): CareInvitation | null {
+  const th = hashToken(presentedToken);
+  for (const u of store.getUpdates(careRecipientId)) {
+    if (!u.summary.startsWith(INVITE_PREFIX)) continue;
+    try {
+      const raw = JSON.parse(u.summary.slice(INVITE_PREFIX.length)) as Record<
+        string,
+        unknown
+      >;
+      if (String(raw.tokenHash ?? "") !== th) continue;
+      const inv = decodeInvitationFromUpdate(u);
+      if (inv) {
+        inv.token = presentedToken; // restore for accept flow only in-memory
+        return inv;
+      }
+    } catch {
+      /* continue */
+    }
+  }
+  return null;
 }
 
 export function listInvitations(
@@ -103,11 +130,7 @@ export function findInvitationByTokenForRecipient(
   careRecipientId: string,
   token: string,
 ): CareInvitation | null {
-  const th = hashToken(token);
-  for (const inv of listInvitations(store, careRecipientId)) {
-    if (inv.token === token || hashToken(inv.token) === th) return inv;
-  }
-  return null;
+  return matchInvitationToken(store, careRecipientId, token);
 }
 
 /** Find invite token across a known recipient list. */
@@ -117,7 +140,7 @@ export function findInvitationByTokenGlobal(
   token: string,
 ): CareInvitation | null {
   for (const id of careRecipientIds) {
-    const found = findInvitationByTokenForRecipient(store, id, token);
+    const found = matchInvitationToken(store, id, token);
     if (found) return found;
   }
   return null;

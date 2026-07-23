@@ -27,6 +27,35 @@ export interface CareApp {
   runtime: CareRuntimeService;
 }
 
+function resolveUnderstandMode(
+  config: BuildCareAppConfig,
+): "fixture" | "llm" {
+  if (config.understandMode) return config.understandMode;
+  const env = process.env.CARE_UNDERSTAND_MODE?.toLowerCase();
+  if (env === "fixture") return "fixture";
+  if (env === "llm") return "llm";
+  // Auto: prefer llm when a provider key is present
+  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return "llm";
+  return "fixture";
+}
+
+function tryCreateLlmProvider(): import("@caretaker-relay/care-domain").LLMProvider | undefined {
+  try {
+    // Dynamic import of Foundation factory — only when keys exist
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+      return undefined;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getLLMProvider } = require("./services/llm/llm.service.js") as {
+      getLLMProvider: () => import("@caretaker-relay/care-domain").LLMProvider;
+    };
+    return getLLMProvider();
+  } catch (err) {
+    logger.warn({ err }, "LLM provider unavailable; care understand stays fixture");
+    return undefined;
+  }
+}
+
 export async function buildCareApp(
   config: BuildCareAppConfig = {},
 ): Promise<CareApp> {
@@ -44,14 +73,21 @@ export async function buildCareApp(
     else storeBackend = "memory";
   }
 
+  const understandMode = resolveUnderstandMode(config);
+  const llmProvider =
+    config.llmProvider ??
+    (understandMode === "llm" ? tryCreateLlmProvider() : undefined);
+  const effectiveMode: "fixture" | "llm" =
+    understandMode === "llm" && llmProvider ? "llm" : "fixture";
+
   const runtime = await CareRuntimeService.create({
     jwtSecret,
     storeBackend,
     storePath: config.storePath ?? undefined,
     seedOlivia: config.seedOlivia ?? true,
     seedFoundationAuth: config.seedFoundationAuth ?? storeBackend === "prisma",
-    understandMode: config.understandMode ?? "fixture",
-    llmProvider: config.llmProvider,
+    understandMode: effectiveMode,
+    llmProvider,
     nonceStore: new MemoryNonceStore(),
   });
 
@@ -117,6 +153,11 @@ export async function buildCareApp(
       product_id: "caretaker-relay",
       timestamp: new Date().toISOString(),
       care: runtime.productMeta(),
+      understand_mode: effectiveMode,
+      llm_provider_ready: Boolean(llmProvider),
+      llm_keys_present: Boolean(
+        process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
+      ),
     });
   });
 
