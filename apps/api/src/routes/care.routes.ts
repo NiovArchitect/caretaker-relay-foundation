@@ -13,6 +13,7 @@ import {
   careRecipient as olivia,
   people,
   encodeInvitationUpdate,
+  markInvitationConsumed,
   decodeInvitationFromUpdate,
   listInvitations,
   findInvitationByTokenGlobal,
@@ -1164,7 +1165,8 @@ export async function registerCareRoutes(
       recordedAt: now,
       whyVisible: "Membership established via invitation",
     };
-    runtime.store.addUpdate(encodeInvitationUpdate(accepted, source));
+    // Persist accepted + consume token hash so replay cannot re-match as pending.
+    runtime.store.addUpdate(markInvitationConsumed(accepted, source));
     runtime.store.writeAudit({
       at: now,
       actorPersonId: principal.carePersonId,

@@ -95,6 +95,7 @@ export function matchInvitationToken(
   presentedToken: string,
 ): CareInvitation | null {
   const th = hashToken(presentedToken);
+  let best: CareInvitation | null = null;
   for (const u of store.getUpdates(careRecipientId)) {
     if (!u.summary.startsWith(INVITE_PREFIX)) continue;
     try {
@@ -102,17 +103,53 @@ export function matchInvitationToken(
         string,
         unknown
       >;
-      if (String(raw.tokenHash ?? "") !== th) continue;
+      // Skip consumed tokens (hash cleared or marked used after accept).
+      const storedHash = String(raw.tokenHash ?? "");
+      if (!storedHash || storedHash.startsWith("used:")) continue;
+      if (storedHash !== th) continue;
       const inv = decodeInvitationFromUpdate(u);
-      if (inv) {
-        inv.token = presentedToken; // restore for accept flow only in-memory
+      if (!inv) continue;
+      inv.token = presentedToken; // restore for accept flow only in-memory
+      // Prefer terminal statuses when multiple rows share a hash (should not happen).
+      if (!best || inv.status !== "pending") best = inv;
+      if (inv.status === "accepted" || inv.status === "revoked" || inv.status === "expired") {
         return inv;
       }
     } catch {
       /* continue */
     }
   }
-  return null;
+  return best;
+}
+
+/** After accept: keep audit row but prevent token replay via hash. */
+export function markInvitationConsumed(
+  inv: CareInvitation,
+  source: SourceRef,
+): CareUpdate {
+  const payload = {
+    kind: "invitation",
+    tokenHash: `used:${hashToken(inv.token || "consumed")}`,
+    inviterPersonId: inv.inviterPersonId,
+    inviteePersonId: inv.inviteePersonId,
+    inviteeDisplayName: inv.inviteeDisplayName,
+    inviteeEmail: inv.inviteeEmail,
+    role: inv.role,
+    roleLabel: inv.roleLabel,
+    status: "accepted" as CareInvitationStatus,
+    createdAt: inv.createdAt,
+    expiresAt: inv.expiresAt,
+    acceptedAt: inv.acceptedAt ?? new Date().toISOString(),
+  };
+  return {
+    id: inv.id,
+    careRecipientId: inv.careRecipientId,
+    toPersonId: inv.inviteePersonId,
+    summary: INVITE_PREFIX + JSON.stringify(payload),
+    status: "ready",
+    safetyClass: "low",
+    source,
+  };
 }
 
 export function listInvitations(
