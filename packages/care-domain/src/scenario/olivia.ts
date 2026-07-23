@@ -1,6 +1,7 @@
 /**
- * Canonical controlled lab scenario: Olivia care circle.
+ * Canonical controlled lab scenario: Evelyn Carter care circle.
  * Synthetic data for Phase 1 evidence — NOT caregiver-validated field data.
+ * Technical IDs retained for API continuity; display names are synthetic (Evelyn/Marcus/…).
  */
 
 import type { CareStore } from "../store/memory-store.js";
@@ -16,30 +17,30 @@ export const HOUSEHOLD_OTHER = "hh-other";
 
 export const careRecipient: CareRecipient = {
   id: "cr-olivia",
-  displayName: "Olivia",
-  preferredName: "Olivia",
+  displayName: "Evelyn Carter",
+  preferredName: "Evelyn",
   householdId: HOUSEHOLD_OLIVIA,
 };
 
 export const people = {
   sadeil: {
     id: "p-sadeil",
-    displayName: "Sadeil",
+    displayName: "Marcus Carter",
     kind: "family_caregiver" as const,
   },
   maya: {
     id: "p-maya",
-    displayName: "Maya",
+    displayName: "Maya Bennett",
     kind: "family_caregiver" as const,
   },
   walter: {
     id: "p-walter",
-    displayName: "Walter",
+    displayName: "Daniel Kim",
     kind: "professional" as const,
   },
   drShah: {
     id: "p-dr-shah",
-    displayName: "Dr. Shah",
+    displayName: "Dr. Priya Shah",
     kind: "provider" as const,
   },
   pt: {
@@ -59,7 +60,7 @@ export const people = {
   },
   otherRecipient: {
     id: "cr-maya-as-recipient",
-    displayName: "Maya (as care recipient — separate context)",
+    displayName: "Other care recipient (separate context)",
     kind: "care_recipient" as const,
   },
 } satisfies Record<string, Person>;
@@ -70,15 +71,15 @@ export const medicationSchedule: MedicationSchedule = {
   name: "Lunch medication",
   dose: "2.5 mg",
   scheduleLabel: "Daily with lunch",
-  authorizedBy: "Dr. Shah",
+  authorizedBy: "Dr. Priya Shah",
   authorizedAt: "2026-07-18",
   source: {
     id: "src-dr-shah-med",
     kind: "provider_instruction",
-    label: "Dr. Shah medication instruction",
-    actorName: "Dr. Shah",
+    label: "Dr. Priya Shah medication instruction",
+    actorName: "Dr. Priya Shah",
     recordedAt: "2026-07-18T10:00:00Z",
-    whyVisible: "Dr. Shah updated the medication instruction on July 18.",
+    whyVisible: "Dr. Priya Shah updated the medication instruction on July 18.",
   },
 };
 
@@ -87,10 +88,10 @@ export const oracle = {
   careRecipientId: careRecipient.id,
   careRecipientName: careRecipient.displayName,
   householdId: HOUSEHOLD_OLIVIA,
-  participants: ["Sadeil", "Maya", "Walter", "Dr. Shah", "Physical Therapy"],
+  participants: ["Marcus Carter", "Maya Bennett", "Daniel Kim", "Dr. Priya Shah", "Physical Therapy"],
   authorizedLunchDose: "2.5 mg",
   newPtTime: "Thursday 2:30 PM",
-  intendedUpdateRecipient: "Maya",
+  intendedUpdateRecipient: "Maya Bennett",
   meal: "around noon",
   observation: "more tired than usual",
   medicationEvent: "lunch medication given",
@@ -117,7 +118,7 @@ export function sadeilContext(sessionId = "sess-lab-1"): AuthCareContext {
   };
 }
 
-/** Seed Olivia scenario into a CareStore (synthetic). */
+/** Seed Evelyn Carter scenario into a CareStore (synthetic). */
 export function seedOliviaScenario(store: CareStore): void {
   store.upsertRecipient(careRecipient);
   for (const p of Object.values(people)) {
@@ -161,34 +162,30 @@ export function seedOliviaScenario(store: CareStore): void {
     status: "active",
   });
 
-  // Relationships: seed only if missing — do not revive revoked access via relationship overwrite.
-  const mayaRel = store
-    .getRelationships(careRecipient.id)
-    .find((r) => r.personId === people.maya.id);
-  if (!mayaRel) {
-    store.upsertRelationship({
-      id: "rel-maya",
-      careRecipientId: careRecipient.id,
-      personId: people.maya.id,
-      role: "adult_child",
-      roleLabel: "Daughter",
-      responsibilities: ["Visits", "Updates"],
-      access: {
-        informationCategories: ["Daily updates", "Appointments", "Care plan"],
-        allowedActions: ["receive_updates", "view_plan", "view_appointments"],
-        canEscalate: true,
-        authorityLimits: ["Cannot change medication schedule"],
-      },
-      status: "active",
-    });
-  }
+  // Lab matrix: always restore Maya as active family/friend caregiver.
+  // Care event history still survives restarts; access baseline resets for synthetic eval.
+  store.upsertRelationship({
+    id: "rel-maya",
+    careRecipientId: careRecipient.id,
+    personId: people.maya.id,
+    role: "adult_child",
+    roleLabel: "Family / friend caregiver",
+    responsibilities: ["Visits", "Updates"],
+    access: {
+      informationCategories: ["Daily updates", "Appointments", "Care plan"],
+      allowedActions: ["receive_updates", "view_plan", "view_appointments"],
+      canEscalate: true,
+      authorityLimits: ["Cannot change medication schedule"],
+    },
+    status: "active",
+  });
 
   store.upsertRelationship({
     id: "rel-walter",
     careRecipientId: careRecipient.id,
     personId: people.walter.id,
     role: "paid_caregiver",
-    roleLabel: "Home caregiver",
+    roleLabel: "Professional caregiver",
     responsibilities: ["In-home care tasks"],
     access: {
       informationCategories: [
@@ -223,27 +220,20 @@ export function seedOliviaScenario(store: CareStore): void {
     status: "active",
   });
 
-  // Do NOT re-activate revoked consent on every seed (restart continuity).
-  const existingMayaConsent = store.getConsent(
-    careRecipient.id,
-    people.maya.id,
-  );
-  if (!existingMayaConsent) {
-    store.upsertConsent({
-      id: "consent-maya",
-      careRecipientId: careRecipient.id,
-      granteePersonId: people.maya.id,
-      scope: {
-        informationCategories: ["Daily updates", "Appointments", "Care plan"],
-        allowedActions: ["receive_updates", "view_plan"],
-        canEscalate: true,
-        authorityLimits: [],
-      },
-      status: "active",
-      grantedAt: "2026-07-01T00:00:00Z",
-    });
-  }
-  // If consent exists (including revoked), leave authority state intact.
+  // Lab matrix: re-assert Maya consent active so prior revoke tests do not poison the suite.
+  store.upsertConsent({
+    id: "consent-maya",
+    careRecipientId: careRecipient.id,
+    granteePersonId: people.maya.id,
+    scope: {
+      informationCategories: ["Daily updates", "Appointments", "Care plan"],
+      allowedActions: ["receive_updates", "view_plan"],
+      canEscalate: true,
+      authorityLimits: [],
+    },
+    status: "active",
+    grantedAt: "2026-07-01T00:00:00Z",
+  });
 
   store.upsertMedSchedule(medicationSchedule);
 

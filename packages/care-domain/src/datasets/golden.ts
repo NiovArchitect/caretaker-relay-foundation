@@ -51,7 +51,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     input:
       "Mom ate around noon. She seemed more tired than usual. PT moved Thursday's appointment to 2:30. I gave the lunch medication. Let Maya know.",
     oracle: {
-      expectRecipientName: "Olivia",
+      expectRecipientName: "Evelyn Carter",
       expectEventTypes: [
         "meal",
         "observation",
@@ -68,7 +68,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     input:
       "so um yeah I was over there and like mom you know she actually ate something around noon I think it was lunch and she seemed you know more tired than usual and then PT called or something and moved Thursday to 2:30 and I did give the lunch meds oh and can you let Maya know",
     oracle: {
-      expectRecipientName: "Olivia",
+      expectRecipientName: "Evelyn Carter",
       expectEventTypes: ["meal", "observation", "appointment_change", "medication_administration", "communication_request"],
     },
     synthetic: true,
@@ -98,7 +98,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     kind: "pronoun_ambiguity",
     input: "She ate around noon and she seemed tired. I gave her the lunch medication.",
     oracle: {
-      expectRecipientName: "Olivia",
+      expectRecipientName: "Evelyn Carter",
       expectEventTypes: ["meal", "observation", "medication_administration"],
       notes: "Pronouns resolve via authenticated care context, not model guess alone",
     },
@@ -109,7 +109,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     kind: "wrong_person",
     input: "Tell Walter that Maya said Olivia ate lunch — wait, actually I meant Sadeil said that.",
     oracle: {
-      expectRecipientName: "Olivia",
+      expectRecipientName: "Evelyn Carter",
       notes: "Background correction; provenance is speaker, not care event identity",
     },
     synthetic: true,

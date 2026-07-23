@@ -93,7 +93,7 @@ describe("Care LLM fixture + live-scripted path", () => {
     const result = await understandCareInput(
       DEMO_UTTERANCE,
       sadeilContext("sess-llm-lab"),
-      "Olivia",
+      "Evelyn Carter",
       { mode: "llm", provider },
     );
     expect(result.kind).toBe("understood");
@@ -143,7 +143,7 @@ describe("Care LLM fixture + live-scripted path", () => {
     const result = await understandCareInput(
       "broken model output path",
       sadeilContext(),
-      "Olivia",
+      "Evelyn Carter",
       { mode: "llm", provider },
     );
     expect(result.kind).toBe("understood");

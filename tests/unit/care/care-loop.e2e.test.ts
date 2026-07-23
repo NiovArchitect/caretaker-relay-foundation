@@ -33,10 +33,10 @@ import {
 } from "../../../packages/care-domain/src/index";
 
 describe("SLICE A/B: care runtime + domain boundary", () => {
-  it("creates foundation care runtime with Olivia seed", () => {
+  it("creates foundation care runtime with Evelyn Carter seed", () => {
     const { store, service } = createCareRuntime();
     expect(store.getRecipient(oracle.careRecipientId)?.displayName).toBe(
-      "Olivia",
+      "Evelyn Carter",
     );
     expect(store.getMedSchedules(oracle.careRecipientId)[0]?.dose).toBe(
       "2.5 mg",
@@ -237,7 +237,7 @@ describe("SLICE G: access / consent isolation", () => {
     const { store } = createCareRuntime();
     const rows = whoCanSeeWhat(store, careRecipient.id);
     expect(rows.length).toBeGreaterThanOrEqual(3);
-    expect(rows.some((r) => r.displayName === "Maya")).toBe(true);
+    expect(rows.some((r) => /Maya/i.test(r.displayName))).toBe(true);
   });
 });
 

@@ -41,7 +41,7 @@ export interface CareRuntimeConfig {
   llmProvider?: LLMProvider;
   authService?: AuthService;
   nonceStore?: NonceStore;
-  /** When true, seed Foundation Entity rows + CarePrincipalLink for Olivia cast */
+  /** When true, seed Foundation Entity rows + CarePrincipalLink for Evelyn Carter cast */
   seedFoundationAuth?: boolean;
 }
 
@@ -110,7 +110,7 @@ export class CareRuntimeService {
     const runtime = new CareRuntimeService(config, store, backend);
 
     if (config.seedOlivia !== false) {
-      // Always re-upsert Olivia scenario relationships so lab access matrix
+      // Always re-upsert Evelyn Carter scenario relationships so lab access matrix
       // is not left in a revoked state from a prior run.
       seedOliviaScenario(store);
       if (store instanceof PrismaCareStore) {
@@ -127,7 +127,7 @@ export class CareRuntimeService {
     return runtime;
   }
 
-  /** Seed Entity + password + CarePrincipalLink for Olivia cast (idempotent). */
+  /** Seed Entity + password + CarePrincipalLink for Evelyn Carter cast (idempotent). */
   async ensureFoundationPrincipals(): Promise<void> {
     const cast: Array<{
       person: (typeof people)[keyof typeof people];

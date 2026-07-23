@@ -99,7 +99,7 @@ describe("fixture understand → verification discrepancy", () => {
     const r = await understandCareInput(
       "I gave the lunch medication 2.5 grams.",
       sadeilContext(),
-      "Olivia",
+      "Evelyn Carter",
       { mode: "fixture" },
     );
     expect(r.kind).toBe("understood");
@@ -125,7 +125,7 @@ describe("fixture understand → verification discrepancy", () => {
     const r = await understandCareInput(
       "I gave the lunch medication 2500 mcg.",
       sadeilContext(),
-      "Olivia",
+      "Evelyn Carter",
       { mode: "fixture" },
     );
     expect(r.kind).toBe("understood");
