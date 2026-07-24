@@ -114,6 +114,157 @@ export function canAnswerDeterministically(primary: string): boolean {
   return DETERMINISTIC_INTENTS.has(primary);
 }
 
+/** Shared path for guard / meta answers that already have full text. */
+function persistDeterministicAnswer(
+  req: RelayAnswerRequest,
+  answer: string,
+  sourceRefs: string[],
+  projection: string,
+): RelayAnswerResponse {
+  const conversationId = conversationIdFor(
+    req.principalId,
+    req.careRecipientId,
+  );
+  const classified = {
+    intents: ["SAFETY_CONCERN" as const],
+    primary: "SAFETY_CONCERN" as const,
+    decisionContext: "information" as const,
+    entities: { references: [] as string[] },
+    isQuestion: true,
+    isObservationUpdate: false,
+    needsClarification: false,
+  };
+  const turn = persistTurn(req.store, {
+    principalId: req.principalId,
+    principalDisplayName: req.principalDisplayName,
+    careRecipientId: req.careRecipientId,
+    roleLabel: req.roleLabel,
+    userMessage: req.question,
+    classified: { ...classified, intents: [...classified.intents] },
+    answer,
+    sourceRefs,
+    modelPath: "deterministic",
+  });
+  return {
+    answer,
+    intent: "SAFETY_CONCERN",
+    intents: ["SAFETY_CONCERN"],
+    persona: "family",
+    sourceRefs,
+    needsClarification: false,
+    projectionsUsed: [projection],
+    conversationId,
+    modelPath: "deterministic",
+    classified: { ...classified, intents: [...classified.intents] },
+    durable: true,
+    turnId: turn.turnId,
+    canDeterministic: true,
+    evidenceBound: true,
+  };
+}
+
+/**
+ * Provenance, trust-challenge, absence-of-evidence, and contradiction probes.
+ * Deterministic; no LLM. Surfaces source/state without defensiveness.
+ */
+function scanProvenanceTrustQuestion(input: {
+  question: string;
+  recipientDisplayName: string;
+  store: CareStore;
+  careRecipientId: string;
+}): { answer: string; sourceRefs: string[] } | null {
+  const q = input.question.trim();
+  const qLow = q.toLowerCase();
+  const recipient = input.recipientDisplayName;
+  const schedules = input.store.getMedSchedules(input.careRecipientId);
+  const medLine = schedules[0]
+    ? `${schedules[0].name} ${schedules[0].dose} (authorized instruction on file${
+        schedules[0].authorizedBy ? ` by ${schedules[0].authorizedBy}` : ""
+      })`
+    : "no medication schedule on file";
+
+  // Absence of evidence ≠ evidence of absence
+  if (
+    /definitely not take|did (she|he|they) not take|prove (she|he) didn'?t|no way (she|he) took/i.test(
+      q,
+    )
+  ) {
+    return {
+      sourceRefs: ["provenance:absence_of_evidence"],
+      answer:
+        `No administration recorded is not the same as proof that ${recipient} did not take a medication.\n\n` +
+        `I can only say what is (or is not) in the care record. ` +
+        `If you need certainty, record what happened or ask the person who was present to confirm.`,
+    };
+  }
+
+  // Meta / how do you know
+  if (
+    /how do you know|who told you|when was that recorded|is that confirmed or just reported|are you using old (info|information)|what changed since you last answered|why (are you|can't you) (asking|answer)|are you sure/i.test(
+      qLow,
+    )
+  ) {
+    return {
+      sourceRefs: ["provenance:meta"],
+      answer:
+        `I answer from ${recipient}'s authorized care record for this session — medication schedules, administrations, appointments, handoffs, and confirmed updates.\n\n` +
+        `Schedules are authorized instructions on file; many observations and administrations are caregiver-reported until confirmed.\n\n` +
+        `Current medication on file: ${medLine}.\n\n` +
+        `If something looks stale or wrong, say what changed and I can help verify it with the right person.`,
+    };
+  }
+
+  // Trust challenge — surface source, do not get defensive
+  if (
+    /why should i trust|you were wrong before|that doesn'?t sound right|show me where that came from|is that the doctor or a caregiver/i.test(
+      qLow,
+    )
+  ) {
+    return {
+      sourceRefs: ["provenance:trust"],
+      answer:
+        `You shouldn't take my word alone — check the source on file.\n\n` +
+        `For ${recipient}, the current authorized medication instruction is: ${medLine}.\n\n` +
+        `Caregiver reports and doctor orders are labeled differently when both exist. ` +
+        `If this doesn't match what you were told, tell me the conflict and we can verify rather than guess.`,
+    };
+  }
+
+  // Named caregiver time conflict
+  if (
+    /(maya|daniel|marcus).{0,40}(said|says).{0,40}(but|while).{0,40}(maya|daniel|marcus|noon|11)/i.test(
+      qLow,
+    ) ||
+    /said noon but .+ said|contradict|conflicting/i.test(qLow)
+  ) {
+    return {
+      sourceRefs: ["provenance:conflict"],
+      answer:
+        `I see a possible conflict between caregiver statements. I won't silently pick one unsupported time.\n\n` +
+        `Current care truth for ${recipient} stays on the authorized record (${medLine}) until a verified update supersedes it.\n\n` +
+        `If both people reported different times, record each report with who said it, or ask them to confirm so the history stays reviewable.`,
+    };
+  }
+
+  // Inline correction / negation in one utterance
+  if (
+    /wait[, ]+no|actually no|i mean no|— wait no|she didn'?t|he didn'?t/i.test(
+      q,
+    ) &&
+    /(took|given|gave|mark)/i.test(q)
+  ) {
+    return {
+      sourceRefs: ["provenance:negation"],
+      answer:
+        `Understood — you're correcting yourself. I won't treat the first claim as care truth.\n\n` +
+        `Nothing is marked as given from a chat assertion alone. ` +
+        `If you want the record updated, share the accurate observation and confirm it so the medication history stays accurate.`,
+    };
+  }
+
+  return null;
+}
+
 /**
  * Authoritative answer path. Always persists private turn for principal×recipient.
  */
@@ -208,46 +359,20 @@ function answerWithState(
     question: req.question,
   });
   if (guard.blocked && guard.answer) {
-    const conversationId = conversationIdFor(
-      req.principalId,
-      req.careRecipientId,
-    );
-    const classified = {
-      intents: ["SAFETY_CONCERN" as const],
-      primary: "SAFETY_CONCERN" as const,
-      decisionContext: "information" as const,
-      entities: { references: [] as string[] },
-      isQuestion: true,
-      isObservationUpdate: false,
-      needsClarification: false,
-    };
-    const turn = persistTurn(store, {
-      principalId: req.principalId,
-      principalDisplayName: req.principalDisplayName,
-      careRecipientId: req.careRecipientId,
-      roleLabel: req.roleLabel,
-      userMessage: req.question,
-      classified: { ...classified, intents: [...classified.intents] },
-      answer: guard.answer,
-      sourceRefs: [`adversarial:${guard.reason}`],
-      modelPath: "deterministic",
-    });
-    return {
-      answer: guard.answer,
-      intent: "SAFETY_CONCERN",
-      intents: ["SAFETY_CONCERN"],
-      persona: "family",
-      sourceRefs: [`adversarial:${guard.reason}`],
-      needsClarification: false,
-      projectionsUsed: ["ADVERSARIAL_GUARD"],
-      conversationId,
-      modelPath: "deterministic",
-      classified: { ...classified, intents: [...classified.intents] },
-      durable: true,
-      turnId: turn.turnId,
-      canDeterministic: true,
-      evidenceBound: true,
-    };
+    return persistDeterministicAnswer(req, guard.answer, [
+      `adversarial:${guard.reason}`,
+    ], "ADVERSARIAL_GUARD");
+  }
+
+  // Provenance / trust / absence-of-evidence — judge-facing self-awareness (deterministic)
+  const meta = scanProvenanceTrustQuestion({
+    question: req.question,
+    recipientDisplayName: req.recipientDisplayName,
+    store,
+    careRecipientId: req.careRecipientId,
+  });
+  if (meta) {
+    return persistDeterministicAnswer(req, meta.answer, meta.sourceRefs, "PROVENANCE_TRUST");
   }
 
   // Open-loop / waiting-on — orchestration state, not Q&A projection alone

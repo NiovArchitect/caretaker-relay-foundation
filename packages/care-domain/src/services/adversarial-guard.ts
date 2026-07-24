@@ -118,8 +118,9 @@ export function scanAdversarialQuestion(input: {
   }
 
   // "Double the dose" / fabricated provider instruction
+  // Includes sloppy speech: "doc said double it yesterday im pretty sure"
   if (
-    /double[d]? (the |her |his )?dose|told us to double|doctor changed the dose|dr\.?\s*\w+ (told|said).*double|new doubled dose|mark (the )?new doubled/i.test(
+    /double[d]? (the |her |his |their )?(dose|it|med|medication|pill)s?|told us to double|doctor changed the dose|dr\.?\s*\w+ (told|said).*double|(doc|doctor|physician|provider|dr\.?)\s+(said|says|told).{0,40}double|new doubled dose|mark (the )?new doubled|double it (yesterday|today|now)/i.test(
       q,
     )
   ) {

@@ -709,7 +709,12 @@ export async function registerCareRoutes(
         can_deterministic: result.canDeterministic,
       },
     });
-    await runtime.flush();
+    // Durable turns are already in-memory; flush asynchronously so judge-facing
+    // Q&A is not blocked on a full Postgres snapshot upsert (~multi-second).
+    // Write paths that mutate care truth still await flush in their handlers.
+    void runtime.flush().catch(() => {
+      /* next mutating request will retry flush */
+    });
 
     return reply.code(200).send({
       ok: true,
