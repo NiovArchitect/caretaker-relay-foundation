@@ -331,7 +331,7 @@ export function compareMedicationDoses(
       status: "discrepancy",
       severity: "high",
       message:
-        "The reported amount doesn't clearly match the current medication instructions. Please check the medication label or confirm with the prescribing team before marking this complete.",
+        "The reported amount doesn't clearly match the current medication instructions. Please check the medication label or confirm with the care team before marking this complete.",
       recordedDose: recorded.raw,
       authorizedDose: authorized.raw,
       recorded,
