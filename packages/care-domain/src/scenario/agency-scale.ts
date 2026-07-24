@@ -15,7 +15,10 @@ export const ORG_BAY = {
   name: "Bay Care Partners",
 };
 
-/** 5 DSPs, 5 recipients, cross-assignment matrix + second org isolation. */
+/**
+ * Multi-DSP / multi-recipient matrix + second org isolation.
+ * Extended to support a 20-person care-team authorization matrix on one recipient.
+ */
 export function seedAgencyScaleFixture(store: CareStore): void {
   const recipients: CareRecipient[] = [
     { id: "cr-scale-1", displayName: "Alex Morgan", preferredName: "Alex", householdId: "hh-scale-1" },
@@ -25,6 +28,13 @@ export function seedAgencyScaleFixture(store: CareStore): void {
     { id: "cr-scale-5", displayName: "Riley Brooks", preferredName: "Riley", householdId: "hh-scale-5" },
     // Agency B only
     { id: "cr-bay-1", displayName: "Taylor Quinn", preferredName: "Taylor", householdId: "hh-bay-1" },
+    // Large care-team recipient
+    {
+      id: "cr-team20",
+      displayName: "Pat Okafor",
+      preferredName: "Pat",
+      householdId: "hh-team20",
+    },
   ];
   for (const r of recipients) store.upsertRecipient(r);
 
@@ -37,6 +47,28 @@ export function seedAgencyScaleFixture(store: CareStore): void {
     { id: "p-bay-dsp", displayName: "DSP Avery Chen", kind: "professional" }, // name collision across orgs
   ];
   for (const p of dsps) store.upsertPerson(p);
+
+  // 20-person care team for cr-team20 (mix of roles)
+  for (let i = 1; i <= 20; i++) {
+    const kind: Person["kind"] =
+      i === 1
+        ? "provider"
+        : i <= 4
+          ? "family_caregiver"
+          : i <= 16
+            ? "professional"
+            : "provider";
+    store.upsertPerson({
+      id: `p-team20-${i}`,
+      displayName:
+        i === 1
+          ? "Dr. Amara Cole"
+          : i === 2
+            ? "Dr. Priya Shah"
+            : `Team Member ${i}`,
+      kind,
+    });
+  }
 
   // Name collision: two Priya Shah persons different orgs
   store.upsertPerson({
@@ -117,8 +149,34 @@ export function seedAgencyScaleFixture(store: CareStore): void {
     ORG_NORTH,
   );
 
+  // 20-person team on cr-team20: 18 active + 1 revoked + 1 expired
+  for (let i = 1; i <= 20; i++) {
+    const role: "paid_caregiver" | "physician" | "family_caregiver" =
+      i === 1 || i >= 17
+        ? "physician"
+        : i <= 4
+          ? "family_caregiver"
+          : "paid_caregiver";
+    const status: "active" | "revoked" | "expired" =
+      i === 19 ? "revoked" : i === 20 ? "expired" : "active";
+    rel(
+      `rel-team20-${i}`,
+      "cr-team20",
+      `p-team20-${i}`,
+      role,
+      role === "physician"
+        ? "Primary care physician"
+        : role === "family_caregiver"
+          ? "Family / friend caregiver"
+          : "Professional caregiver",
+      ORG_NORTH,
+      status,
+      status === "expired" ? "2026-01-01" : undefined,
+    );
+  }
+
   // Med schedules (same drug name across orgs — isolation still holds)
-  for (const id of ["cr-scale-1", "cr-bay-1"]) {
+  for (const id of ["cr-scale-1", "cr-bay-1", "cr-team20"]) {
     store.upsertMedSchedule({
       id: `med-${id}`,
       careRecipientId: id,

@@ -60,6 +60,11 @@ export class PrismaCareStore implements CareStore {
   /** Avoid re-upserting immutable audit rows on every flush (O(n) → O(delta)). */
   private knownAuditIds = new Set<string>();
   private knownIdempotencyKeys = new Set<string>();
+  /**
+   * Serialize flush() so concurrent requests cannot race Prisma upserts
+   * (P2002 on careAuditRow was the root cause of ~20% burst write failures).
+   */
+  private flushChain: Promise<void> = Promise.resolve();
   readonly backend = "prisma" as const;
 
   static async create(opts?: { load?: boolean }): Promise<PrismaCareStore> {
@@ -329,6 +334,17 @@ export class PrismaCareStore implements CareStore {
 
   /** Flush entire care domain snapshot to Postgres. */
   async flush(): Promise<void> {
+    // Chain flushes: concurrent route handlers share this store instance.
+    const run = () => this.flushUnlocked();
+    const next = this.flushChain.then(run, run);
+    this.flushChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private async flushUnlocked(): Promise<void> {
     const snap = dumpMemory(this.memory);
 
     // Ensure households exist for recipients
@@ -703,22 +719,29 @@ export class PrismaCareStore implements CareStore {
       });
     }
     // Audits are append-only: skip rows already flushed (prevents O(n) on every confirm).
+    // P2002 = concurrent flush already inserted this id — treat as success (not data loss).
     for (const a of snap.audit) {
       if (this.knownAuditIds.has(a.id)) continue;
-      await prisma.careAuditRow.upsert({
-        where: { id: a.id },
-        create: {
-          id: a.id,
-          at: a.at,
-          actor_person_id: a.actorPersonId,
-          action: a.action,
-          care_recipient_id: a.careRecipientId ?? null,
-          household_id: a.householdId ?? null,
-          details: a.details as object,
-          product_id: PRODUCT_ID,
-        },
-        update: {},
-      });
+      try {
+        await prisma.careAuditRow.create({
+          data: {
+            id: a.id,
+            at: a.at,
+            actor_person_id: a.actorPersonId,
+            action: a.action,
+            care_recipient_id: a.careRecipientId ?? null,
+            household_id: a.householdId ?? null,
+            details: a.details as object,
+            product_id: PRODUCT_ID,
+          },
+        });
+      } catch (e: unknown) {
+        const code =
+          e && typeof e === "object" && "code" in e
+            ? String((e as { code?: string }).code)
+            : "";
+        if (code !== "P2002") throw e;
+      }
       this.knownAuditIds.add(a.id);
     }
     for (const [key, v] of this.idempotency) {

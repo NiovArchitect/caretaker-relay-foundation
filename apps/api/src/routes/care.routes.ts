@@ -1236,7 +1236,11 @@ export async function registerCareRoutes(
   );
 
   app.post<{
-    Body: { body?: string; to_person_id?: string };
+    Body: {
+      body?: string;
+      to_person_id?: string;
+      idempotency_key?: string;
+    };
   }>("/api/v1/care/recipients/:id/coordination", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
@@ -1259,6 +1263,28 @@ export async function registerCareRoutes(
         message: "body required",
         correlation_id: correlationId(request),
       });
+    }
+    // Idempotency: header or body key — retries must not double-write.
+    const headerKey = request.headers["x-idempotency-key"];
+    const idemKeyRaw =
+      (typeof headerKey === "string" && headerKey.trim()) ||
+      (typeof request.body?.idempotency_key === "string"
+        ? request.body.idempotency_key.trim()
+        : "");
+    const idemKey = idemKeyRaw
+      ? `coord:${id}:${principal.carePersonId}:${idemKeyRaw}`
+      : "";
+    if (idemKey) {
+      const prior = runtime.getIdempotent(idemKey) as
+        | Record<string, unknown>
+        | undefined;
+      if (prior && prior.ok === true) {
+        return reply.code(200).send({
+          ...prior,
+          idempotent_replay: true,
+          correlation_id: correlationId(request),
+        });
+      }
     }
     const now = new Date().toISOString();
     const msg: CareCoordinationMessage = {
@@ -1305,11 +1331,12 @@ export async function registerCareRoutes(
       details: {
         coordination_id: msg.id,
         notification_id: notif?.id,
+        idempotency_key: idemKey || undefined,
       },
     });
     await runtime.flush();
-    return reply.code(201).send({
-      ok: true,
+    const payload = {
+      ok: true as const,
       message: {
         id: msg.id,
         care_recipient_id: msg.careRecipientId,
@@ -1329,7 +1356,12 @@ export async function registerCareRoutes(
           }
         : null,
       correlation_id: correlationId(request),
-    });
+    };
+    if (idemKey) {
+      runtime.putIdempotent(idemKey, payload);
+      await runtime.flush();
+    }
+    return reply.code(201).send(payload);
   });
 
   /** Server-backed notifications for authenticated principal (not localStorage). */
