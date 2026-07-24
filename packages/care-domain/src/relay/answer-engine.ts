@@ -193,24 +193,6 @@ function composeAnswer(ctx: {
     return null;
   }
 
-  function firstObsTime(theme: string): { at: string; label: string; who: string } | null {
-    for (const c of proj.RECENT_OBSERVATION_CLUSTERS) {
-      if (c.theme.toLowerCase().includes(theme.toLowerCase())) {
-        return {
-          at: c.mostRecentLabel,
-          label: c.mostRecentLabel,
-          who: c.sources[0] ?? "Care team",
-        };
-      }
-    }
-    // raw observations if present in state via clusters only
-    return null;
-  }
-
-  function parseLooseTime(label: string): number | null {
-    // Prefer ISO if present in records
-    return null;
-  }
 
   // Intent handlers
   if (intents.some((i) => i.startsWith("MEDICATION"))) {
