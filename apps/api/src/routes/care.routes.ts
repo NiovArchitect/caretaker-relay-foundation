@@ -21,11 +21,29 @@ import {
   listCoordination,
   defaultInviteAccess,
   newInviteToken,
+  answerRelayQuestion,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
   type CareRelationshipRole,
 } from "@caretaker-relay/care-domain";
+
+function roleLabelForPrincipal(principal: {
+  carePersonId: string;
+  roles: string[];
+  displayName: string;
+}): string {
+  if (principal.carePersonId === "p-dr-shah") return "Primary care physician";
+  if (principal.carePersonId === "p-walter") return "Professional caregiver";
+  if (principal.carePersonId === "p-maya") return "Family / friend caregiver";
+  if (principal.roles.some((r) => /physician|provider/i.test(r))) {
+    return "Primary care physician";
+  }
+  if (principal.roles.some((r) => /professional|paid/i.test(r))) {
+    return "Professional caregiver";
+  }
+  return "Primary family caregiver";
+}
 
 function correlationId(request: FastifyRequest): string {
   const h =
@@ -596,8 +614,9 @@ export async function registerCareRoutes(
   });
 
   /**
-   * Grounded care Q&A from durable authorized state (not canned chat).
-   * Answers "what happened / what needs me / schedule" from current truth.
+   * Authoritative Relay Q&A — server owns intelligence.
+   * Intent → authorized projections → persona answer → durable private turn.
+   * Client must NOT reconstruct a competing answer engine.
    */
   app.post<{
     Body: { question?: string; care_recipient_id?: string };
@@ -629,164 +648,64 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    const state = runtime.store.getCurrentState(careRecipientId);
-    const handoffs = runtime.store.getHandoffs(careRecipientId);
-    const latest = handoffs[handoffs.length - 1];
-    const corrections = runtime.store.getCorrections(careRecipientId);
+
     const recipient = runtime.store.getRecipient(careRecipientId);
     const recipientName = recipient?.displayName ?? "this person";
-    const personName = (id?: string) => {
-      if (!id) return "Someone in the care circle";
-      return runtime.store.getPerson(id)?.displayName ?? "Care team member";
-    };
-    const q = question.toLowerCase();
-    const lines: string[] = [];
-    if (
-      /what happened|what changed|since|continuity|caught up|going on|changed this week/.test(
-        q,
-      )
-    ) {
-      const events = (state?.events ?? []).slice(-8);
-      if (events.length === 0 && !latest) {
-        lines.push(
-          `I don't have confirmed care changes for ${recipientName} yet that you're authorized to see.`,
-        );
-      } else {
-        lines.push(`Here's what changed for ${recipientName}:`);
-        for (const e of events) {
-          const certainty =
-            e.epistemicStatus === "CONFIRMED"
-              ? "Confirmed"
-              : e.epistemicStatus === "UNCERTAIN"
-                ? "Uncertain"
-                : "Reported";
-          lines.push(
-            `• [${certainty}] ${e.statement}${e.source?.actorName ? ` (from ${e.source.actorName})` : ""}`,
-          );
-        }
-        if (latest?.whatChanged?.length) {
-          lines.push(`Latest care handoff notes:`);
-          for (const w of latest.whatChanged) lines.push(`• ${w}`);
-        }
-        if (corrections.length) {
-          const c = corrections[corrections.length - 1]!;
-          lines.push(
-            `Most recent correction: "${c.previousValue}" → "${c.correctedValue}" by ${personName(c.correctedByPersonId)}.`,
-          );
-        }
-      }
-    } else if (
-      /still need|needs me|attention|left to do|waiting for me|need to verify/.test(
-        q,
-      )
-    ) {
-      const open = (state?.openSafetyReviews ?? []).filter(
-        (s) => s.status === "open",
-      );
-      const next = latest?.stillNeedsAttention ?? [];
-      if (!open.length && !next.length) {
-        lines.push("Nothing is currently flagged as needing attention.");
-      } else {
-        lines.push("Still needs attention:");
-        for (const s of open) {
-          const reason = String(s.reason ?? "");
-          const plain = /dimension|comparable|unit/i.test(reason)
-            ? `The reported amount doesn't clearly match ${recipientName}'s current medication instructions. Please check the label or confirm with the prescribing team.`
-            : reason;
-          lines.push(`• ${plain}`);
-        }
-        for (const n of next) lines.push(`• ${n}`);
-      }
-    } else if (/medication|dose|pill|meds|metformin|already give|gave her/.test(q)) {
-      const sched = state?.medicationSchedules ?? [];
-      if (!sched.length) {
-        lines.push(
-          `I don't have an authorized medication schedule on file for ${recipientName} in your view.`,
-        );
-      } else {
-        lines.push(`Medications for ${recipientName}:`);
-        for (const s of sched) {
-          const extra = [
-            (s as { scheduleTime?: string }).scheduleTime
-              ? `Take at ${(s as { scheduleTime?: string }).scheduleTime}`
-              : null,
-            (s as { windowStart?: string }).windowStart &&
-            (s as { windowEnd?: string }).windowEnd
-              ? `window ${(s as { windowStart?: string }).windowStart} – ${(s as { windowEnd?: string }).windowEnd}`
-              : null,
-            (s as { mealRelation?: string }).mealRelation ?? null,
-          ]
-            .filter(Boolean)
-            .join("; ");
-          lines.push(
-            `• ${s.name}: ${s.dose}${extra ? ` · ${extra}` : ` (${s.scheduleLabel})`} · authorized by ${s.authorizedBy}`,
-          );
-        }
-        lines.push(
-          "This is the authorized instruction on file, not a new prescription from Relay.",
-        );
-      }
-    } else if (/appointment|pt|physical therapy|schedule|next appointment/.test(q)) {
-      const apts = state?.appointments ?? [];
-      if (!apts.length) {
-        lines.push("No appointments are on file in your authorized view.");
-      } else {
-        lines.push("Appointments:");
-        for (const a of apts) {
-          const prev = (a as { previousStartsAtLabel?: string })
-            .previousStartsAtLabel;
-          const whenRaw = String(a.startsAtLabel ?? a.startsAt ?? "");
-          const when = whenRaw
-            .replace(/around\s+3:00(?!\s*(AM|PM))/gi, "around 3:00 PM")
-            .replace(/around\s+2:00(?!\s*(AM|PM))/gi, "around 2:00 PM");
-          lines.push(
-            `• ${a.title}: ${when}${a.location ? ` · ${a.location}` : ""} (${a.status})${prev ? ` · changed from ${prev}` : ""}`,
-          );
-        }
-      }
-    } else if (/dr\.?\s*shah|provider|clinic update|prepare an update for dr/.test(q)) {
-      lines.push(`Clinic-oriented picture for ${recipientName} (for Dr. Shah):`);
-      for (const s of state?.medicationSchedules ?? []) {
-        lines.push(`• Medication: ${s.name} ${s.dose} (${s.scheduleLabel})`);
-      }
-      for (const e of (state?.events ?? []).slice(-4)) {
-        lines.push(`• ${e.statement}`);
-      }
-      lines.push(
-        "This is a caregiver-prepared summary for review, not a clinical order.",
-      );
-    } else if (/maya|daniel|handoff|tell /.test(q)) {
-      if (latest?.whatChanged?.length) {
-        lines.push(`Care handoff notes:`);
-        for (const w of latest.whatChanged) lines.push(`• ${w}`);
-        lines.push("Prepared for review, not automatically sent as a message.");
-      } else {
-        lines.push(
-          `I can prepare a care handoff after you confirm a care update about ${recipientName}.`,
-        );
-      }
-    } else {
-      lines.push(
-        `I can answer from authorized care truth for ${recipientName}. Try asking what changed, what still needs attention, medications, or appointments.`,
-      );
-      const events = (state?.events ?? []).slice(-3);
-      if (events.length) {
-        lines.push("Recent facts:");
-        for (const e of events) lines.push(`• ${e.statement}`);
-      }
+    const roleLabel = roleLabelForPrincipal(principal);
+
+    const result = answerRelayQuestion({
+      question,
+      principalId: principal.carePersonId,
+      principalDisplayName: principal.displayName,
+      roleLabel,
+      careRecipientId,
+      recipientDisplayName: recipientName,
+      store: runtime.store,
+    });
+
+    // Empty answer → not a question (TELL path); client runs understand
+    if (!result.answer) {
+      return reply.code(200).send({
+        ok: true,
+        answer: "",
+        not_question: true,
+        grounded: true,
+        correlation_id: correlationId(request),
+      });
     }
+
     runtime.store.writeAudit({
       at: new Date().toISOString(),
       actorPersonId: principal.carePersonId,
       action: "CARE_ANSWER",
       careRecipientId,
-      details: { question: question.slice(0, 200) },
+      details: {
+        question: question.slice(0, 200),
+        intent: result.intent,
+        persona: result.persona,
+        model_path: result.modelPath,
+        turn_id: result.turnId,
+        conversation_id: result.conversationId,
+        can_deterministic: result.canDeterministic,
+      },
     });
     await runtime.flush();
+
     return reply.code(200).send({
       ok: true,
-      answer: lines.join("\n"),
+      answer: result.answer,
       grounded: true,
+      intent: result.intent,
+      intents: result.intents,
+      persona: result.persona,
+      source_refs: result.sourceRefs,
+      projections_used: result.projectionsUsed,
+      conversation_id: result.conversationId,
+      turn_id: result.turnId,
+      model_path: result.modelPath,
+      can_deterministic: result.canDeterministic,
+      needs_clarification: result.needsClarification,
+      authority: "server",
       understand_mode: runtime.understandMode,
       correlation_id: correlationId(request),
     });

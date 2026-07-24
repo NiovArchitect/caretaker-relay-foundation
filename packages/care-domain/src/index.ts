@@ -26,6 +26,11 @@ export * from "./services/idempotency.js";
 export * from "./fhir/mapping.js";
 export * from "./scenario/olivia.js";
 export * from "./datasets/golden.js";
+export * from "./relay/intents.js";
+export * from "./relay/projections.js";
+export * from "./relay/conversation-memory.js";
+export * from "./relay/answer-engine.js";
+export * from "./services/relay-answer.js";
 
 import { MemoryCareStore } from "./store/memory-store.js";
 import { CareLoopService } from "./services/loop.js";
