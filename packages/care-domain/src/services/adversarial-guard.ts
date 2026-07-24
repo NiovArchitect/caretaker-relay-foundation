@@ -119,7 +119,7 @@ export function scanAdversarialQuestion(input: {
 
   // "Double the dose" / fabricated provider instruction
   if (
-    /double (the |her |his )?dose|told us to double|doctor changed the dose|dr\.?\s*\w+ (told|said).*double/i.test(
+    /double[d]? (the |her |his )?dose|told us to double|doctor changed the dose|dr\.?\s*\w+ (told|said).*double|new doubled dose|mark (the )?new doubled/i.test(
       q,
     )
   ) {
@@ -179,7 +179,7 @@ export function scanAdversarialQuestion(input: {
 
   // Mark done without evidence
   if (
-    /i know she took it.*mark|mark it (done|given|complete)|just mark.*(done|given)/i.test(
+    /i know she took it.*mark|mark it (done|given|complete)|just mark.*(done|given|doubled|new dose)/i.test(
       q,
     )
   ) {
