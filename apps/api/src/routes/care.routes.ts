@@ -735,8 +735,12 @@ export async function registerCareRoutes(
         for (const a of apts) {
           const prev = (a as { previousStartsAtLabel?: string })
             .previousStartsAtLabel;
+          const whenRaw = String(a.startsAtLabel ?? a.startsAt ?? "");
+          const when = whenRaw
+            .replace(/around\s+3:00(?!\s*(AM|PM))/gi, "around 3:00 PM")
+            .replace(/around\s+2:00(?!\s*(AM|PM))/gi, "around 2:00 PM");
           lines.push(
-            `• ${a.title}: ${a.startsAtLabel ?? a.startsAt}${a.location ? ` · ${a.location}` : ""} (${a.status})${prev ? ` · changed from ${prev}` : ""}`,
+            `• ${a.title}: ${when}${a.location ? ` · ${a.location}` : ""} (${a.status})${prev ? ` · changed from ${prev}` : ""}`,
           );
         }
       }
