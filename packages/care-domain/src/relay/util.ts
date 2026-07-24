@@ -26,7 +26,7 @@ export function plainDiscrepancyMessage(
 ): string {
   const t = (technical ?? "").toLowerCase();
   if (/incompatible dimensions|not comparable|compatible dimensions|unit/.test(t)) {
-    return `The reported amount doesn't clearly match ${recipientName}'s current medication instructions. Please check the medication label or confirm with the prescribing team before marking this complete.`;
+    return `The reported amount doesn't clearly match ${recipientName}'s current medication instructions. Please check the medication label or confirm with the care team before marking this complete.`;
   }
   if (/missing unit/.test(t)) {
     return `The reported dose is missing units. Check the bottle or packaging, then confirm the amount with the care team if needed.`;
