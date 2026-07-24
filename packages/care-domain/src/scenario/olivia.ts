@@ -257,6 +257,30 @@ export function seedOliviaScenario(store: CareStore): void {
 
   store.upsertMedSchedule(medicationSchedule);
 
+  // Seed last administration for conversation follow-ups (synthetic).
+  if (store.getMedRecords(careRecipient.id).length === 0) {
+    store.addMedRecord({
+      id: "mar-lunch-yesterday",
+      careRecipientId: careRecipient.id,
+      scheduleId: medicationSchedule.id,
+      name: medicationSchedule.name,
+      doseRecorded: "500 mg",
+      administeredAt: "2026-07-22T19:58:00Z",
+      administeredByPersonId: people.maya.id,
+      status: "recorded",
+      epistemicStatus: "REPORTED",
+      source: {
+        id: "src-mar-maya",
+        kind: "caregiver_text",
+        label: "Maya Bennett administration note",
+        actorName: "Maya Bennett",
+        actorPersonId: people.maya.id,
+        recordedAt: "2026-07-22T19:58:00Z",
+        whyVisible: "Maya recorded giving lunch medication yesterday.",
+      },
+    });
+  }
+
   // Second lightweight recipient for multi-space architecture proof.
   store.upsertRecipient(secondaryRecipient);
   store.upsertRelationship({
