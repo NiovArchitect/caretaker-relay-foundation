@@ -16,6 +16,10 @@ import {
   type RelayTurnRecord,
 } from "../relay/conversation-memory.js";
 import type { CareStateBag } from "../relay/projections.js";
+import {
+  listProviderGuidance,
+  summarizeOpenLoops,
+} from "./orchestration.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -100,6 +104,8 @@ const DETERMINISTIC_INTENTS = new Set([
   "DOCUMENT_PREP",
   "OBSERVATION_HISTORY",
   "TREND",
+  "OPEN_LOOP_STATUS",
+  "WAITING_ON",
 ]);
 
 export function canAnswerDeterministically(primary: string): boolean {
@@ -186,6 +192,127 @@ function answerWithState(
     8,
   );
   const priorEntities = priorTurns.at(-1)?.resolvedEntities;
+
+  // Open-loop / waiting-on — orchestration state, not Q&A projection alone
+  const qLow = req.question.toLowerCase();
+  if (
+    /waiting on|still waiting|are we waiting|who are we waiting|did maya answer|did (the )?doctor reply|did dr\.?\s*shah reply|anything unresolved|what still needs|what am i still waiting|open request|pending (request|clarification)/i.test(
+      qLow,
+    )
+  ) {
+    const loops = summarizeOpenLoops(
+      store,
+      req.careRecipientId,
+      req.principalId,
+    );
+    const guidance = listProviderGuidance(store, req.careRecipientId);
+    let answer: string;
+    if (loops.lines.length === 0) {
+      answer =
+        "Nothing is currently waiting on another person for this care recipient. " +
+        (guidance[0]
+          ? `Latest provider note on file: ${guidance[0].sourceDisplayName} — ${guidance[0].text.slice(0, 160)}`
+          : "All open coordination loops look closed.");
+    } else {
+      answer =
+        `Here's what is still open:\n` +
+        loops.lines.map((l) => `• ${l}`).join("\n");
+      if (loops.waitingOnNames.length) {
+        answer += `\n\nWaiting on: ${loops.waitingOnNames.join(", ")}.`;
+      }
+    }
+    const conversationId = conversationIdFor(
+      req.principalId,
+      req.careRecipientId,
+    );
+    const classified = {
+      intents: ["WAITING_ON", "OPEN_LOOP_STATUS"] as const,
+      primary: "WAITING_ON" as const,
+      decisionContext: "information" as const,
+      entities: { references: [] as string[] },
+      isQuestion: true,
+      isObservationUpdate: false,
+      needsClarification: false,
+    };
+    const turn = persistTurn(store, {
+      principalId: req.principalId,
+      principalDisplayName: req.principalDisplayName,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      userMessage: req.question,
+      classified: { ...classified, intents: [...classified.intents] },
+      answer,
+      sourceRefs: ["orchestration"],
+      modelPath: "deterministic",
+    });
+    return {
+      answer,
+      intent: "WAITING_ON",
+      intents: ["WAITING_ON", "OPEN_LOOP_STATUS"],
+      persona: "family",
+      sourceRefs: ["orchestration"],
+      needsClarification: false,
+      projectionsUsed: ["OPEN_LOOPS"],
+      conversationId,
+      modelPath: "deterministic",
+      classified: { ...classified, intents: [...classified.intents] },
+      durable: true,
+      turnId: turn.turnId,
+      canDeterministic: true,
+      evidenceBound: true,
+    };
+  }
+
+  // Provider diagnostic questions — never diagnose; offer Dr Shah path
+  if (
+    /could (the |her |his )?dizz|related to (her |the )?med|caused by|side effect|should we change|is it safe/i.test(
+      qLow,
+    )
+  ) {
+    const conversationId = conversationIdFor(
+      req.principalId,
+      req.careRecipientId,
+    );
+    const answer =
+      `I can share the timing in ${req.recipientDisplayName}'s records, but I can't determine whether the medication caused the dizziness — that needs clinical judgment.\n\n` +
+      `I can prepare a concise question for Dr. Priya Shah with the relevant timeline. Want me to ask Dr. Shah?`;
+    const classified = {
+      intents: ["PROVIDER_UPDATE_PREP", "SAFETY_CONCERN"] as const,
+      primary: "PROVIDER_UPDATE_PREP" as const,
+      decisionContext: "clinic_prep" as const,
+      entities: { references: [] as string[], personHint: "Dr. Shah" },
+      isQuestion: true,
+      isObservationUpdate: false,
+      needsClarification: false,
+    };
+    const turn = persistTurn(store, {
+      principalId: req.principalId,
+      principalDisplayName: req.principalDisplayName,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      userMessage: req.question,
+      classified: { ...classified, intents: [...classified.intents] },
+      answer,
+      sourceRefs: ["provider_offer"],
+      modelPath: "deterministic",
+    });
+    return {
+      answer,
+      intent: "PROVIDER_UPDATE_PREP",
+      intents: ["PROVIDER_UPDATE_PREP", "SAFETY_CONCERN"],
+      persona: "family",
+      sourceRefs: ["provider_offer"],
+      needsClarification: false,
+      projectionsUsed: [],
+      conversationId,
+      modelPath: "deterministic",
+      classified: { ...classified, intents: [...classified.intents] },
+      durable: true,
+      turnId: turn.turnId,
+      canDeterministic: true,
+      evidenceBound: true,
+    };
+  }
 
   const result = runAnswerEngine({
     question: req.question,

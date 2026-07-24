@@ -27,9 +27,16 @@ import {
   markSeen,
   markAcknowledged,
   markResolved,
-  createClarificationRequest,
   respondToClarification,
   listOpenClarificationsForTarget,
+  startClarificationOrchestration,
+  advanceOrchestrationOnResponse,
+  confirmCandidate,
+  rejectCandidate,
+  getOrchestration,
+  getCandidate,
+  summarizeOpenLoops,
+  listProviderGuidance,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
@@ -897,6 +904,11 @@ export async function registerCareRoutes(
         display_name: people.walter.displayName,
         role_label: "Professional caregiver",
       },
+      {
+        care_person_id: people.drShah.id,
+        display_name: people.drShah.displayName,
+        role_label: "Primary care physician",
+      },
     ];
     return reply.code(200).send({
       ok: true,
@@ -1497,7 +1509,13 @@ export async function registerCareRoutes(
     }
     const target =
       runtime.store.getPerson(targetPersonId)?.displayName ?? "Caregiver";
-    const result = createClarificationRequest(runtime.store, {
+    const kindHint =
+      targetPersonId === people.drShah.id ||
+      /physician|provider|dr\.|doctor/i.test(target)
+        ? ("provider_clarification" as const)
+        : ("caregiver_clarification" as const);
+    // Prefer full orchestration (request + WAITING_FOR_RESPONSE state)
+    const orch = startClarificationOrchestration(runtime.store, {
       careRecipientId,
       requesterPersonId: principal.carePersonId,
       requesterDisplayName: principal.displayName,
@@ -1508,20 +1526,23 @@ export async function registerCareRoutes(
         typeof body.context_summary === "string"
           ? body.context_summary
           : undefined,
+      kind: kindHint,
     });
     await runtime.flush();
     return reply.code(201).send({
       ok: true,
       request: {
-        id: result.request.id,
-        care_recipient_id: result.request.careRecipientId,
-        requester_person_id: result.request.requesterPersonId,
-        target_person_id: result.request.targetPersonId,
-        question: result.request.question,
-        status: result.request.status,
-        created_at: result.request.createdAt,
+        id: orch.requestId,
+        care_recipient_id: careRecipientId,
+        requester_person_id: principal.carePersonId,
+        target_person_id: targetPersonId,
+        question,
+        status: "open",
+        created_at: orch.orchestration.createdAt,
       },
-      notification_id: result.notification.id,
+      notification_id: orch.notification.id,
+      orchestration_id: orch.orchestration.id,
+      orchestration_state: orch.orchestration.state,
       correlation_id: correlationId(request),
     });
   });
@@ -1610,6 +1631,15 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    // Orchestration: interpret response → candidate → notify requester for verification
+    const advanced = advanceOrchestrationOnResponse(runtime.store, {
+      careRecipientId,
+      requestId,
+      responseId: result.response.id,
+      responseBody: text,
+      responderPersonId: principal.carePersonId,
+      responderDisplayName: principal.displayName,
+    });
     await runtime.flush();
     return reply.code(201).send({
       ok: true,
@@ -1619,8 +1649,197 @@ export async function registerCareRoutes(
         body: result.response.body,
         created_at: result.response.createdAt,
       },
-      notification_id: result.notification?.id ?? null,
+      notification_id:
+        advanced?.notification.id ?? result.notification?.id ?? null,
+      orchestration_id: advanced?.orchestration.id ?? null,
+      orchestration_state: advanced?.orchestration.state ?? null,
+      candidate_id: advanced?.candidate.id ?? null,
+      requires_verification: advanced?.candidate.requiresVerification ?? false,
+      coordinator_message: advanced?.coordinatorMessage ?? null,
       correlation_id: correlationId(request),
     });
   });
+
+  /** Open orchestration loops for a recipient (waiting-on / needs review). */
+  app.get(
+    "/api/v1/care/recipients/:id/orchestration",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const summary = summarizeOpenLoops(
+        runtime.store,
+        id,
+        principal.carePersonId,
+      );
+      const guidance = listProviderGuidance(runtime.store, id);
+      return reply.code(200).send({
+        ok: true,
+        authority: "server",
+        open: summary.open.map((o) => ({
+          id: o.id,
+          state: o.state,
+          kind: o.kind,
+          question: o.question,
+          waiting_on_person_id: o.waitingOnPersonId ?? null,
+          waiting_on_display_name: o.waitingOnDisplayName ?? null,
+          candidate_id: o.candidateId ?? null,
+          response_body: o.responseBody ?? null,
+          updated_at: o.updatedAt,
+        })),
+        lines: summary.lines,
+        waiting_on: summary.waitingOnNames,
+        provider_guidance: guidance.slice(0, 5),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  /** Confirm or reject a care candidate produced by orchestration. */
+  app.post<{
+    Body: {
+      care_recipient_id?: string;
+      candidate_id?: string;
+      action?: string;
+      reason?: string;
+    };
+  }>("/api/v1/care/orchestration/candidates/:id/action", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id: candidateId } = request.params as { id: string };
+    const body = request.body ?? {};
+    const careRecipientId =
+      typeof body.care_recipient_id === "string"
+        ? body.care_recipient_id
+        : olivia.id;
+    const action =
+      typeof body.action === "string" ? body.action.toLowerCase() : "confirm";
+    const access = runtime.access(principal.carePersonId, careRecipientId);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    if (action === "reject") {
+      const rejected = rejectCandidate(runtime.store, {
+        careRecipientId,
+        candidateId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      if (!rejected) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "candidate or orchestration not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        orchestration_id: rejected.id,
+        state: rejected.state,
+        correlation_id: correlationId(request),
+      });
+    }
+
+    const confirmed = confirmCandidate(runtime.store, {
+      careRecipientId,
+      candidateId,
+      confirmerPersonId: principal.carePersonId,
+      confirmerDisplayName: principal.displayName,
+    });
+    if (!confirmed) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "pending candidate not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      orchestration_id: confirmed.orchestration.id,
+      state: confirmed.orchestration.state,
+      candidate_id: confirmed.candidate.id,
+      mar_id: confirmed.mar?.id ?? null,
+      handoff_id: confirmed.handoff?.id ?? null,
+      provider_guidance_id: confirmed.providerGuidanceId ?? null,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Fetch single orchestration + candidate for verification UI. */
+  app.get(
+    "/api/v1/care/recipients/:id/orchestration/:orchId",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, orchId } = request.params as { id: string; orchId: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const orch = getOrchestration(runtime.store, id, orchId);
+      if (!orch) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "orchestration not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      const candidate = orch.candidateId
+        ? getCandidate(runtime.store, id, orch.candidateId)
+        : null;
+      return reply.code(200).send({
+        ok: true,
+        orchestration: {
+          id: orch.id,
+          state: orch.state,
+          kind: orch.kind,
+          question: orch.question,
+          response_body: orch.responseBody ?? null,
+          waiting_on_display_name: orch.waitingOnDisplayName ?? null,
+          candidate_id: orch.candidateId ?? null,
+          mar_id: orch.marId ?? null,
+          handoff_id: orch.handoffId ?? null,
+        },
+        candidate: candidate
+          ? {
+              id: candidate.id,
+              type: candidate.type,
+              summary: candidate.summary,
+              structured: candidate.structured,
+              original_evidence: candidate.originalEvidence,
+              source_display_name: candidate.sourceDisplayName,
+              authority: candidate.authority,
+              requires_verification: candidate.requiresVerification,
+              status: candidate.status,
+            }
+          : null,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
 }

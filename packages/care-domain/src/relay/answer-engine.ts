@@ -243,9 +243,20 @@ function composeAnswer(ctx: {
       if (who) {
         const hit = findAdminByPerson(who);
         if (hit) {
+          const confNote = str(
+            (hit.source as { whyVisible?: string } | undefined)?.whyVisible ??
+              "",
+          );
           parts.push(
             `Yes — I have a record from ${who}:\n${describeAdmin(hit)}`,
           );
+          if (/confirmed/i.test(confNote)) {
+            parts.push(confNote);
+          } else if (str(hit.epistemicStatus) === "CONFIRMED") {
+            parts.push(
+              "This administration is confirmed in the medication history.",
+            );
+          }
         } else {
           const last = adminRecords().slice(-1)[0];
           parts.push(

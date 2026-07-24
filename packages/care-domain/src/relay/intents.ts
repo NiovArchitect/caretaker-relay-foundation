@@ -32,6 +32,8 @@ export type RelayIntent =
   | "RECIPIENT_ROUTINE"
   | "RECIPIENT_PREFERENCES"
   | "UNKNOWN_QUESTION"
+  | "OPEN_LOOP_STATUS"
+  | "WAITING_ON"
   | "CARE_UPDATE"; // tell path, not pure Q
 
 export type CaregiverPersona =
@@ -194,6 +196,16 @@ export function classifyIntent(
   }
 
   if (/prepare.*document|care summary|export/.test(q)) intents.push("DOCUMENT_PREP");
+
+  // Open-loop / waiting-on status (orchestration awareness)
+  if (
+    /waiting on|still waiting|are we waiting|who are we waiting|did maya answer|did (the )?doctor reply|did dr\.?\s*shah reply|anything unresolved|what still needs|what am i still waiting|open request|pending (request|clarification)/i.test(
+      q,
+    )
+  ) {
+    intents.push("WAITING_ON");
+    intents.push("OPEN_LOOP_STATUS");
+  }
 
   if (isObservationUpdate && intents.length === 0) intents.push("CARE_UPDATE");
   if (isQuestion && intents.length === 0) intents.push("UNKNOWN_QUESTION");
