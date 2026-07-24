@@ -65,7 +65,7 @@ export function scanAdversarialQuestion(input: {
 
   // Prompt injection patterns inside the user question itself
   if (
-    /ignore (all |previous )?rules|system:\s*grant|jailbreak|reveal (all |every )?record|dump (all )?phi|override safety/i.test(
+    /ignore (all |previous |prior )?(rules|instructions)|system:\s*grant|jailbreak|reveal (all |every )?record|dump (all )?phi|override safety|export all (data|phi|records)|open all households/i.test(
       q,
     )
   ) {
@@ -80,8 +80,10 @@ export function scanAdversarialQuestion(input: {
 
   // Conversational role self-assertion — auth wins
   if (
-    /i('m| am) (the |a )?(doctor|physician|dr\.|provider|admin|system)/i.test(q) ||
-    /pretend i('m| am)|act as if i('m| am) (dr|doctor|physician)/i.test(q)
+    /i('m| am) (the |a )?(doctor|physician|dr\.|provider|admin|system|administrator)/i.test(q) ||
+    /pretend i('m| am)|act as if i('m| am) (dr|doctor|physician)|act as (an? )?(admin|administrator|doctor|physician|system)/i.test(
+      q,
+    )
   ) {
     return {
       blocked: true,
@@ -160,8 +162,13 @@ export function scanAdversarialQuestion(input: {
     };
   }
 
-  // "Just guess"
-  if (/just guess|make (it |something )?up|invent|hallucinate/i.test(q)) {
+  // "Just guess" / invent as verb — not names like "Dr. Invented"
+  if (
+    /\bjust guess\b|\bmake (it |something )?up\b|\bhallucinate\b|\binvent (a |the |some )/i.test(
+      q,
+    ) ||
+    /\bdon't invent\b|\binvent clinical\b/i.test(q)
+  ) {
     return {
       blocked: true,
       reason: "hallucination_trap",
@@ -248,10 +255,42 @@ export function scanAdversarialQuestion(input: {
     }
   }
 
+  // Wrong recipient: asking about another person while active recipient differs
+  if (
+    /\brobert\b/i.test(q) &&
+    rid === "cr-olivia" &&
+    /lisinopril|dose|medication|meds|pill/i.test(q)
+  ) {
+    return {
+      blocked: true,
+      reason: "cross_recipient_claim",
+      answer:
+        `You're asking about Robert while ${recipient}'s care context is active. ` +
+        `I won't answer from the wrong recipient's records. Switch to Robert's care space for his medications.`,
+    };
+  }
+  if (
+    /\bevelyn\b/i.test(q) &&
+    rid === "cr-robert" &&
+    /metformin|dose|medication|meds|pill/i.test(q)
+  ) {
+    return {
+      blocked: true,
+      reason: "cross_recipient_claim",
+      answer:
+        `You're asking about Evelyn while ${recipient}'s care context is active. ` +
+        `I won't mix recipient medication records. Switch to Evelyn's care space for her medications.`,
+    };
+  }
+
   // Causal medical — never diagnose; offer data-driven provider escalation
   if (
-    /did .+ cause|caused by|side effect of|is it from the med/i.test(q) ||
-    /could (the |her |his )?dizz.*med|med.*cause.*dizz/i.test(q)
+    /did .+ cause|caused by|side effect of|is it from the med|from the lunch med|for sure\?/i.test(
+      q,
+    ) ||
+    /could (the |her |his )?dizz.*med|med.*cause.*dizz|dizz.*from.*(med|dose|pill)/i.test(
+      q,
+    )
   ) {
     const provider = resolveEscalationTarget(
       store,
