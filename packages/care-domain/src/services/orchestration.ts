@@ -25,6 +25,7 @@ import {
 } from "./notifications.js";
 import { resolvePersonName } from "../relay/util.js";
 import { markDocumentsStaleAfterChange, prepareDocument } from "./documents.js";
+import { resolveMedicationRemindersAfterAdmin } from "./reminders.js";
 
 export const ORCH_PREFIX = "CARE_ORCH_V1:";
 export const CAND_PREFIX = "CARE_CAND_V1:";
@@ -641,6 +642,11 @@ export function confirmCandidate(
       },
     };
     store.addMedRecord(mar);
+    resolveMedicationRemindersAfterAdmin(store, {
+      careRecipientId: input.careRecipientId,
+      scheduleId: mar.scheduleId,
+      principalId: input.confirmerPersonId,
+    });
   } else if (candidate.type === "provider_instruction") {
     providerGuidanceId = `pguid-${Date.now().toString(36)}`;
     // Durable professional communication as CareUpdate

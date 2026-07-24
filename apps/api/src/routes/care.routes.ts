@@ -37,6 +37,11 @@ import {
   getCandidate,
   summarizeOpenLoops,
   listProviderGuidance,
+  listReminders,
+  rescheduleAppointment,
+  recalculateAppointmentReminders,
+  recalculateMedicationReminders,
+  resolveMedicationRemindersAfterAdmin,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
@@ -1842,4 +1847,154 @@ export async function registerCareRoutes(
       });
     },
   );
+
+  /** Active + terminal reminders for a recipient. */
+  app.get(
+    "/api/v1/care/recipients/:id/reminders",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const q = request.query as { include_terminal?: string };
+      const all = listReminders(runtime.store, id, {
+        includeTerminal: q.include_terminal === "1" || q.include_terminal === "true",
+      });
+      return reply.code(200).send({
+        ok: true,
+        authority: "server",
+        reminders: all.map((r) => ({
+          id: r.id,
+          type: r.type,
+          title: r.title,
+          body: r.body,
+          scheduled_at: r.scheduledAt,
+          status: r.status,
+          source_id: r.sourceId,
+          source_version: r.sourceVersion,
+          timezone: r.timezone,
+          superseded_at: r.supersededAt ?? null,
+          resolved_at: r.resolvedAt ?? null,
+          dedupe_key: r.dedupeKey,
+        })),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  /** Reschedule appointment → supersede old reminders, create new. */
+  app.post<{
+    Body: {
+      appointment_id?: string;
+      new_starts_at?: string;
+      new_starts_at_label?: string;
+      timezone?: string;
+    };
+  }>("/api/v1/care/recipients/:id/appointments/reschedule", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const appointmentId =
+      typeof body.appointment_id === "string" ? body.appointment_id : "";
+    const newStartsAt =
+      typeof body.new_starts_at === "string" ? body.new_starts_at : "";
+    const newLabel =
+      typeof body.new_starts_at_label === "string"
+        ? body.new_starts_at_label
+        : newStartsAt;
+    if (!appointmentId || !newStartsAt) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "appointment_id and new_starts_at required",
+        correlation_id: correlationId(request),
+      });
+    }
+    // Ensure appointment exists (seed if lab PT missing)
+    let apt = runtime.store
+      .getAppointments(id)
+      .find((a) => a.id === appointmentId);
+    if (!apt) {
+      apt = {
+        id: appointmentId,
+        careRecipientId: id,
+        title: "Physical therapy",
+        startsAt: "2026-07-24T22:00:00Z",
+        startsAtLabel: "3:00 PM",
+        location: "Coastal PT",
+        status: "scheduled",
+        epistemicStatus: "CONFIRMED",
+      };
+      runtime.store.upsertAppointment(apt);
+      recalculateAppointmentReminders(runtime.store, {
+        careRecipientId: id,
+        appointment: apt,
+        timezone:
+          typeof body.timezone === "string"
+            ? body.timezone
+            : "America/Los_Angeles",
+        principalIds: [principal.carePersonId],
+      });
+    }
+    const result = rescheduleAppointment(runtime.store, {
+      careRecipientId: id,
+      appointmentId,
+      newStartsAt,
+      newStartsAtLabel: newLabel,
+      previousStartsAtLabel: apt.startsAtLabel ?? apt.startsAt,
+      principalIds: [principal.carePersonId, "p-walter"],
+      timezone:
+        typeof body.timezone === "string"
+          ? body.timezone
+          : "America/Los_Angeles",
+    });
+    if (!result) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "appointment not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    const active = listReminders(runtime.store, id);
+    const all = listReminders(runtime.store, id, { includeTerminal: true });
+    return reply.code(200).send({
+      ok: true,
+      appointment: {
+        id: result.appointment.id,
+        starts_at: result.appointment.startsAt,
+        starts_at_label: result.appointment.startsAtLabel,
+        previous_starts_at_label: result.appointment.previousStartsAtLabel,
+      },
+      reminders_created: result.reminders.map((r) => ({
+        id: r.id,
+        type: r.type,
+        scheduled_at: r.scheduledAt,
+        status: r.status,
+        source_version: r.sourceVersion,
+      })),
+      active_reminders: active.length,
+      superseded_count: all.filter((r) => r.status === "superseded").length,
+      correlation_id: correlationId(request),
+    });
+  });
 }

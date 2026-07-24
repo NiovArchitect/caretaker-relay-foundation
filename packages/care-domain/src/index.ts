@@ -37,6 +37,7 @@ export * from "./services/care-team.js";
 export * from "./services/adversarial-guard.js";
 export * from "./services/documents.js";
 export * from "./scenario/agency-scale.js";
+export * from "./services/reminders.js";
 
 import { MemoryCareStore } from "./store/memory-store.js";
 import { CareLoopService } from "./services/loop.js";
