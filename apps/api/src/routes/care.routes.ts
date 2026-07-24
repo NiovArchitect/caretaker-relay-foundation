@@ -22,6 +22,14 @@ import {
   defaultInviteAccess,
   newInviteToken,
   answerRelayQuestion,
+  notificationFromCoordination,
+  listNotificationsForPrincipal,
+  markSeen,
+  markAcknowledged,
+  markResolved,
+  createClarificationRequest,
+  respondToClarification,
+  listOpenClarificationsForTarget,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
@@ -1260,12 +1268,27 @@ export async function registerCareRoutes(
       rawExcerpt: text.slice(0, 500),
     };
     runtime.store.addUpdate(encodeCoordinationUpdate(msg, source));
+    let notif = null;
+    if (msg.toPersonId && msg.toPersonId !== principal.carePersonId) {
+      notif = notificationFromCoordination({
+        store: runtime.store,
+        careRecipientId: id,
+        messageId: msg.id,
+        fromPersonId: principal.carePersonId,
+        fromDisplayName: principal.displayName,
+        toPersonId: msg.toPersonId,
+        body: text,
+      });
+    }
     runtime.store.writeAudit({
       at: now,
       actorPersonId: principal.carePersonId,
       action: "COORDINATION_POSTED",
       careRecipientId: id,
-      details: { coordination_id: msg.id },
+      details: {
+        coordination_id: msg.id,
+        notification_id: notif?.id,
+      },
     });
     await runtime.flush();
     return reply.code(201).send({
@@ -1280,6 +1303,323 @@ export async function registerCareRoutes(
         created_at: msg.createdAt,
         kind: msg.kind,
       },
+      notification: notif
+        ? {
+            id: notif.id,
+            principal_id: notif.principalId,
+            type: notif.type,
+            title: notif.title,
+          }
+        : null,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Server-backed notifications for authenticated principal (not localStorage). */
+  app.get("/api/v1/care/notifications", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const q = request.query as { care_recipient_id?: string };
+    const careRecipientId =
+      typeof q.care_recipient_id === "string" ? q.care_recipient_id : undefined;
+    if (careRecipientId) {
+      const access = runtime.access(principal.carePersonId, careRecipientId);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+    }
+    const rows = listNotificationsForPrincipal(
+      runtime.store,
+      principal.carePersonId,
+      careRecipientId,
+    );
+    return reply.code(200).send({
+      ok: true,
+      notifications: rows.map((n) => ({
+        id: n.id,
+        principal_id: n.principalId,
+        care_recipient_id: n.careRecipientId,
+        type: n.type,
+        priority: n.priority,
+        title: n.title,
+        body: n.body,
+        source_type: n.sourceType,
+        source_id: n.sourceId,
+        actor_person_id: n.actorPersonId,
+        actor_display_name: n.actorDisplayName,
+        created_at: n.createdAt,
+        seen_at: n.seenAt ?? null,
+        acknowledged_at: n.acknowledgedAt ?? null,
+        resolved_at: n.resolvedAt ?? null,
+        action_type: n.actionType,
+        action_target: n.actionTarget,
+        dedupe_key: n.dedupeKey,
+        metadata: n.metadata ?? null,
+      })),
+      authority: "server",
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { action?: string };
+  }>("/api/v1/care/notifications/:id/:action", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id, action } = request.params as { id: string; action: string };
+    let row = null;
+    if (action === "seen") {
+      row = markSeen(runtime.store, principal.carePersonId, id);
+    } else if (action === "ack" || action === "acknowledge") {
+      row = markAcknowledged(runtime.store, principal.carePersonId, id);
+    } else if (action === "resolve") {
+      row = markResolved(runtime.store, principal.carePersonId, id);
+    } else {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "action must be seen|ack|resolve",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (!row) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "notification not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      notification: {
+        id: row.id,
+        seen_at: row.seenAt,
+        acknowledged_at: row.acknowledgedAt,
+        resolved_at: row.resolvedAt,
+      },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** SSE: push notification counts / ids for authenticated principal. */
+  app.get("/api/v1/care/notifications/stream", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.hijack();
+    let closed = false;
+    const send = () => {
+      if (closed) return;
+      try {
+        const rows = listNotificationsForPrincipal(
+          runtime.store,
+          principal.carePersonId,
+        );
+        const unread = rows.filter((n) => !n.seenAt && !n.resolvedAt);
+        const payload = JSON.stringify({
+          ok: true,
+          connected: true,
+          unread_count: unread.length,
+          latest_ids: unread.slice(0, 10).map((n) => n.id),
+          at: new Date().toISOString(),
+        });
+        reply.raw.write(`event: notifications\ndata: ${payload}\n\n`);
+      } catch {
+        /* ignore tick errors */
+      }
+    };
+    send();
+    const iv = setInterval(send, 4000);
+    request.raw.on("close", () => {
+      closed = true;
+      clearInterval(iv);
+    });
+  });
+
+  /** Clarification request: Marcus asks Maya. */
+  app.post<{
+    Body: {
+      care_recipient_id?: string;
+      target_person_id?: string;
+      question?: string;
+      context_summary?: string;
+    };
+  }>("/api/v1/care/clarifications", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const careRecipientId =
+      typeof body.care_recipient_id === "string"
+        ? body.care_recipient_id
+        : olivia.id;
+    const targetPersonId =
+      typeof body.target_person_id === "string" ? body.target_person_id : "";
+    const question =
+      typeof body.question === "string" ? body.question.trim() : "";
+    if (!targetPersonId || !question) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "target_person_id and question required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const access = runtime.access(principal.carePersonId, careRecipientId);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const targetAccess = runtime.access(targetPersonId, careRecipientId);
+    if (!targetAccess.allowed) {
+      return reply.code(400).send({
+        ok: false,
+        code: "TARGET_NOT_IN_CIRCLE",
+        message: "Target person is not authorized for this recipient",
+        correlation_id: correlationId(request),
+      });
+    }
+    const target =
+      runtime.store.getPerson(targetPersonId)?.displayName ?? "Caregiver";
+    const result = createClarificationRequest(runtime.store, {
+      careRecipientId,
+      requesterPersonId: principal.carePersonId,
+      requesterDisplayName: principal.displayName,
+      targetPersonId,
+      targetDisplayName: target,
+      question,
+      contextSummary:
+        typeof body.context_summary === "string"
+          ? body.context_summary
+          : undefined,
+    });
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      request: {
+        id: result.request.id,
+        care_recipient_id: result.request.careRecipientId,
+        requester_person_id: result.request.requesterPersonId,
+        target_person_id: result.request.targetPersonId,
+        question: result.request.question,
+        status: result.request.status,
+        created_at: result.request.createdAt,
+      },
+      notification_id: result.notification.id,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get(
+    "/api/v1/care/recipients/:id/clarifications",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const open = listOpenClarificationsForTarget(
+        runtime.store,
+        principal.carePersonId,
+        id,
+      );
+      return reply.code(200).send({
+        ok: true,
+        open: open.map((r) => ({
+          id: r.id,
+          requester_display_name: r.requesterDisplayName,
+          question: r.question,
+          context_summary: r.contextSummary,
+          created_at: r.createdAt,
+          status: r.status,
+        })),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      request_id?: string;
+      care_recipient_id?: string;
+      body?: string;
+    };
+  }>("/api/v1/care/clarifications/respond", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const requestId =
+      typeof body.request_id === "string" ? body.request_id : "";
+    const careRecipientId =
+      typeof body.care_recipient_id === "string"
+        ? body.care_recipient_id
+        : olivia.id;
+    const text = typeof body.body === "string" ? body.body.trim() : "";
+    if (!requestId || !text) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "request_id and body required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const access = runtime.access(principal.carePersonId, careRecipientId);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = respondToClarification(runtime.store, {
+      requestId,
+      careRecipientId,
+      responderPersonId: principal.carePersonId,
+      responderDisplayName: principal.displayName,
+      body: text,
+    });
+    if (!result) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "clarification request not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      response: {
+        id: result.response.id,
+        request_id: result.response.requestId,
+        body: result.response.body,
+        created_at: result.response.createdAt,
+      },
+      notification_id: result.notification?.id ?? null,
       correlation_id: correlationId(request),
     });
   });
