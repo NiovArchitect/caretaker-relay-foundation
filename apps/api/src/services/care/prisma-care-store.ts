@@ -61,10 +61,12 @@ export class PrismaCareStore implements CareStore {
   private knownAuditIds = new Set<string>();
   private knownIdempotencyKeys = new Set<string>();
   /**
-   * Serialize flush() so concurrent requests cannot race Prisma upserts
-   * (P2002 on careAuditRow was the root cause of ~20% burst write failures).
+   * Serialize + coalesce flush() so concurrent requests share one in-flight
+   * snapshot upsert (P2002 races fixed; burst Q&A must not queue N full flushes).
    */
   private flushChain: Promise<void> = Promise.resolve();
+  private flushInFlight: Promise<void> | null = null;
+  private flushAgain = false;
   readonly backend = "prisma" as const;
 
   static async create(opts?: { load?: boolean }): Promise<PrismaCareStore> {
@@ -334,14 +336,27 @@ export class PrismaCareStore implements CareStore {
 
   /** Flush entire care domain snapshot to Postgres. */
   async flush(): Promise<void> {
-    // Chain flushes: concurrent route handlers share this store instance.
-    const run = () => this.flushUnlocked();
-    const next = this.flushChain.then(run, run);
-    this.flushChain = next.then(
+    // Coalesce: many concurrent answer/write callers share one upsert.
+    // If dirty work arrives during an in-flight flush, run once more after.
+    if (this.flushInFlight) {
+      this.flushAgain = true;
+      return this.flushInFlight;
+    }
+    const run = async () => {
+      do {
+        this.flushAgain = false;
+        await this.flushUnlocked();
+      } while (this.flushAgain);
+    };
+    this.flushInFlight = run().finally(() => {
+      this.flushInFlight = null;
+    });
+    // Keep chain for any legacy awaiters that sequenced on flushChain
+    this.flushChain = this.flushInFlight.then(
       () => undefined,
       () => undefined,
     );
-    return next;
+    return this.flushInFlight;
   }
 
   private async flushUnlocked(): Promise<void> {
