@@ -917,6 +917,15 @@ export class PrismaCareStore implements CareStore {
     return this.memory.getHandoffs(careRecipientId);
   }
   addUpdate(u: CareUpdate): CareUpdate {
+    // Same-id overwrite is required for notification state transitions (seen/ack/resolve).
+    const sameId = this.memory
+      .getUpdates(u.careRecipientId)
+      .find((x) => x.id === u.id);
+    if (sameId) {
+      const r = this.memory.addUpdate(u);
+      this.dirty = true;
+      return r;
+    }
     const hash = communicationHash({
       careRecipientId: u.careRecipientId,
       toPersonId: u.toPersonId,
