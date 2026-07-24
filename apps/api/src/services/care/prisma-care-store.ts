@@ -926,22 +926,30 @@ export class PrismaCareStore implements CareStore {
       this.dirty = true;
       return r;
     }
-    const hash = communicationHash({
-      careRecipientId: u.careRecipientId,
-      toPersonId: u.toPersonId,
-      summary: u.summary,
-    });
-    const dup = this.memory
-      .getUpdates(u.careRecipientId)
-      .find(
-        (x) =>
-          communicationHash({
-            careRecipientId: x.careRecipientId,
-            toPersonId: x.toPersonId,
-            summary: x.summary,
-          }) === hash,
+    // Structured durable rows (notifs, orch, rem, docs, candidates) must not be
+    // collapsed by short communication content-hash — each id is intentional.
+    const structured =
+      /^(CARE_NOTIF_V1:|CARE_ORCH_V1:|CARE_REM_V1:|CARE_DOC_V1:|CARE_CAND_V1:|CLARIFY_|PROVIDER_GUIDANCE_V1:|RELAY_TURN_V1:|RELAY_FOCUS_V1:)/.test(
+        u.summary,
       );
-    if (dup) return dup;
+    if (!structured) {
+      const hash = communicationHash({
+        careRecipientId: u.careRecipientId,
+        toPersonId: u.toPersonId,
+        summary: u.summary,
+      });
+      const dup = this.memory
+        .getUpdates(u.careRecipientId)
+        .find(
+          (x) =>
+            communicationHash({
+              careRecipientId: x.careRecipientId,
+              toPersonId: x.toPersonId,
+              summary: x.summary,
+            }) === hash,
+        );
+      if (dup) return dup;
+    }
     const r = this.memory.addUpdate(u);
     this.dirty = true;
     return r;
