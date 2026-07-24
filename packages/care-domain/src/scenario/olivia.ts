@@ -229,7 +229,7 @@ export function seedOliviaScenario(store: CareStore): void {
     careRecipientId: careRecipient.id,
     personId: people.drShah.id,
     role: "physician",
-    roleLabel: "Primary care",
+    roleLabel: "Primary care physician",
     responsibilities: ["Clinical instructions"],
     access: {
       informationCategories: ["Health observations", "Medication record"],
@@ -238,6 +238,9 @@ export function seedOliviaScenario(store: CareStore): void {
       authorityLimits: ["Clinical authority via instructions only"],
     },
     status: "active",
+    startDate: "2026-07-01",
+    organizationId: "org-coastal-family",
+    organizationName: "Coastal Family Medicine",
   });
 
   // Lab matrix: re-assert Maya consent active so prior revoke tests do not poison the suite.

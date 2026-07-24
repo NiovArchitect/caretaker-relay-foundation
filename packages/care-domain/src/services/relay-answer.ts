@@ -20,6 +20,8 @@ import {
   listProviderGuidance,
   summarizeOpenLoops,
 } from "./orchestration.js";
+import { scanAdversarialQuestion } from "./adversarial-guard.js";
+import { resolveCurrentProvider, resolveEscalationTarget } from "./care-team.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -193,8 +195,62 @@ function answerWithState(
   );
   const priorEntities = priorTurns.at(-1)?.resolvedEntities;
 
-  // Open-loop / waiting-on — orchestration state, not Q&A projection alone
   const qLow = req.question.toLowerCase();
+
+  // Adversarial reliability pre-scan (false premises, injection, role claims, etc.)
+  const guard = scanAdversarialQuestion({
+    store,
+    careRecipientId: req.careRecipientId,
+    recipientDisplayName: req.recipientDisplayName,
+    principalId: req.principalId,
+    principalDisplayName: req.principalDisplayName,
+    roleLabel: req.roleLabel,
+    question: req.question,
+  });
+  if (guard.blocked && guard.answer) {
+    const conversationId = conversationIdFor(
+      req.principalId,
+      req.careRecipientId,
+    );
+    const classified = {
+      intents: ["SAFETY_CONCERN" as const],
+      primary: "SAFETY_CONCERN" as const,
+      decisionContext: "information" as const,
+      entities: { references: [] as string[] },
+      isQuestion: true,
+      isObservationUpdate: false,
+      needsClarification: false,
+    };
+    const turn = persistTurn(store, {
+      principalId: req.principalId,
+      principalDisplayName: req.principalDisplayName,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      userMessage: req.question,
+      classified: { ...classified, intents: [...classified.intents] },
+      answer: guard.answer,
+      sourceRefs: [`adversarial:${guard.reason}`],
+      modelPath: "deterministic",
+    });
+    return {
+      answer: guard.answer,
+      intent: "SAFETY_CONCERN",
+      intents: ["SAFETY_CONCERN"],
+      persona: "family",
+      sourceRefs: [`adversarial:${guard.reason}`],
+      needsClarification: false,
+      projectionsUsed: ["ADVERSARIAL_GUARD"],
+      conversationId,
+      modelPath: "deterministic",
+      classified: { ...classified, intents: [...classified.intents] },
+      durable: true,
+      turnId: turn.turnId,
+      canDeterministic: true,
+      evidenceBound: true,
+    };
+  }
+
+  // Open-loop / waiting-on — orchestration state, not Q&A projection alone
   if (
     /waiting on|still waiting|are we waiting|who are we waiting|did maya answer|did (the )?doctor reply|did dr\.?\s*shah reply|anything unresolved|what still needs|what am i still waiting|open request|pending (request|clarification)/i.test(
       qLow,
@@ -263,24 +319,35 @@ function answerWithState(
     };
   }
 
-  // Provider diagnostic questions — never diagnose; offer Dr Shah path
+  // Clinical-judgment questions: offer current provider from care-team data (not hardcoded names)
   if (
-    /could (the |her |his )?dizz|related to (her |the )?med|caused by|side effect|should we change|is it safe/i.test(
-      qLow,
-    )
+    /should we change|is it safe to|clinical (review|judgment)/i.test(qLow)
   ) {
     const conversationId = conversationIdFor(
       req.principalId,
       req.careRecipientId,
     );
-    const answer =
-      `I can share the timing in ${req.recipientDisplayName}'s records, but I can't determine whether the medication caused the dizziness — that needs clinical judgment.\n\n` +
-      `I can prepare a concise question for Dr. Priya Shah with the relevant timeline. Want me to ask Dr. Shah?`;
+    const provider =
+      resolveEscalationTarget(
+        store,
+        req.careRecipientId,
+        "provider_clinical",
+        req.principalId,
+      ) ?? resolveCurrentProvider(store, req.careRecipientId);
+    const answer = provider
+      ? `I can share authorized care information for ${req.recipientDisplayName}, but clinical decisions need professional judgment.\n\n` +
+        `I can prepare a concise question for ${provider.displayName} (${provider.roleLabel}${
+          provider.organizationName ? `, ${provider.organizationName}` : ""
+        }). Want me to ask them?`
+      : `I can share authorized care information for ${req.recipientDisplayName}, but I don't have a current clinical provider on their care team to escalate to.`;
     const classified = {
       intents: ["PROVIDER_UPDATE_PREP", "SAFETY_CONCERN"] as const,
       primary: "PROVIDER_UPDATE_PREP" as const,
       decisionContext: "clinic_prep" as const,
-      entities: { references: [] as string[], personHint: "Dr. Shah" },
+      entities: {
+        references: [] as string[],
+        personHint: provider?.displayName,
+      },
       isQuestion: true,
       isObservationUpdate: false,
       needsClarification: false,
@@ -293,7 +360,7 @@ function answerWithState(
       userMessage: req.question,
       classified: { ...classified, intents: [...classified.intents] },
       answer,
-      sourceRefs: ["provider_offer"],
+      sourceRefs: ["provider_offer", "care_team"],
       modelPath: "deterministic",
     });
     return {
@@ -301,9 +368,9 @@ function answerWithState(
       intent: "PROVIDER_UPDATE_PREP",
       intents: ["PROVIDER_UPDATE_PREP", "SAFETY_CONCERN"],
       persona: "family",
-      sourceRefs: ["provider_offer"],
+      sourceRefs: ["provider_offer", "care_team"],
       needsClarification: false,
-      projectionsUsed: [],
+      projectionsUsed: ["CARE_TEAM"],
       conversationId,
       modelPath: "deterministic",
       classified: { ...classified, intents: [...classified.intents] },

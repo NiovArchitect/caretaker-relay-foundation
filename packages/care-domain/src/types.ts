@@ -104,6 +104,9 @@ export interface CareRelationship {
   contactPreference?: string;
   scheduleNotes?: string;
   status: "active" | "revoked" | "expired";
+  /** Optional organization (agency/clinic) for multi-org isolation at scale. */
+  organizationId?: string;
+  organizationName?: string;
 }
 
 export interface Person {

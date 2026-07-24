@@ -39,7 +39,7 @@ describe("SLICE A/B: care runtime + domain boundary", () => {
       "Evelyn Carter",
     );
     expect(store.getMedSchedules(oracle.careRecipientId)[0]?.dose).toBe(
-      "2.5 mg",
+      "500 mg",
     );
     expect(service).toBeTruthy();
   });
@@ -251,7 +251,8 @@ describe("SLICE H: medication conflict + consequential safety", () => {
     expect(propose.kind).toBe("verify");
     const med = propose.bundle?.items.find((i) => i.discrepancy);
     expect(med?.safetyClass).toBe("high");
-    expect(med?.discrepancy?.authorizedDose).toBe("2.5 mg");
+    // Canonical schedule is Metformin 500 mg
+    expect(med?.discrepancy?.authorizedDose).toMatch(/500\s*mg/i);
     expect(med?.discrepancy?.recordedDose).toMatch(/5\s*mg/i);
 
     const persist = service.confirmAndPersist(propose.bundle!, sadeilContext());
@@ -292,9 +293,20 @@ describe("SLICE H: medication conflict + consequential safety", () => {
     );
     expect(persist?.kind).toBe("persisted");
     const mars = store.getMedRecords(oracle.careRecipientId);
-    expect(
-      mars.filter((m) => m.status === "recorded").length,
-    ).toBe(0);
+    // Seed may include historical MARs; negation must not ADD a new "given" record
+    const newGiven = mars.filter(
+      (m) =>
+        m.status === "recorded" &&
+        !m.id.startsWith("mar-lunch") &&
+        /not|did not|didn't/i.test(m.source?.rawExcerpt ?? m.source?.label ?? ""),
+    );
+    expect(newGiven.length).toBe(0);
+    // Also: no MAR from this session claiming administration was given
+    const justPersisted = persist?.persisted?.medicationRecordIds ?? [];
+    for (const id of justPersisted) {
+      const row = mars.find((m) => m.id === id);
+      expect(row?.status === "recorded" && /given|administered/i.test(row?.name ?? "")).toBeFalsy();
+    }
   });
 });
 

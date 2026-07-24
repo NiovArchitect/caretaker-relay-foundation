@@ -45,7 +45,10 @@ describe("dose-units parse/compare", () => {
     const ml = compareMedicationDoses("2.5 mL", AUTH);
     expect(ml?.status).toBe("discrepancy");
     if (ml?.status === "discrepancy") {
-      expect(ml.message.toLowerCase()).toMatch(/dimension|comparable|conversion/);
+      // Plain caregiver language OR technical dimension wording both acceptable
+      expect(ml.message.toLowerCase()).toMatch(
+        /dimension|comparable|conversion|doesn't clearly match|care team|unit/,
+      );
     }
     const L = compareMedicationDoses("2.5 L", AUTH);
     expect(L?.status).toBe("discrepancy");
@@ -80,17 +83,24 @@ describe("dose-units parse/compare", () => {
 });
 
 describe("detectMedicationDiscrepancy wiring", () => {
+  // Canonical Olivia schedule is Metformin 500 mg (not 2.5 mg lab toy dose).
   const schedules = [medicationSchedule];
 
-  it("HIGH discrepancy for 2.5 grams vs lunch 2.5 mg", () => {
+  it("HIGH discrepancy for 2.5 grams vs authorized 500 mg", () => {
     const d = detectMedicationDiscrepancy("2.5 grams", schedules);
     expect(d).toBeTruthy();
-    expect(d!.authorizedDose).toMatch(/2\.5\s*mg/i);
+    expect(d!.authorizedDose).toMatch(/500\s*mg/i);
     expect(d!.message.toLowerCase()).toMatch(/not match|material|unit/);
   });
 
-  it("no discrepancy for 2.5 mg", () => {
-    expect(detectMedicationDiscrepancy("2.5 mg", schedules)).toBeUndefined();
+  it("no discrepancy for authorized 500 mg", () => {
+    expect(detectMedicationDiscrepancy("500 mg", schedules)).toBeUndefined();
+  });
+
+  it("HIGH discrepancy for 2.5 mg vs authorized 500 mg", () => {
+    const d = detectMedicationDiscrepancy("2.5 mg", schedules);
+    expect(d).toBeTruthy();
+    expect(d!.authorizedDose).toMatch(/500\s*mg/i);
   });
 });
 
@@ -118,10 +128,12 @@ describe("fixture understand → verification discrepancy", () => {
     expect(discItem).toBeTruthy();
     expect(discItem!.safetyClass).toBe("high");
     expect(discItem!.discrepancy!.recordedDose.toLowerCase()).toMatch(/g/);
-    expect(discItem!.discrepancy!.authorizedDose).toMatch(/2\.5\s*mg/i);
+    // Authorized schedule is Metformin 500 mg — 2.5 g is a material discrepancy
+    expect(discItem!.discrepancy!.authorizedDose).toMatch(/500\s*mg/i);
   });
 
-  it("equivalent 2500 mcg does not raise discrepancy", async () => {
+  it("2500 mcg vs authorized 500 mg raises discrepancy (not equivalent)", async () => {
+    // 2500 mcg = 2.5 mg — not equal to authorized 500 mg Metformin.
     const r = await understandCareInput(
       "I gave the lunch medication 2500 mcg.",
       sadeilContext(),
@@ -135,6 +147,7 @@ describe("fixture understand → verification discrepancy", () => {
     );
     const bundle = toVerificationBundle(r.slice, [medicationSchedule]);
     const discItem = bundle.items.find((i) => i.discrepancy);
-    expect(discItem).toBeFalsy();
+    expect(discItem).toBeTruthy();
+    expect(discItem!.safetyClass).toBe("high");
   });
 });

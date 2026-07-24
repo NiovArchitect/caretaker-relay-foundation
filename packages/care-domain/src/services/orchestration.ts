@@ -24,6 +24,7 @@ import {
   type CareNotification,
 } from "./notifications.js";
 import { resolvePersonName } from "../relay/util.js";
+import { markDocumentsStaleAfterChange, prepareDocument } from "./documents.js";
 
 export const ORCH_PREFIX = "CARE_ORCH_V1:";
 export const CAND_PREFIX = "CARE_CAND_V1:";
@@ -757,6 +758,32 @@ export function confirmCandidate(
       dedupeKey: `handoff-refresh:${handoff.id}:${handoff.toPersonId}`,
     });
   }
+
+  // Document staleness + prepared daily summary refresh
+  markDocumentsStaleAfterChange(
+    store,
+    input.careRecipientId,
+    now,
+    "Care truth changed after document was prepared.",
+  );
+  prepareDocument(store, {
+    careRecipientId: input.careRecipientId,
+    documentType:
+      candidate.type === "provider_instruction"
+        ? "provider_summary"
+        : "daily_summary",
+    title:
+      candidate.type === "provider_instruction"
+        ? "Updated provider guidance summary"
+        : "Updated care day summary",
+    body:
+      candidate.type === "medication_administration"
+        ? `Confirmed administration: ${candidate.structured.medicationName ?? "medication"} reported by ${candidate.sourceDisplayName}; confirmed by ${input.confirmerDisplayName}.`
+        : `Provider guidance from ${candidate.sourceDisplayName}: ${candidate.originalEvidence.slice(0, 400)}`,
+    preparedByPersonId: input.confirmerPersonId,
+    sourceRefs: [candidate.id, orch.id],
+    sourceEventIds: mar ? [mar.id] : providerGuidanceId ? [providerGuidanceId] : [],
+  });
 
   const updated = saveOrch(store, {
     ...orch,
