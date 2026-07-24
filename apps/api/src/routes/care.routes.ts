@@ -633,35 +633,53 @@ export async function registerCareRoutes(
     const handoffs = runtime.store.getHandoffs(careRecipientId);
     const latest = handoffs[handoffs.length - 1];
     const corrections = runtime.store.getCorrections(careRecipientId);
+    const recipient = runtime.store.getRecipient(careRecipientId);
+    const recipientName = recipient?.displayName ?? "this person";
+    const personName = (id?: string) => {
+      if (!id) return "Someone in the care circle";
+      return runtime.store.getPerson(id)?.displayName ?? "Care team member";
+    };
     const q = question.toLowerCase();
     const lines: string[] = [];
     if (
-      /what happened|what changed|since|continuity|caught up|going on/.test(q)
+      /what happened|what changed|since|continuity|caught up|going on|changed this week/.test(
+        q,
+      )
     ) {
       const events = (state?.events ?? []).slice(-8);
       if (events.length === 0 && !latest) {
         lines.push(
-          `I don't have confirmed care changes for this person yet that you're authorized to see.`,
+          `I don't have confirmed care changes for ${recipientName} yet that you're authorized to see.`,
         );
       } else {
-        lines.push(`Here's the current care continuity picture:`);
+        lines.push(`Here's what changed for ${recipientName}:`);
         for (const e of events) {
+          const certainty =
+            e.epistemicStatus === "CONFIRMED"
+              ? "Confirmed"
+              : e.epistemicStatus === "UNCERTAIN"
+                ? "Uncertain"
+                : "Reported";
           lines.push(
-            `• [${e.epistemicStatus}] ${e.statement}${e.source?.actorName ? ` (from ${e.source.actorName})` : ""}`,
+            `• [${certainty}] ${e.statement}${e.source?.actorName ? ` (from ${e.source.actorName})` : ""}`,
           );
         }
         if (latest?.whatChanged?.length) {
-          lines.push(`Latest handoff notes:`);
+          lines.push(`Latest care handoff notes:`);
           for (const w of latest.whatChanged) lines.push(`• ${w}`);
         }
         if (corrections.length) {
           const c = corrections[corrections.length - 1]!;
           lines.push(
-            `Most recent correction: "${c.previousValue}" → "${c.correctedValue}" by ${c.correctedByPersonId}.`,
+            `Most recent correction: "${c.previousValue}" → "${c.correctedValue}" by ${personName(c.correctedByPersonId)}.`,
           );
         }
       }
-    } else if (/still need|needs me|attention|left to do/.test(q)) {
+    } else if (
+      /still need|needs me|attention|left to do|waiting for me|need to verify/.test(
+        q,
+      )
+    ) {
       const open = (state?.openSafetyReviews ?? []).filter(
         (s) => s.status === "open",
       );
@@ -670,41 +688,82 @@ export async function registerCareRoutes(
         lines.push("Nothing is currently flagged as needing attention.");
       } else {
         lines.push("Still needs attention:");
-        for (const s of open) lines.push(`• ${s.reason}`);
+        for (const s of open) {
+          const reason = String(s.reason ?? "");
+          const plain = /dimension|comparable|unit/i.test(reason)
+            ? `The reported amount doesn't clearly match ${recipientName}'s current medication instructions. Please check the label or confirm with the prescribing team.`
+            : reason;
+          lines.push(`• ${plain}`);
+        }
         for (const n of next) lines.push(`• ${n}`);
       }
-    } else if (/medication|dose|pill|meds/.test(q)) {
+    } else if (/medication|dose|pill|meds|metformin|already give|gave her/.test(q)) {
       const sched = state?.medicationSchedules ?? [];
       if (!sched.length) {
         lines.push(
-          "I don't have an authorized medication schedule on file for this person in your view.",
+          `I don't have an authorized medication schedule on file for ${recipientName} in your view.`,
         );
       } else {
-        lines.push("Authorized medication context:");
+        lines.push(`Medications for ${recipientName}:`);
         for (const s of sched) {
+          const extra = [
+            (s as { scheduleTime?: string }).scheduleTime
+              ? `Take at ${(s as { scheduleTime?: string }).scheduleTime}`
+              : null,
+            (s as { windowStart?: string }).windowStart &&
+            (s as { windowEnd?: string }).windowEnd
+              ? `window ${(s as { windowStart?: string }).windowStart} – ${(s as { windowEnd?: string }).windowEnd}`
+              : null,
+            (s as { mealRelation?: string }).mealRelation ?? null,
+          ]
+            .filter(Boolean)
+            .join("; ");
           lines.push(
-            `• ${s.name}: ${s.dose} (${s.scheduleLabel}) — by ${s.authorizedBy}`,
+            `• ${s.name}: ${s.dose}${extra ? ` · ${extra}` : ` (${s.scheduleLabel})`} · authorized by ${s.authorizedBy}`,
           );
         }
         lines.push(
-          "This is the authorized instruction on file — not a new prescription from Relay.",
+          "This is the authorized instruction on file, not a new prescription from Relay.",
         );
       }
-    } else if (/appointment|pt|physical therapy|schedule/.test(q)) {
+    } else if (/appointment|pt|physical therapy|schedule|next appointment/.test(q)) {
       const apts = state?.appointments ?? [];
       if (!apts.length) {
         lines.push("No appointments are on file in your authorized view.");
       } else {
         lines.push("Appointments:");
         for (const a of apts) {
+          const prev = (a as { previousStartsAtLabel?: string })
+            .previousStartsAtLabel;
           lines.push(
-            `• ${a.title}: ${a.startsAtLabel ?? a.startsAt} (${a.status}${a.epistemicStatus ? `, ${a.epistemicStatus}` : ""})`,
+            `• ${a.title}: ${a.startsAtLabel ?? a.startsAt}${a.location ? ` · ${a.location}` : ""} (${a.status})${prev ? ` · changed from ${prev}` : ""}`,
           );
         }
       }
+    } else if (/dr\.?\s*shah|provider|clinic update|prepare an update for dr/.test(q)) {
+      lines.push(`Clinic-oriented picture for ${recipientName} (for Dr. Shah):`);
+      for (const s of state?.medicationSchedules ?? []) {
+        lines.push(`• Medication: ${s.name} ${s.dose} (${s.scheduleLabel})`);
+      }
+      for (const e of (state?.events ?? []).slice(-4)) {
+        lines.push(`• ${e.statement}`);
+      }
+      lines.push(
+        "This is a caregiver-prepared summary for review, not a clinical order.",
+      );
+    } else if (/maya|daniel|handoff|tell /.test(q)) {
+      if (latest?.whatChanged?.length) {
+        lines.push(`Care handoff notes:`);
+        for (const w of latest.whatChanged) lines.push(`• ${w}`);
+        lines.push("Prepared for review, not automatically sent as a message.");
+      } else {
+        lines.push(
+          `I can prepare a care handoff after you confirm a care update about ${recipientName}.`,
+        );
+      }
     } else {
       lines.push(
-        `I can answer from authorized care truth for this person — try asking what changed, what still needs attention, medications, or appointments.`,
+        `I can answer from authorized care truth for ${recipientName}. Try asking what changed, what still needs attention, medications, or appointments.`,
       );
       const events = (state?.events ?? []).slice(-3);
       if (events.length) {

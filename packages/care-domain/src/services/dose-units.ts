@@ -305,7 +305,7 @@ export function compareMedicationDoses(
       status: "unresolved",
       severity: "high",
       message:
-        "Reported dose is missing units. Relay will not assume milligrams. Requires human review.",
+        "The reported dose is missing units. Check the bottle or packaging, then confirm the amount before marking this complete.",
       recordedDose: recordedDose.trim(),
       authorizedDose,
       recorded,
@@ -331,7 +331,7 @@ export function compareMedicationDoses(
       status: "discrepancy",
       severity: "high",
       message:
-        "Reported dose unit is not comparable to the authorized instruction (incompatible dimensions). Relay will not invent a conversion.",
+        "The reported amount doesn't clearly match the current medication instructions. Please check the medication label or confirm with the prescribing team before marking this complete.",
       recordedDose: recorded.raw,
       authorizedDose: authorized.raw,
       recorded,

@@ -198,6 +198,8 @@ export interface Appointment {
   status: "scheduled" | "moved" | "completed" | "cancelled";
   epistemicStatus: EpistemicStatus;
   source?: SourceRef;
+  previousStartsAtLabel?: string;
+  changeSource?: string;
 }
 
 export interface MedicationSchedule {
@@ -209,6 +211,18 @@ export interface MedicationSchedule {
   authorizedBy: string;
   authorizedAt: string;
   source: SourceRef;
+  /** Optional structured professional fields when the source provides them. */
+  strength?: string;
+  route?: string;
+  scheduleTime?: string;
+  windowStart?: string;
+  windowEnd?: string;
+  mealRelation?: string;
+  specialInstructions?: string;
+  nextDueLabel?: string;
+  lastAdministeredAt?: string;
+  lastAdministeredBy?: string;
+  lastAdministeredByName?: string;
 }
 
 export interface MedicationDiscrepancy {

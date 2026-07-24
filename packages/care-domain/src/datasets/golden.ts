@@ -120,7 +120,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     input: "I gave the lunch medication 5 mg.",
     oracle: {
       expectEventTypes: ["medication_administration"],
-      notes: "Must flag discrepancy vs 2.5 mg authorized",
+      notes: "Must flag discrepancy vs 500 mg authorized",
     },
     synthetic: true,
   },
