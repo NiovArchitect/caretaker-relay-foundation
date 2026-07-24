@@ -152,20 +152,64 @@ function composeAnswer(ctx: {
     return lines.join("\n");
   }
 
-  function lastAdminLine(): string {
+  function adminRecords() {
     used.add("LAST_MEDICATION_ADMINISTRATIONS");
-    const last = proj.LAST_MEDICATION_ADMINISTRATIONS.slice(-1)[0];
-    if (!last) return "No administration is recorded yet.";
+    return proj.LAST_MEDICATION_ADMINISTRATIONS;
+  }
+
+  function describeAdmin(rec: Record<string, unknown>): string {
     refs.push("administration_record");
     const when = formatCareDateTime(
-      str(last.administeredAt ?? last.occurredAt ?? last.recordedAt),
+      str(rec.administeredAt ?? rec.occurredAt ?? rec.recordedAt),
     );
     const by = resolvePersonName(
-      str(last.administeredByPersonId) || undefined,
-      str(last.lastAdministeredByName) || undefined,
+      str(rec.administeredByPersonId) || undefined,
+      str(rec.lastAdministeredByName) || undefined,
     );
-    const dose = str(last.doseRecorded ?? last.recordedDose ?? last.dose ?? "");
-    return `Last recorded: ${dose || "dose recorded"} · ${when || "time on file"} · by ${by}`;
+    const dose = str(rec.doseRecorded ?? rec.recordedDose ?? rec.dose ?? "");
+    return `${dose || "dose recorded"} · ${when || "time on file"} · by ${by}`;
+  }
+
+  function lastAdminLine(): string {
+    const last = adminRecords().slice(-1)[0];
+    if (!last) return "No administration is recorded yet.";
+    return `Last recorded: ${describeAdmin(last)}`;
+  }
+
+  function findAdminByPerson(personHint: string | undefined) {
+    if (!personHint) return null;
+    const key = personHint.toLowerCase();
+    const rows = adminRecords();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i]!;
+      const by = resolvePersonName(
+        str(r.administeredByPersonId) || undefined,
+        str(r.lastAdministeredByName) || undefined,
+      ).toLowerCase();
+      if (by.includes(key.split(" ")[0]!) || key.includes(by.split(" ")[0]!)) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  function firstObsTime(theme: string): { at: string; label: string; who: string } | null {
+    for (const c of proj.RECENT_OBSERVATION_CLUSTERS) {
+      if (c.theme.toLowerCase().includes(theme.toLowerCase())) {
+        return {
+          at: c.mostRecentLabel,
+          label: c.mostRecentLabel,
+          who: c.sources[0] ?? "Care team",
+        };
+      }
+    }
+    // raw observations if present in state via clusters only
+    return null;
+  }
+
+  function parseLooseTime(label: string): number | null {
+    // Prefer ISO if present in records
+    return null;
   }
 
   // Intent handlers
@@ -173,29 +217,28 @@ function composeAnswer(ctx: {
     if (intents.includes("MEDICATION_DUE") || intents.includes("MEDICATION_CURRENT")) {
       used.add("NEXT_24H_TASKS");
       if (persona === "family") {
-        parts.push(
-          `Next for ${recipientName}:\n${medBlock()}`,
-        );
-        if (proj.OPEN_UNCERTAINTIES.length) {
+        parts.push(medBlock());
+        // Only surface discrepancy when user asks uncertainty or open check
+        if (
+          intents.includes("MEDICATION_UNCERTAINTY") &&
+          proj.OPEN_UNCERTAINTIES.length
+        ) {
           used.add("OPEN_UNCERTAINTIES");
+          parts.push(proj.OPEN_UNCERTAINTIES[0]!);
           parts.push(
-            `Still needs checking:\n• ${proj.OPEN_UNCERTAINTIES[0]}`,
+            "Check the medication label or contact the clinic before marking this complete.",
           );
-          parts.push("Next: check the medication label or contact the clinic before marking complete.");
         }
       } else if (persona === "professional_dsp") {
         parts.push(
-          `Authorized medication support for ${recipientName} (per current care plan):\n${medBlock()}`,
+          `Authorized for ${recipientName} (current care plan):\n${medBlock()}`,
         );
-        parts.push(lastAdminLine());
-        if (proj.OPEN_UNCERTAINTIES.length) {
+        if (intents.includes("MEDICATION_UNCERTAINTY") && proj.OPEN_UNCERTAINTIES[0]) {
           used.add("OPEN_UNCERTAINTIES");
           parts.push(
-            `Unresolved medication question:\n• ${proj.OPEN_UNCERTAINTIES[0]}\nDocument what you observe. Do not change the care plan on your own.`,
+            `${proj.OPEN_UNCERTAINTIES[0]} Document what you observe. Do not change the care plan on your own.`,
           );
         }
-        used.add("DSP_SUPPORT_NOTES");
-        parts.push(`DSP note: ${proj.DSP_SUPPORT_NOTES[2]}`);
       } else if (persona === "physician") {
         parts.push(
           `Current authorized medications for ${recipientName}:\n${medBlock()}`,
@@ -214,16 +257,29 @@ function composeAnswer(ctx: {
       }
     }
     if (intents.includes("MEDICATION_ADMINISTRATION_HISTORY")) {
-      parts.push(lastAdminLine());
-      if (classified.entities.personHint) {
-        parts.push(
-          `You asked about ${classified.entities.personHint}. I attribute administrations by recorded person when available.`,
-        );
-      }
-      if (classified.entities.timeHint === "yesterday") {
-        parts.push(
-          "Time focus: yesterday's record when present on the administration history.",
-        );
+      const who = classified.entities.personHint;
+      if (who) {
+        const hit = findAdminByPerson(who);
+        if (hit) {
+          parts.push(
+            `Yes — I have a record from ${who}:\n${describeAdmin(hit)}`,
+          );
+        } else {
+          const last = adminRecords().slice(-1)[0];
+          parts.push(
+            `I don't have a medication administration recorded from ${who}${classified.entities.timeHint === "yesterday" ? " yesterday" : ""}.`,
+          );
+          if (last) {
+            parts.push(
+              `The most recent record I do have is:\n${describeAdmin(last)}`,
+            );
+          }
+          parts.push(
+            `Want me to ask ${who} whether they gave it?`,
+          );
+        }
+      } else {
+        parts.push(lastAdminLine());
       }
     }
     if (intents.includes("MEDICATION_INSTRUCTIONS")) {
@@ -374,24 +430,64 @@ function composeAnswer(ctx: {
     } else {
       parts.push("No clustered observations on file yet.");
     }
-    // Temporal: med before dizzy — only if evidence exists
-    if (/before|after/i.test(classified.entities.references.join(" ")) || classified.intents.includes("OBSERVATION_HISTORY")) {
-      const hasDizz = proj.RECENT_OBSERVATION_CLUSTERS.some((c) =>
+    // Temporal: med before dizzy — compute sequence when both times exist
+    if (
+      /before|after/i.test(classified.entities.references.join(" ") + " " + (classified.entities.timeHint ?? "")) ||
+      /before|after|dizz/i.test(JSON.stringify(classified.entities))
+    ) {
+      const last = adminRecords().slice(-1)[0];
+      const dizz = proj.RECENT_OBSERVATION_CLUSTERS.find((c) =>
         /dizz/i.test(c.theme),
       );
-      const hasAdmin = proj.LAST_MEDICATION_ADMINISTRATIONS.length > 0;
-      if (hasDizz && hasAdmin) {
-        parts.push(
-          "I have both dizziness reports and medication administration times on file, but I will not invent a causal link. Compare the timestamps in Care if you need sequence.",
+      if (last && dizz) {
+        const medIso = str(last.administeredAt ?? last.occurredAt ?? "");
+        const medLabel = formatCareDateTime(medIso) || medIso;
+        const dizzLabel = dizz.mostRecentLabel;
+        const medMs = medIso ? Date.parse(medIso) : NaN;
+        const dizzIso = str(
+          (dizz as { mostRecentAt?: string }).mostRecentAt ?? "",
         );
-      } else if (hasDizz && !hasAdmin) {
+        const dizzParsed = dizzIso ? Date.parse(dizzIso) : NaN;
+        parts.length = 0;
+        let sequence =
+          "I can see both a medication time and a dizziness report on file.";
+        if (!Number.isNaN(medMs) && !Number.isNaN(dizzParsed)) {
+          const mins = Math.round(Math.abs(dizzParsed - medMs) / 60000);
+          const hours = Math.floor(mins / 60);
+          const rem = mins % 60;
+          const gap =
+            hours > 0
+              ? `${hours} hour${hours === 1 ? "" : "s"} ${rem} minute${rem === 1 ? "" : "s"}`
+              : `${mins} minutes`;
+          if (medMs < dizzParsed) {
+            sequence = `Yes. The recorded medication was at ${medLabel}, and the dizziness report is at ${dizzLabel} — about ${gap} later.`;
+          } else if (medMs > dizzParsed) {
+            sequence = `The dizziness report (${dizzLabel}) is recorded before the medication time (${medLabel}) — about ${gap} earlier.`;
+          } else {
+            sequence = `The recorded medication and dizziness report share the same timestamp (${medLabel}).`;
+          }
+        } else {
+          sequence = `The recorded dose was at ${medLabel}. The most recent dizziness report is ${dizzLabel} (from ${dizz.sources.join(", ")}).`;
+        }
+        parts.push(sequence);
         parts.push(
-          "Dizziness is reported, but I don't have enough linked timing evidence to say whether it was before or after a specific dose.",
+          `That timing alone does not show that one caused the other.`,
+        );
+      } else if (dizz && !last) {
+        parts.push(
+          `I have dizziness reports, but no linked medication administration time to compare.`,
+        );
+      } else if (last && !dizz) {
+        parts.push(
+          `I have a medication time (${describeAdmin(last)}), but no dizziness observation on file to compare.`,
         );
       }
     }
-    if (intents.includes("SAFETY_CONCERN") || persona === "family") {
-      parts.push(`Watch items (dementia-aware support):\n${proj.DEMENTIA_WATCH.slice(0, 4).map((w) => `• ${w}`).join("\n")}`);
+    // Watch items only when safety intent and recipient has them
+    if (intents.includes("SAFETY_CONCERN") && proj.DEMENTIA_WATCH.length) {
+      parts.push(
+        `What to watch for ${recipientName}:\n${proj.DEMENTIA_WATCH.slice(0, 4).map((w) => `• ${w}`).join("\n")}`,
+      );
     }
   }
 
@@ -402,6 +498,26 @@ function composeAnswer(ctx: {
     used.add("LATEST_PROVIDER_INSTRUCTIONS");
     used.add("OPEN_UNCERTAINTIES");
     used.add("RECENT_CHANGES");
+    const askedProvider = classified.entities.personHint;
+    if (askedProvider && /shah/i.test(askedProvider)) {
+      const hasShah = proj.LATEST_PROVIDER_INSTRUCTIONS.some((l) =>
+        /shah/i.test(l),
+      );
+      if (!hasShah) {
+        const other = proj.LATEST_PROVIDER_INSTRUCTIONS[0];
+        parts.push(
+          `Dr. Shah isn't listed as ${recipientName}'s provider in this care record, and I don't have a Dr. Shah instruction here.`,
+        );
+        if (other) {
+          parts.push(
+            `The current medication instruction on file is:\n${other}`,
+          );
+          parts.push(`Would you like details on that instruction?`);
+        }
+        // skip rest of provider dump
+        return { answer: parts.join("\n\n").trim(), sourceRefs: refs.length ? refs : ["care_projections"], projectionsUsed: [...used] };
+      }
+    }
     if (persona === "physician") {
       parts.push(`Concise picture for clinic review (${recipientName}):`);
       parts.push(
@@ -531,16 +647,15 @@ function composeAnswer(ctx: {
     );
   }
 
-  // Reminders digest on task/appointment questions
+  // Reminders only when user asks what is coming up / tasks now — never on pure med lookup
   if (
     intents.some((i) =>
-      ["APPOINTMENT_NEXT", "APPOINTMENT_LOGISTICS", "TASKS_NOW", "MEDICATION_DUE"].includes(
-        i,
-      ),
-    )
+      ["APPOINTMENT_NEXT", "APPOINTMENT_LOGISTICS", "TASKS_NOW"].includes(i),
+    ) &&
+    !intents.some((i) => i.startsWith("MEDICATION"))
   ) {
     used.add("REMINDERS");
-    parts.push(`Reminders (rule-based, not an LLM timer):\n${formatReminderDigest(proj)}`);
+    parts.push(`Coming up:\n${formatReminderDigest(proj)}`);
   }
 
   if (!parts.length) {
@@ -572,7 +687,7 @@ function composeAnswer(ctx: {
   const answer =
     grounded +
     (persona === "physician"
-      ? "\n\nSources are care-plan and caregiver-reported records. Not a complete chart."
+      ? "\n\nBased on the care plan and caregiver reports on file."
       : "");
 
   return {

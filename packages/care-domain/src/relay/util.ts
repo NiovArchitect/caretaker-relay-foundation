@@ -103,6 +103,7 @@ export function clusterObservations(
     theme: c.theme,
     count: c.count,
     sources: c.sources,
+    mostRecentAt: c.mostRecentAt,
     mostRecentLabel: formatCareDateTime(c.mostRecentAt) || c.mostRecentAt || "Recently",
   }));
 }

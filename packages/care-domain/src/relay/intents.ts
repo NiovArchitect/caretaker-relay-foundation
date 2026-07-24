@@ -215,6 +215,14 @@ export function classifyIntent(
   if (/daniel/.test(q)) personHint = "Daniel Kim";
   if (/marcus/.test(q)) personHint = "Marcus Carter";
   if (/dr\.?\s*shah|priya/.test(q)) personHint = "Dr. Priya Shah";
+  // Named person + give/gave without explicit med word still administration history
+  if (
+    personHint &&
+    /give|gave|given|administer/.test(q) &&
+    !intents.includes("MEDICATION_ADMINISTRATION_HISTORY")
+  ) {
+    intents.push("MEDICATION_ADMINISTRATION_HISTORY");
+  }
 
   let timeHint: ClassifiedTurn["entities"]["timeHint"] = priorEntities?.timeHint;
   if (/yesterday/.test(q)) timeHint = "yesterday";
