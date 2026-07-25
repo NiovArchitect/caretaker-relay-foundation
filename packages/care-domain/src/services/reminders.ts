@@ -206,9 +206,12 @@ export function recalculateAppointmentReminders(
     resolvedAt: null,
   };
 
+  // Unique ids even when Date.now() is identical across consecutive creates
+  // (suite flakes collapsed upcoming+leave onto one row and lost supersede count).
+  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const upcoming: CareReminder = {
     ...base,
-    id: `rem-apt-up-${input.appointment.id}-${Date.now().toString(36)}`,
+    id: `rem-apt-up-${input.appointment.id}-${stamp}-u`,
     type: "APPOINTMENT_UPCOMING",
     title: `Upcoming: ${input.appointment.title}`,
     body: `Scheduled for ${whenLabel}. Location: ${input.appointment.location ?? "see care plan"}.`,
@@ -220,7 +223,7 @@ export function recalculateAppointmentReminders(
   };
   const leave: CareReminder = {
     ...base,
-    id: `rem-apt-leave-${input.appointment.id}-${Date.now().toString(36)}`,
+    id: `rem-apt-leave-${input.appointment.id}-${stamp}-l`,
     type: "LEAVE_SOON",
     title: `Leave soon for ${input.appointment.title}`,
     body: `Leave by about ${leaveAt.toLocaleTimeString("en-US", {
