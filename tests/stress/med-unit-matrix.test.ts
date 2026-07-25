@@ -24,7 +24,10 @@ const EVIDENCE = resolve(
 );
 
 describe("Medication unit matrix (pure)", () => {
-  const AUTH = medicationSchedule.dose; // 2.5 mg
+  // Pure unit-conversion reference dose — NOT the lab Metformin schedule (500 mg).
+  // Lab product truth remains medicationSchedule.dose = "500 mg" for Evelyn/Olivia.
+  // This matrix validates mass/speech/STT equivalence against a fixed 2.5 mg baseline.
+  const AUTH = "2.5 mg";
 
   const cases: Array<{
     input: string;
