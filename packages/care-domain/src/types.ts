@@ -527,6 +527,8 @@ export interface CareLoopResult {
     updateIds: string[];
     medicationRecordIds: string[];
     safetyReviewIds: string[];
+    careNoteId?: string;
+    careNoteBody?: string;
   };
   currentState?: CurrentCareState;
   evidenceMode: EvidenceMode;

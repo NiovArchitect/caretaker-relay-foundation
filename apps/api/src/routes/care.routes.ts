@@ -42,6 +42,11 @@ import {
   recalculateAppointmentReminders,
   recalculateMedicationReminders,
   resolveMedicationRemindersAfterAdmin,
+  listCareNotes,
+  listCoverage,
+  seedDefaultCoverage,
+  formatCoverageHuman,
+  buildCareHistory,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
@@ -306,6 +311,85 @@ export async function registerCareRoutes(
         profile: recipient.profile ?? null,
       },
       medications: meds,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/recipients/:id/history", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const id = (request.params as { id: string }).id;
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const filter =
+      typeof (request.query as { filter?: string })?.filter === "string"
+        ? ((request.query as { filter: string }).filter as
+            | "all"
+            | "medications"
+            | "appointments"
+            | "observations"
+            | "care_notes"
+            | "handoffs")
+        : "all";
+    const items = buildCareHistory(runtime.store, id, filter);
+    return reply.code(200).send({
+      ok: true,
+      care_recipient_id: id,
+      filter,
+      items,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/recipients/:id/coverage", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const id = (request.params as { id: string }).id;
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    seedDefaultCoverage(runtime.store, id);
+    const slots = listCoverage(runtime.store, id);
+    return reply.code(200).send({
+      ok: true,
+      care_recipient_id: id,
+      slots,
+      summary: formatCoverageHuman(slots),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/recipients/:id/notes", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const id = (request.params as { id: string }).id;
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const notes = listCareNotes(runtime.store, id);
+    return reply.code(200).send({
+      ok: true,
+      care_recipient_id: id,
+      notes,
       correlation_id: correlationId(request),
     });
   });

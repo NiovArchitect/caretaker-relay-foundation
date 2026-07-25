@@ -11,6 +11,7 @@ import type {
   Person,
   CareRecipient,
 } from "../types.js";
+import { seedDefaultCoverage } from "../services/care-coverage.js";
 
 export const HOUSEHOLD_OLIVIA = "hh-olivia";
 export const HOUSEHOLD_OTHER = "hh-other";
@@ -235,6 +236,7 @@ export function sadeilContext(sessionId = "sess-lab-1"): AuthCareContext {
 /** Seed Evelyn Carter scenario into a CareStore (synthetic). */
 export function seedOliviaScenario(store: CareStore): void {
   store.upsertRecipient(careRecipient);
+  seedDefaultCoverage(store, careRecipient.id);
   for (const p of Object.values(people)) {
     if (p.id.startsWith("cr-")) {
       store.upsertRecipient({

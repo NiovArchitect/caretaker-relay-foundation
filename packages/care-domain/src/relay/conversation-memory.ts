@@ -86,7 +86,7 @@ export function encodeTurnUpdate(
 }
 
 export function decodeTurn(u: CareUpdate): RelayTurnRecord | null {
-  if (!u.summary.startsWith(TURN_PREFIX)) return null;
+  if (!u.summary || !u.summary.startsWith(TURN_PREFIX)) return null;
   try {
     const raw = JSON.parse(u.summary.slice(TURN_PREFIX.length)) as RelayTurnRecord;
     // Enforce principal isolation on decode

@@ -40,6 +40,9 @@ export * from "./scenario/agency-scale.js";
 export * from "./services/reminders.js";
 export * from "./scenario/multi-tenant.js";
 export * from "./services/recipient-profile.js";
+export * from "./services/care-notes.js";
+export * from "./services/care-coverage.js";
+export * from "./services/care-history.js";
 
 import { MemoryCareStore } from "./store/memory-store.js";
 import { CareLoopService } from "./services/loop.js";
