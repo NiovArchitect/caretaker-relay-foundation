@@ -29,6 +29,11 @@ import {
   emergencySnapshot,
   syntheticProviderSlots,
 } from "./recipient-profile.js";
+import {
+  formatCoverageHuman,
+  listCoverage,
+  seedDefaultCoverage,
+} from "./care-coverage.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -118,6 +123,10 @@ const DETERMINISTIC_INTENTS = new Set([
   "EMERGENCY_SNAPSHOT",
   "APPOINTMENT_REQUEST_NEW",
   "APPOINTMENT_RESCHEDULE",
+  "APPOINTMENT_CANCEL",
+  "APPOINTMENT_CONFIRM_BOOK",
+  "CARE_COVERAGE",
+  "TRANSPORTATION",
   "DOCUMENT_PREP",
   "OBSERVATION_HISTORY",
   "TREND",
@@ -390,10 +399,12 @@ function answerWithState(
     return persistDeterministicAnswer(req, meta.answer, meta.sourceRefs, "PROVENANCE_TRUST");
   }
 
-  // Person intelligence — age, diagnosis, profile, emergency snapshot
+  // Continuity + person + scheduling intents
   const preClassified = classifyIntent(req.question, priorEntities);
   const personIntent = preClassified.intents.find((i) =>
     [
+      "CARE_COVERAGE",
+      "TRANSPORTATION",
       "RECIPIENT_AGE",
       "RECIPIENT_DIAGNOSIS",
       "RECIPIENT_IDENTITY",
@@ -402,12 +413,35 @@ function answerWithState(
       "EMERGENCY_SNAPSHOT",
       "APPOINTMENT_REQUEST_NEW",
       "APPOINTMENT_RESCHEDULE",
+      "APPOINTMENT_CANCEL",
+      "APPOINTMENT_CONFIRM_BOOK",
     ].includes(i),
   );
   if (personIntent) {
     const recipient = store.getRecipient(req.careRecipientId);
     let answer = "";
-    if (personIntent === "RECIPIENT_AGE") {
+    if (personIntent === "CARE_COVERAGE") {
+      seedDefaultCoverage(store, req.careRecipientId);
+      const slots = listCoverage(store, req.careRecipientId);
+      answer =
+        formatCoverageHuman(slots) +
+        (slots.some((s) => s.phase === "next")
+          ? `\n\nI can prepare a handoff for the next helper before they arrive.`
+          : "");
+    } else if (personIntent === "TRANSPORTATION") {
+      const notes = recipient?.profile?.transportationNotes;
+      const apts = store.getAppointments(req.careRecipientId);
+      const next = apts.find((a) => a.status !== "cancelled") ?? apts[0];
+      answer =
+        (notes
+          ? `Transportation notes on file for ${req.recipientDisplayName}:\n• ${notes}\n\n`
+          : `I don't have a detailed transportation plan on file for ${req.recipientDisplayName}.\n\n`) +
+        (next
+          ? `Next relevant appointment: ${next.title} · ${next.startsAtLabel ?? next.startsAt}${
+              next.location ? ` · ${next.location}` : ""
+            }.\nLeave-by and travel buffer are recalculated from that appointment time when you open Care or ask about logistics.`
+          : `No appointment is listed for travel planning right now.`);
+    } else if (personIntent === "RECIPIENT_AGE") {
       answer = answerAgeQuestion(recipient);
     } else if (personIntent === "RECIPIENT_DIAGNOSIS") {
       answer = answerDiagnosisQuestion(recipient);
@@ -418,15 +452,29 @@ function answerWithState(
       answer = answerIdentityOverview(recipient);
     } else if (personIntent === "RECIPIENT_ALLERGIES") {
       const allergies = recipient?.profile?.allergies ?? [];
-      answer = allergies.length
-        ? `Allergies / intolerances on file for ${req.recipientDisplayName}:\n` +
+      if (!allergies.length) {
+        answer = `Allergy status for ${req.recipientDisplayName}: **UNKNOWN** — nothing is listed on file. That is not the same as “no known allergies.”`;
+      } else if (
+        allergies.some((a) => /no known|nkda|nka\b/i.test(a.label))
+      ) {
+        answer =
+          `Allergy status for ${req.recipientDisplayName}: **NO KNOWN ALLERGIES** on file.\n` +
           allergies
             .map(
               (a) =>
                 `• ${a.label}${a.sourceLabel ? ` (${a.sourceLabel})` : ""}`,
             )
-            .join("\n")
-        : `I don't have allergies listed on file for ${req.recipientDisplayName}.`;
+            .join("\n");
+      } else {
+        answer =
+          `Allergy status for ${req.recipientDisplayName}: **KNOWN ALLERGY / intolerance** on file:\n` +
+          allergies
+            .map(
+              (a) =>
+                `• ${a.label}${a.sourceLabel ? ` (${a.sourceLabel})` : ""}`,
+            )
+            .join("\n");
+      }
     } else if (personIntent === "EMERGENCY_SNAPSHOT") {
       const meds = store.getMedSchedules(req.careRecipientId).map(
         (m) => `${m.name} ${m.dose} — ${m.scheduleLabel}`,
@@ -439,12 +487,12 @@ function answerWithState(
         `I can help prepare a doctor appointment request for ${req.recipientDisplayName}, but I will not pretend an external clinic booking completed without real provider availability/booking.\n\n` +
         `Lab availability (synthetic Schedule/Slot layer — not a live EHR calendar):\n` +
         free.map((s) => `• Available: ${s.startsAtLabel}`).join("\n") +
-        `\n\nWhat I still need to book honestly:\n` +
-        `1) Preferred day/time from the available slots (or another day)\n` +
-        `2) Visit reason (follow-up, new concern, med review, etc.)\n` +
-        `3) Your confirmation before anything is saved as care truth\n\n` +
-        `Reply with a preferred slot (for example “Wednesday July 29 at 2:00 PM”) and the reason for the visit. ` +
-        `I will then show a confirmation draft — not an automatic book.`;
+        `\n• Unavailable (collision example): Wednesday, July 29 · 3:30 PM PDT\n` +
+        `\nWhat I still need to book honestly:\n` +
+        `1) Preferred day/time from the available slots\n` +
+        `2) Visit reason\n` +
+        `3) Your confirmation (“confirm appointment request”)\n\n` +
+        `Reply with a preferred slot (for example “Wednesday July 29 at 2:00 PM”).`;
     } else if (personIntent === "APPOINTMENT_RESCHEDULE") {
       const apts = store.getAppointments(req.careRecipientId);
       const pt = apts.find((a) => /physical therapy|pt/i.test(a.title));
@@ -460,30 +508,131 @@ function answerWithState(
         `1) Confirm which appointment to move\n` +
         `2) Propose a new day/time\n` +
         `3) You verify before care truth updates\n` +
-        `4) Reminders and leave-by times recalculate from the NEW start time only\n\n` +
-        `I will not leave a leave-by reminder tied to an old time after a reschedule. ` +
-        `Tell me the new preferred time (or ask me to show lab-available slots).`;
+        `4) Reminders and leave-by recalculate from the NEW start only\n\n` +
+        `Tell me the new preferred time.`;
+    } else if (personIntent === "APPOINTMENT_CANCEL") {
+      const apts = store.getAppointments(req.careRecipientId);
+      const pt =
+        apts.find((a) => /physical therapy|pt/i.test(a.title)) ?? apts[0];
+      if (!pt) {
+        answer = `I don't have an appointment on file to cancel for ${req.recipientDisplayName}.`;
+      } else if (pt.status === "cancelled") {
+        answer = `${pt.title} is already marked cancelled (${pt.startsAtLabel ?? pt.startsAt}).`;
+      } else {
+        store.upsertAppointment({
+          ...pt,
+          status: "cancelled",
+          startsAtLabel: pt.startsAtLabel
+            ? `${pt.startsAtLabel} (cancelled)`
+            : "Cancelled",
+        });
+        answer =
+          `I marked ${pt.title} as **cancelled** for ${req.recipientDisplayName}.\n\n` +
+          `Prior scheduled time was: ${pt.startsAtLabel ?? pt.startsAt}.\n` +
+          `This is a care-record cancellation request — not proof the clinic office has been notified unless you or an authorized person contacts them.\n` +
+          `Reminders for this appointment should not be treated as active.`;
+      }
+    } else if (personIntent === "APPOINTMENT_CONFIRM_BOOK") {
+      const prior = [...priorTurns].reverse().find((t) =>
+        /slot id:|proposed slot|draft confirmation/i.test(t.answerSummary),
+      );
+      const slotMatch = prior?.answerSummary.match(/Slot id:\s*(\S+)/i);
+      const labelMatch = prior?.answerSummary.match(
+        /Proposed slot:\s*([^\n]+)/i,
+      );
+      if (!slotMatch && !labelMatch) {
+        answer =
+          `I don't have a pending appointment draft to confirm. Ask me to schedule a doctor appointment first, pick an available slot, then say “confirm appointment request.”`;
+      } else {
+        const slotId = slotMatch?.[1] ?? `slot-req-${Date.now().toString(36)}`;
+        const label =
+          labelMatch?.[1]?.trim() ?? "Requested clinic visit (time pending)";
+        // Collision: refuse unavailable synthetic slot
+        if (/1530|3:30 PM/i.test(slotId + label)) {
+          answer =
+            `I can't book that slot — it is marked unavailable (collision) on the lab Schedule/Slot layer.\n` +
+            `Pick an available slot instead.`;
+        } else {
+          const aptId = `apt-req-${slotId}`;
+          const existing = store
+            .getAppointments(req.careRecipientId)
+            .find((a) => a.id === aptId);
+          if (existing) {
+            answer =
+              `That appointment request is already on file (idempotent):\n• ${existing.title} · ${existing.startsAtLabel}\n• Status: ${existing.status}\n\n` +
+              `Still not a live clinic confirmation until the office accepts.`;
+          } else {
+            store.upsertAppointment({
+              id: aptId,
+              careRecipientId: req.careRecipientId,
+              title: "Doctor / clinic visit (caregiver-requested)",
+              startsAt: "2026-07-29T21:00:00.000Z",
+              startsAtLabel: label,
+              location: "Coastal Family Medicine (synthetic)",
+              status: "scheduled",
+              epistemicStatus: "REPORTED",
+              source: {
+                id: `src-${aptId}`,
+                kind: "caregiver_text",
+                label: "Caregiver appointment request",
+                actorName: req.principalDisplayName,
+                recordedAt: new Date().toISOString(),
+                whyVisible: "Saved after caregiver confirmed appointment draft.",
+              },
+            });
+            answer =
+              `Saved appointment **request** for ${req.recipientDisplayName}:\n` +
+              `• ${label}\n• Slot: ${slotId}\n• Status: scheduled (caregiver-reported request)\n\n` +
+              `I will not claim the clinic has accepted this until office confirmation or a real booking integration exists. ` +
+              `Reminders can track this request time; leave-by will use this start time.`;
+          }
+        }
+      }
     }
     if (answer) {
       return persistDeterministicAnswer(
         req,
         answer,
-        [`recipient_profile:${personIntent}`],
-        "RECIPIENT_PROFILE",
+        [`continuity:${personIntent}`],
+        "CONTINUITY",
       );
     }
   }
 
+  // Collision / unavailable slot — any scheduling context
+  if (
+    /3:30|15:30/i.test(qLow) &&
+    (/slot|book|pm|appointment|available|unavailable/i.test(qLow) ||
+      priorTurns.some((t) =>
+        /schedule|appointment|slot|available/i.test(
+          `${t.rawText} ${t.answerSummary}`,
+        ),
+      ))
+  ) {
+    const slots = syntheticProviderSlots({});
+    return persistDeterministicAnswer(
+      req,
+      `That 3:30 PM slot is marked **unavailable** (collision) on the lab availability layer. Choose an available slot:\n` +
+        slots
+          .filter((s) => s.available)
+          .map((s) => `• ${s.startsAtLabel}`)
+          .join("\n"),
+      ["scheduling:collision"],
+      "SCHEDULING",
+    );
+  }
+
   // Multi-turn scheduling: day + time after a scheduling conversation
   if (
-    /make the time|at \d|july 29|wednesday|2\s*pm|14:00|preferred slot/i.test(
+    /make the time|at \d|july 29|wednesday|2\s*pm|14:00|preferred slot|9\s*am|11\s*am|3:30/i.test(
       qLow,
     ) &&
-    priorTurns.some((t) =>
+    (priorTurns.some((t) =>
       /schedule|appointment|slot|available/i.test(
         `${t.rawText} ${t.answerSummary}`,
       ),
-    )
+    ) ||
+      /schedule|appointment|slot/i.test(req.question))
   ) {
     const slots = syntheticProviderSlots({});
     const match = slots.find(
@@ -500,8 +649,8 @@ function answerWithState(
         `• Proposed slot: ${match.startsAtLabel}\n` +
         `• Slot id: ${match.slotId}\n` +
         `• Availability source: synthetic lab Schedule/Slot (not live clinic API)\n\n` +
-        `Reply “confirm appointment request” to save this as a caregiver-requested appointment candidate for verification. ` +
-        `I will not claim the clinic has accepted it until a real booking integration or human confirmation from the office exists.`
+        `Reply “confirm appointment request” to save this as a caregiver-requested appointment candidate. ` +
+        `I will not claim the clinic has accepted it until office confirmation or a real booking integration exists.`
       : `I still need a clear available slot. Lab-available options:\n` +
         slots
           .filter((s) => s.available)

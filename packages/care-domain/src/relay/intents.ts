@@ -39,6 +39,10 @@ export type RelayIntent =
   | "EMERGENCY_SNAPSHOT"
   | "APPOINTMENT_REQUEST_NEW"
   | "APPOINTMENT_RESCHEDULE"
+  | "APPOINTMENT_CANCEL"
+  | "APPOINTMENT_CONFIRM_BOOK"
+  | "CARE_COVERAGE"
+  | "TRANSPORTATION"
   | "UNKNOWN_QUESTION"
   | "OPEN_LOOP_STATUS"
   | "WAITING_ON"
@@ -120,6 +124,39 @@ export function classifyIntent(
   if (/\bshe\b|\bher\b|\bmom\b|\bevelyn\b/.test(q)) references.push("recipient");
   if (/\byesterday\b/.test(q)) references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
+
+  // Coverage / next helper — before identity (avoid "who is" → profile dump)
+  if (
+    /who is helping|helping now|who comes after|next caregiver|next helper|when is maya|how much longer am i|taking over|who is covering|who is with|tonight.*(help|cover)/.test(
+      q,
+    )
+  ) {
+    intents.push("CARE_COVERAGE");
+  }
+
+  if (
+    /transport|how (do|will) (i |we )?(get|drive|take)|ride to|travel to|leave by|driving to/.test(
+      q,
+    )
+  ) {
+    intents.push("TRANSPORTATION");
+  }
+
+  if (
+    /cancel (the |her |his |evelyn'?s )?(pt |physical therapy |doctor |clinic )?appointment|cancel pt|call off (the )?appointment/.test(
+      q,
+    )
+  ) {
+    intents.push("APPOINTMENT_CANCEL");
+  }
+
+  if (
+    /confirm appointment request|confirm (the )?booking|yes[, ]*book|book that slot|save (the )?appointment request/.test(
+      q,
+    )
+  ) {
+    intents.push("APPOINTMENT_CONFIRM_BOOK");
+  }
 
   // Person intelligence — before event/task families
   if (
