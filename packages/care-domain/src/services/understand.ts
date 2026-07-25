@@ -919,23 +919,47 @@ export async function understandCareInput(
       text,
       { provider: result.provider, model: result.model },
     );
-    // Empty LLM extraction (or empty after parse): structured fixture fallback
-    if (!parsed.candidates.length) {
-      const fallback = fixtureExtract(text, ctx, careRecipientName, {
-        recordedDoseOverride: opts.recordedDoseOverride,
-        now: opts.now,
-      });
-      if (fallback.candidates.length > 0) {
+    // Always merge deterministic structured extract for known care phrases
+    // (LLM may return empty/weak JSON while still HTTP-200).
+    const fixture = fixtureExtract(text, ctx, careRecipientName, {
+      recordedDoseOverride: opts.recordedDoseOverride,
+      now: opts.now,
+    });
+    if (fixture.candidates.length > 0) {
+      const keys = new Set(
+        parsed.candidates.map(
+          (c) => `${c.eventType}:${c.statement.slice(0, 48).toLowerCase()}`,
+        ),
+      );
+      const merged = [...parsed.candidates];
+      for (const c of fixture.candidates) {
+        const k = `${c.eventType}:${c.statement.slice(0, 48).toLowerCase()}`;
+        if (!keys.has(k)) {
+          merged.push(c);
+          keys.add(k);
+        }
+      }
+      if (merged.length > parsed.candidates.length || !parsed.candidates.length) {
         return {
           kind: "understood",
           slice: {
-            ...fallback,
+            ...parsed,
+            candidates: merged.length ? merged : fixture.candidates,
+            meals: fixture.meals.length ? fixture.meals : parsed.meals,
+            observations: fixture.observations.length
+              ? fixture.observations
+              : parsed.observations,
             evidenceMode: "LIVE_FOUNDATION_BACKED",
             modelProvider: result.provider,
             modelName: result.model,
             uncertainties: [
-              "Model returned no structured candidates; used structured fallback extraction",
-              ...fallback.uncertainties,
+              ...(parsed.candidates.length
+                ? []
+                : [
+                    "Model returned weak structure; merged structured fallback extraction",
+                  ]),
+              ...parsed.uncertainties,
+              ...fixture.uncertainties,
             ],
           },
         };
