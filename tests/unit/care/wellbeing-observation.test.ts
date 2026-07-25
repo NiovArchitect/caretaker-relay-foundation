@@ -37,4 +37,31 @@ describe("wellbeing caregiver observations", () => {
     const obs = slice.candidates.find((c) => c.eventType === "observation");
     expect(obs?.epistemicStatus).toBe("REPORTED");
   });
+
+  it("covers ordinary caregiver wellbeing phrases", () => {
+    const phrases = [
+      "She seems tired.",
+      "She ate all her lunch.",
+      "She slept well.",
+      "She seems more alert.",
+      "She wasn't herself this morning.",
+      "She was in a great mood.",
+    ];
+    for (const p of phrases) {
+      const slice = fixtureExtract(p, ctx, careRecipient.displayName);
+      expect(slice.candidates.length, p).toBeGreaterThan(0);
+      const structured = slice.candidates.find(
+        (c) =>
+          c.eventType === "observation" ||
+          c.eventType === "meal" ||
+          c.eventType === "note",
+      );
+      expect(structured, p).toBeTruthy();
+      if (structured?.eventType === "observation") {
+        expect(structured.epistemicStatus, p).toBe("REPORTED");
+      }
+      expect(structured!.recordedAt, p).toBeTruthy();
+      expect(structured!.effectiveAt, p).toBeTruthy();
+    }
+  });
 });

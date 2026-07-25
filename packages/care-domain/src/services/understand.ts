@@ -258,11 +258,14 @@ export function fixtureExtract(
 // Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
   // Positive / neutral wellbeing is valid caregiver evidence (REPORTED, not "needs checking")
   if (
-    /feels?\s+(very\s+)?(good|great|well|better|fine|ok|okay|herself|himself|comfortable|energetic)|seems?\s+(very\s+)?(good|great|well|better|fine|herself|himself|comfortable|energetic|off)|ate well|slept (well|poorly|badly|ok)|appears?\s+comfortable|more energetic|in good spirits|in a good mood|doing (well|better|fine)/i.test(
+    /feels?\s+(very\s+)?(good|great|well|better|fine|ok|okay|herself|himself|comfortable|energetic)|seems?\s+(very\s+)?(good|great|well|better|fine|herself|himself|comfortable|energetic|alert|off)|more\s+alert|ate\s+(well|all)|slept\s+(well|poorly|badly|ok)|appears?\s+comfortable|more energetic|in (a )?(good|great) mood|good spirits|doing (well|better|fine)|wasn'?t\s+(her|him|their)self|not\s+(her|him|their)self/i.test(
       lower,
     )
   ) {
-    const negative = /not\s+(good|well|fine)|poorly|badly|off\b/.test(lower);
+    const negative =
+      /not\s+(good|well|fine)|poorly|badly|off\b|wasn'?t\s+(her|him|their)self|not\s+(her|him|their)self/.test(
+        lower,
+      );
     const slept = /slept/.test(lower);
     const ate = /ate/.test(lower);
     let statement = "Caregiver reported: general wellbeing / feels good";
@@ -272,10 +275,14 @@ export function fixtureExtract(
     else if (ate) statement = "Caregiver reported: ate well";
     else if (negative)
       statement = "Caregiver reported: seems off / not their usual self";
+    else if (/alert/.test(lower))
+      statement = "Caregiver reported: more alert";
     else if (/energetic|energy/.test(lower))
       statement = "Caregiver reported: more energetic than usual";
     else if (/comfortable/.test(lower))
       statement = "Caregiver reported: appears comfortable";
+    else if (/mood|spirits/.test(lower))
+      statement = "Caregiver reported: good mood";
     candidates.push(
       mkCandidate(
         {
@@ -301,7 +308,9 @@ export function fixtureExtract(
       lower,
     )
   ) {
-    const soft = /seemed|a little|more tired than usual/.test(lower);
+    const soft = /seemed|a little|more tired than usual|seems\s+tired/.test(
+      lower,
+    );
     const dizzy = /dizzy|dizziness|light[- ]?headed/.test(lower);
     candidates.push(
       mkCandidate(
@@ -733,6 +742,20 @@ function parseLlmJson(
       model,
     );
   } catch {
+    // Prefer deterministic structured extract over opaque raw-note dump.
+    const fallback = fixtureExtract(rawText, ctx, careRecipientName);
+    if (fallback.candidates.length > 0) {
+      return {
+        ...fallback,
+        evidenceMode: "LIVE_FOUNDATION_BACKED",
+        modelProvider: model.provider,
+        modelName: model.model,
+        uncertainties: [
+          "Model output was not valid structured JSON; used structured fallback extraction",
+          ...fallback.uncertainties,
+        ],
+      };
+    }
     return toSlice(
       [
         mkCandidate(
@@ -816,7 +839,29 @@ export async function understandCareInput(
       }),
     });
     if (!result.ok) {
-      // Fail closed to uncertainty — do not invent
+      // LLM unavailable (quota/network): fall back to deterministic structured
+      // extraction so ordinary caregiver observations still become REPORTED
+      // candidates with recorded_at/effective_at — never invent clinical facts.
+      const fallback = fixtureExtract(text, ctx, careRecipientName, {
+        recordedDoseOverride: opts.recordedDoseOverride,
+        now: opts.now,
+      });
+      if (fallback.candidates.length > 0) {
+        return {
+          kind: "understood",
+          slice: {
+            ...fallback,
+            evidenceMode: "LIVE_FOUNDATION_BACKED",
+            modelProvider: result.provider,
+            modelName: "unavailable-fallback",
+            uncertainties: [
+              result.fallback_message,
+              "Structured fallback extraction used while the language model was unavailable",
+              ...fallback.uncertainties,
+            ],
+          },
+        };
+      }
       return {
         kind: "understood",
         slice: toSlice(
