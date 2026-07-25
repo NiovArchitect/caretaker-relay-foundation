@@ -649,6 +649,124 @@ export function fixtureExtract(
     );
   }
 
+  // DSP / professional caregiver support, mobility, and ADL observations.
+  // Generalized phrase classes (not exact sentence lists). REPORTED only —
+  // never a diagnosis or clinical order.
+  if (
+    candidates.length === 0 ||
+    /transfer|walker|wheel\s*chair|mobility|unsteady|stand(ing)?|gait|reposition|bath(e|ing)?|dress(ed|ing)?|shower|toilet|bathroom|adl|assist|assistance|helped?|support(ed|ing)?|independen|refus(ed|al)|exercise|out of bed|getting up|from the (bed|chair)|walk(ed|ing)? from|reminders?|prompts?|get ready|morning routine|hygiene|wheelchair/i.test(
+      lower,
+    )
+  ) {
+    const mobility =
+      /transfer|walker|wheel\s*chair|mobility|unsteady|gait|stand(ing)?|walk(ed|ing)?|out of bed|from the (bed|chair)|getting up|bedroom|kitchen/i.test(
+        lower,
+      );
+    const adl =
+      /bath(e|ing)?|dress(ed|ing)?|shower|toilet|bathroom|adl|morning routine|get ready|hygiene/i.test(
+        lower,
+      );
+    const support =
+      /assist|assistance|helped?|support(ed|ing)?|needed help|with assistance|standby/i.test(
+        lower,
+      );
+    const refused = /refus(ed|al)|would not|didn't want|did not want/i.test(
+      lower,
+    );
+    const independent =
+      /more independen|independen(t|ce)|on (her|his|their) own|without help/i.test(
+        lower,
+      );
+    const tiredWalk =
+      /tired during|more tired|fatigue during|exhausted during/i.test(lower) &&
+      /walk|exercise|routine|mobil/i.test(lower);
+    const reminders = /reminders?|prompt(ed|s|ing)?/i.test(lower);
+    const exercises = /exercise|pt exercises|range of motion|stretch/i.test(
+      lower,
+    );
+    const reposition = /reposition/i.test(lower);
+
+    if (
+      mobility ||
+      adl ||
+      support ||
+      refused ||
+      independent ||
+      tiredWalk ||
+      reminders ||
+      exercises ||
+      reposition
+    ) {
+      let statement = "Caregiver reported: support / care observation";
+      if (refused && adl)
+        statement = "Caregiver reported: refused personal care (e.g. shower/ADL)";
+      else if (refused)
+        statement = "Caregiver reported: refused offered support";
+      else if (independent && adl)
+        statement = "Caregiver reported: more independent with personal care";
+      else if (independent)
+        statement = "Caregiver reported: more independent with mobility/support";
+      else if (reposition)
+        statement = "Caregiver reported: repositioned for comfort";
+      else if (exercises && support)
+        statement = "Caregiver reported: exercises completed with assistance";
+      else if (exercises)
+        statement = "Caregiver reported: participated in exercises";
+      else if (mobility && support)
+        statement =
+          "Caregiver reported: mobility/transfer support provided";
+      else if (mobility && /unsteady|wobble|balance/i.test(lower))
+        statement = "Caregiver reported: unsteady when standing/walking";
+      else if (mobility)
+        statement = "Caregiver reported: mobility observation";
+      else if (adl && support)
+        statement = "Caregiver reported: ADL support provided";
+      else if (adl) statement = "Caregiver reported: ADL observation";
+      else if (reminders)
+        statement = "Caregiver reported: needed reminders for routine";
+      else if (tiredWalk)
+        statement = "Caregiver reported: more tired during activity";
+      else if (support)
+        statement = "Caregiver reported: support provided";
+
+      // Avoid duplicate observation if a similar one already exists
+      const alreadyObs = candidates.some(
+        (c) =>
+          c.eventType === "observation" &&
+          /support|mobility|ADL|transfer|independen|refused|exercise|reposition|unsteady|reminders/i.test(
+            c.statement,
+          ),
+      );
+      if (!alreadyObs) {
+        candidates.push(
+          mkCandidate(
+            {
+              eventType: "observation",
+              statement,
+              epistemicStatus: "REPORTED",
+              confidence: 0.84,
+              consequentiality:
+                refused || /unsteady|fall|safety/i.test(lower)
+                  ? "moderate"
+                  : "low",
+              timeLabel: /\bthis morning\b|\bmorning\b/.test(lower)
+                ? "this morning"
+                : /\btoday\b/.test(lower)
+                  ? "today"
+                  : /\bthis afternoon\b/.test(lower)
+                    ? "this afternoon"
+                    : undefined,
+            },
+            ctx,
+            careRecipientName,
+            source,
+            ++i,
+          ),
+        );
+      }
+    }
+  }
+
   if (candidates.length === 0) {
     uncertainties.push(
       "I heard you, but I'm not sure what to file yet. You can correct me.",
