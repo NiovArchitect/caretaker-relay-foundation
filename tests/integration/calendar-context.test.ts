@@ -37,9 +37,19 @@ describe("Phase 1236 — calendar context", () => {
   let employeeId = "";
   let teammateId = "";
   const savedFixture = process.env.MOCK_CALENDAR_FIXTURE;
+  const savedGoogleId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const savedGoogleSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const savedMsId = process.env.MICROSOFT_GRAPH_CLIENT_ID;
+  const savedMsSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET;
 
   beforeEach(async () => {
     delete process.env.MOCK_CALENDAR_FIXTURE;
+    // Isolate provider_mode: this suite asserts MOCK_CALENDAR. Local .env may
+    // have OAuth credentials that flip mode to *_CONFIGURED (honest readiness).
+    process.env.GOOGLE_OAUTH_CLIENT_ID = "";
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "";
+    process.env.MICROSOFT_GRAPH_CLIENT_ID = "";
+    process.env.MICROSOFT_GRAPH_CLIENT_SECRET = "";
     await ensureAuditTriggers();
     await cleanupTestData();
     orgId = await makeEntity("Calendar Org", "COMPANY");
@@ -55,6 +65,14 @@ describe("Phase 1236 — calendar context", () => {
   afterEach(() => {
     if (savedFixture === undefined) delete process.env.MOCK_CALENDAR_FIXTURE;
     else process.env.MOCK_CALENDAR_FIXTURE = savedFixture;
+    if (savedGoogleId === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    else process.env.GOOGLE_OAUTH_CLIENT_ID = savedGoogleId;
+    if (savedGoogleSecret === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    else process.env.GOOGLE_OAUTH_CLIENT_SECRET = savedGoogleSecret;
+    if (savedMsId === undefined) delete process.env.MICROSOFT_GRAPH_CLIENT_ID;
+    else process.env.MICROSOFT_GRAPH_CLIENT_ID = savedMsId;
+    if (savedMsSecret === undefined) delete process.env.MICROSOFT_GRAPH_CLIENT_SECRET;
+    else process.env.MICROSOFT_GRAPH_CLIENT_SECRET = savedMsSecret;
   });
 
   afterAll(async () => {
