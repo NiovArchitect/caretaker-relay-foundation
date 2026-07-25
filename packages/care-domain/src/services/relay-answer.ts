@@ -662,7 +662,7 @@ function answerWithState(
       } else {
         // Multiple candidates — clarify rather than generic fallback or silent pick
         answer =
-          `Sure — which appointment should I move for ${req.recipientDisplayName}?\n\n` +
+          `I can help reschedule — which appointment should I move for ${req.recipientDisplayName}?\n\n` +
           apts
             .slice(0, 6)
             .map(
@@ -672,7 +672,7 @@ function answerWithState(
                 }`,
             )
             .join("\n") +
-          `\n\nReply with the appointment name (for example “physical therapy” or the clinic visit), then a new day/time.`;
+          `\n\nCurrent appointments on file are listed above. Reply with the appointment name (for example “physical therapy” or the clinic visit), then a new day/time so you can verify before care truth updates.`;
       }
     } else if (personIntent === "APPOINTMENT_CANCEL") {
       const apts = store.getAppointments(req.careRecipientId);

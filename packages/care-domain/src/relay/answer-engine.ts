@@ -294,7 +294,7 @@ function composeAnswer(ctx: {
           );
           const status = str(hit.epistemicStatus) || "REPORTED";
           parts.push(
-            `Recorded administration from ${who} (${status} — not a new dose authorization):\n${describeAdmin(hit)}`,
+            `I have a recorded administration from ${who} (${status} — not a new dose authorization):\n${describeAdmin(hit)}`,
           );
           if (/confirmed/i.test(confNote)) {
             parts.push(confNote);
