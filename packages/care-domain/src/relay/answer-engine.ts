@@ -657,25 +657,25 @@ function composeAnswer(ctx: {
   }
 
   if (!parts.length) {
-    // Unknown — still give decision-ready snapshot minimum
-    used.add("NEXT_24H_TASKS");
-    used.add("OPEN_UNCERTAINTIES");
+    // Unknown — answer the gap only. Do NOT append unrelated attention alerts.
+    used.add("UNKNOWN_CLEAN");
     if (persona === "family") {
       parts.push(
-        `I can help with medications, appointments, what changed, handoffs, and contacts for ${recipientName}.`,
+        `I don't have enough on file to answer that specifically for ${recipientName}.`,
       );
       parts.push(
-        proj.OPEN_UNCERTAINTIES[0]
-          ? `Right now: ${proj.OPEN_UNCERTAINTIES[0]}`
-          : `Coming up: ${proj.NEXT_24H_TASKS[0] ?? "see Care for the full picture"}`,
+        `I can help with who ${recipientName} is (age, conditions on file), medications, appointments, what changed, the care team, handoffs, and what is waiting — when those are authorized.`,
+      );
+      parts.push(
+        `What would you like to know, or what would you like to update?`,
       );
     } else if (persona === "professional_dsp") {
       parts.push(
-        `Ask me what changed, what to complete, medication authorization, documentation, or escalation for ${recipientName}.`,
+        `I don't have a specific answer for that yet for ${recipientName}. Ask what changed, what to complete, medication authorization, documentation, or escalation.`,
       );
     } else {
       parts.push(
-        `Ask for changes since last encounter, uncertain administrations, or a concise caregiver-reported timeline for ${recipientName}.`,
+        `I don't have a specific answer for that yet. Ask for changes since last encounter, uncertain administrations, or a concise caregiver-reported timeline for ${recipientName}.`,
       );
     }
   }

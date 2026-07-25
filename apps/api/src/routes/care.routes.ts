@@ -268,6 +268,48 @@ export async function registerCareRoutes(
     });
   });
 
+  app.get("/api/v1/care/recipients/:id/profile", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const id = (request.params as { id: string }).id;
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const recipient = runtime.store.getRecipient(id);
+    if (!recipient) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Care recipient not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    const meds = runtime.store.getMedSchedules(id).map((m) => ({
+      name: m.name,
+      dose: m.dose,
+      scheduleLabel: m.scheduleLabel,
+      authorizedBy: m.authorizedBy,
+    }));
+    return reply.code(200).send({
+      ok: true,
+      recipient: {
+        id: recipient.id,
+        displayName: recipient.displayName,
+        preferredName: recipient.preferredName,
+        householdId: recipient.householdId,
+        profile: recipient.profile ?? null,
+      },
+      medications: meds,
+      correlation_id: correlationId(request),
+    });
+  });
+
   app.get("/api/v1/care/recipients/:id/today", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;

@@ -20,6 +20,80 @@ export const careRecipient: CareRecipient = {
   displayName: "Evelyn Carter",
   preferredName: "Evelyn",
   householdId: HOUSEHOLD_OLIVIA,
+  profile: {
+    dateOfBirth: "1948-03-12",
+    pronouns: "she/her",
+    primaryLanguage: "English",
+    communicationNeeds: ["Speaks clearly; prefers short written notes for meds"],
+    confirmedConditions: [
+      {
+        id: "cond-t2d",
+        label: "Type 2 diabetes mellitus",
+        status: "active",
+        verification: "CONFIRMED",
+        sourceLabel: "Dr. Priya Shah · Coastal Family Medicine",
+        recordedAt: "2024-11-02",
+      },
+      {
+        id: "cond-htn",
+        label: "Hypertension",
+        status: "active",
+        verification: "CONFIRMED",
+        sourceLabel: "Dr. Priya Shah · Coastal Family Medicine",
+        recordedAt: "2023-06-15",
+      },
+    ],
+    healthConcerns: [
+      "Caregiver-reported post-lunch dizziness and fatigue (observations, not diagnoses)",
+    ],
+    allergies: [
+      {
+        label: "No known drug allergies on file",
+        sourceLabel: "Care plan summary (synthetic lab)",
+      },
+    ],
+    primaryProviderName: "Dr. Priya Shah",
+    otherProviders: ["North County Physical Therapy"],
+    mobilityBaseline: "Walks independently at home; uses rail on stairs",
+    assistiveDevices: [],
+    dietMealConsiderations: ["Take Metformin with food at lunch"],
+    dailyRoutineSummary:
+      "Morning at home with family; lunch medication window 11:30 AM–12:30 PM; afternoon rest if fatigued; PT as scheduled.",
+    carePreferences: [
+      "Prefers family present for clinic visits when possible",
+      "Short, plain-language updates over long medical jargon",
+    ],
+    safetyConsiderations: [
+      "Watch for dizziness after lunch; sit before standing if lightheaded",
+    ],
+    emergencyContacts: [
+      {
+        name: "Marcus Carter",
+        relationship: "Primary family caregiver",
+        phone: "(555) 010-2201",
+      },
+      {
+        name: "Maya Bennett",
+        relationship: "Family / friend caregiver",
+        phone: "(555) 010-2202",
+      },
+    ],
+    careGoals: [
+      "Stable blood sugar support with consistent lunch medication",
+      "Safe mobility and fewer post-meal dizziness episodes",
+    ],
+    supportNeeds: [
+      "Medication support at lunch",
+      "Transportation to PT and clinic",
+      "Handoff clarity between family and professional caregivers",
+    ],
+    transportationNotes:
+      "Family or professional caregiver usually drives; PT ~18 min travel + parking",
+    careLocationSummary: "Home / community · Oceanside area (synthetic lab)",
+    profileVerifiedAt: "2026-07-20",
+    profileSourceSummary:
+      "Synthetic lab profile for Phase 1 evaluation — not caregiver-validated field data",
+  },
 };
 
 export const people = {
@@ -115,6 +189,26 @@ export const secondaryRecipient: CareRecipient = {
   displayName: "Robert Hale",
   preferredName: "Robert",
   householdId: "hh-robert",
+  profile: {
+    dateOfBirth: "1955-09-04",
+    pronouns: "he/him",
+    primaryLanguage: "English",
+    confirmedConditions: [
+      {
+        id: "cond-htn-r",
+        label: "Hypertension",
+        status: "active",
+        verification: "CONFIRMED",
+        sourceLabel: "Dr. Amara Cole",
+        recordedAt: "2025-01-10",
+      },
+    ],
+    allergies: [{ label: "No known drug allergies on file" }],
+    primaryProviderName: "Dr. Amara Cole",
+    careGoals: ["Stable blood pressure with morning medication"],
+    supportNeeds: ["Morning medication support"],
+    profileSourceSummary: "Synthetic lightweight second-recipient profile",
+  },
 };
 
 export const DEMO_UTTERANCE =

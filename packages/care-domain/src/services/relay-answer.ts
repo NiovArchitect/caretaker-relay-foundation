@@ -22,6 +22,13 @@ import {
 } from "./orchestration.js";
 import { scanAdversarialQuestion } from "./adversarial-guard.js";
 import { resolveCurrentProvider, resolveEscalationTarget } from "./care-team.js";
+import {
+  answerAgeQuestion,
+  answerDiagnosisQuestion,
+  answerIdentityOverview,
+  emergencySnapshot,
+  syntheticProviderSlots,
+} from "./recipient-profile.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -103,6 +110,14 @@ const DETERMINISTIC_INTENTS = new Set([
   "ESCALATION",
   "RECIPIENT_ROUTINE",
   "RECIPIENT_PREFERENCES",
+  "RECIPIENT_IDENTITY",
+  "RECIPIENT_AGE",
+  "RECIPIENT_DIAGNOSIS",
+  "RECIPIENT_ALLERGIES",
+  "RECIPIENT_PROFILE",
+  "EMERGENCY_SNAPSHOT",
+  "APPOINTMENT_REQUEST_NEW",
+  "APPOINTMENT_RESCHEDULE",
   "DOCUMENT_PREP",
   "OBSERVATION_HISTORY",
   "TREND",
@@ -373,6 +388,132 @@ function answerWithState(
   });
   if (meta) {
     return persistDeterministicAnswer(req, meta.answer, meta.sourceRefs, "PROVENANCE_TRUST");
+  }
+
+  // Person intelligence — age, diagnosis, profile, emergency snapshot
+  const preClassified = classifyIntent(req.question, priorEntities);
+  const personIntent = preClassified.intents.find((i) =>
+    [
+      "RECIPIENT_AGE",
+      "RECIPIENT_DIAGNOSIS",
+      "RECIPIENT_IDENTITY",
+      "RECIPIENT_PROFILE",
+      "RECIPIENT_ALLERGIES",
+      "EMERGENCY_SNAPSHOT",
+      "APPOINTMENT_REQUEST_NEW",
+      "APPOINTMENT_RESCHEDULE",
+    ].includes(i),
+  );
+  if (personIntent) {
+    const recipient = store.getRecipient(req.careRecipientId);
+    let answer = "";
+    if (personIntent === "RECIPIENT_AGE") {
+      answer = answerAgeQuestion(recipient);
+    } else if (personIntent === "RECIPIENT_DIAGNOSIS") {
+      answer = answerDiagnosisQuestion(recipient);
+    } else if (
+      personIntent === "RECIPIENT_IDENTITY" ||
+      personIntent === "RECIPIENT_PROFILE"
+    ) {
+      answer = answerIdentityOverview(recipient);
+    } else if (personIntent === "RECIPIENT_ALLERGIES") {
+      const allergies = recipient?.profile?.allergies ?? [];
+      answer = allergies.length
+        ? `Allergies / intolerances on file for ${req.recipientDisplayName}:\n` +
+          allergies
+            .map(
+              (a) =>
+                `• ${a.label}${a.sourceLabel ? ` (${a.sourceLabel})` : ""}`,
+            )
+            .join("\n")
+        : `I don't have allergies listed on file for ${req.recipientDisplayName}.`;
+    } else if (personIntent === "EMERGENCY_SNAPSHOT") {
+      const meds = store.getMedSchedules(req.careRecipientId).map(
+        (m) => `${m.name} ${m.dose} — ${m.scheduleLabel}`,
+      );
+      answer = emergencySnapshot(recipient, meds);
+    } else if (personIntent === "APPOINTMENT_REQUEST_NEW") {
+      const slots = syntheticProviderSlots({});
+      const free = slots.filter((s) => s.available);
+      answer =
+        `I can help prepare a doctor appointment request for ${req.recipientDisplayName}, but I will not pretend an external clinic booking completed without real provider availability/booking.\n\n` +
+        `Lab availability (synthetic Schedule/Slot layer — not a live EHR calendar):\n` +
+        free.map((s) => `• Available: ${s.startsAtLabel}`).join("\n") +
+        `\n\nWhat I still need to book honestly:\n` +
+        `1) Preferred day/time from the available slots (or another day)\n` +
+        `2) Visit reason (follow-up, new concern, med review, etc.)\n` +
+        `3) Your confirmation before anything is saved as care truth\n\n` +
+        `Reply with a preferred slot (for example “Wednesday July 29 at 2:00 PM”) and the reason for the visit. ` +
+        `I will then show a confirmation draft — not an automatic book.`;
+    } else if (personIntent === "APPOINTMENT_RESCHEDULE") {
+      const apts = store.getAppointments(req.careRecipientId);
+      const pt = apts.find((a) => /physical therapy|pt/i.test(a.title));
+      const current = pt
+        ? `${pt.title}: ${pt.startsAtLabel ?? pt.startsAt} · ${pt.location ?? "location on file"} · status ${pt.status}`
+        : apts[0]
+          ? `${apts[0].title}: ${apts[0].startsAtLabel ?? apts[0].startsAt}`
+          : "no appointment on file";
+      answer =
+        `I can help with a reschedule request for ${req.recipientDisplayName}.\n\n` +
+        `Current appointment on file:\n• ${current}\n\n` +
+        `Honest reschedule workflow:\n` +
+        `1) Confirm which appointment to move\n` +
+        `2) Propose a new day/time\n` +
+        `3) You verify before care truth updates\n` +
+        `4) Reminders and leave-by times recalculate from the NEW start time only\n\n` +
+        `I will not leave a leave-by reminder tied to an old time after a reschedule. ` +
+        `Tell me the new preferred time (or ask me to show lab-available slots).`;
+    }
+    if (answer) {
+      return persistDeterministicAnswer(
+        req,
+        answer,
+        [`recipient_profile:${personIntent}`],
+        "RECIPIENT_PROFILE",
+      );
+    }
+  }
+
+  // Multi-turn scheduling: day + time after a scheduling conversation
+  if (
+    /make the time|at \d|july 29|wednesday|2\s*pm|14:00|preferred slot/i.test(
+      qLow,
+    ) &&
+    priorTurns.some((t) =>
+      /schedule|appointment|slot|available/i.test(
+        `${t.rawText} ${t.answerSummary}`,
+      ),
+    )
+  ) {
+    const slots = syntheticProviderSlots({});
+    const match = slots.find(
+      (s) =>
+        s.available &&
+        ((/2\s*pm|14:00|2:00/i.test(qLow) && /2:00 PM/i.test(s.startsAtLabel)) ||
+          (/9\s*am|9:00/i.test(qLow) && /9:00 AM/i.test(s.startsAtLabel)) ||
+          (/11/i.test(qLow) && /11:00 AM/i.test(s.startsAtLabel))),
+    );
+    const answer = match
+      ? `Draft confirmation (not booked yet):\n\n` +
+        `• Recipient: ${req.recipientDisplayName}\n` +
+        `• Requested: Doctor / clinic visit\n` +
+        `• Proposed slot: ${match.startsAtLabel}\n` +
+        `• Slot id: ${match.slotId}\n` +
+        `• Availability source: synthetic lab Schedule/Slot (not live clinic API)\n\n` +
+        `Reply “confirm appointment request” to save this as a caregiver-requested appointment candidate for verification. ` +
+        `I will not claim the clinic has accepted it until a real booking integration or human confirmation from the office exists.`
+      : `I still need a clear available slot. Lab-available options:\n` +
+        slots
+          .filter((s) => s.available)
+          .map((s) => `• ${s.startsAtLabel}`)
+          .join("\n") +
+        `\n\nWhich available time should I put in a confirmation draft?`;
+    return persistDeterministicAnswer(
+      req,
+      answer,
+      ["scheduling:multi_turn_draft"],
+      "SCHEDULING",
+    );
   }
 
   // Open-loop / waiting-on — orchestration state, not Q&A projection alone

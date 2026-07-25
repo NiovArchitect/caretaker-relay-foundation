@@ -31,6 +31,14 @@ export type RelayIntent =
   | "DOCUMENT_PREP"
   | "RECIPIENT_ROUTINE"
   | "RECIPIENT_PREFERENCES"
+  | "RECIPIENT_IDENTITY"
+  | "RECIPIENT_AGE"
+  | "RECIPIENT_DIAGNOSIS"
+  | "RECIPIENT_ALLERGIES"
+  | "RECIPIENT_PROFILE"
+  | "EMERGENCY_SNAPSHOT"
+  | "APPOINTMENT_REQUEST_NEW"
+  | "APPOINTMENT_RESCHEDULE"
   | "UNKNOWN_QUESTION"
   | "OPEN_LOOP_STATUS"
   | "WAITING_ON"
@@ -113,9 +121,42 @@ export function classifyIntent(
   if (/\byesterday\b/.test(q)) references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
 
-  // Medication family
+  // Person intelligence — before event/task families
   if (
-    /medicat|medicine|meds?\b|dose|pill|metformin|lunch med|with food|already give|gave her|administer/.test(
+    /how old|what age|date of birth|\bdob\b|years old/.test(q)
+  ) {
+    intents.push("RECIPIENT_AGE");
+  }
+  if (
+    /diagnos|condition on file|what (condition|disease)|medical condition|what does she have|what does he have/.test(
+      q,
+    )
+  ) {
+    intents.push("RECIPIENT_DIAGNOSIS");
+  }
+  if (/allerg(y|ies)|intolerance/.test(q)) {
+    intents.push("RECIPIENT_ALLERGIES");
+  }
+  if (
+    /who is (evelyn|robert|she|he)|about (evelyn|robert|her|him)|tell me about|care profile|recipient profile|what should i know about/.test(
+      q,
+    )
+  ) {
+    intents.push("RECIPIENT_IDENTITY");
+    intents.push("RECIPIENT_PROFILE");
+  }
+  if (
+    /emergency (info|snapshot|card)|essential care|what would (ems|er|hospital) need|critical (info|information)/.test(
+      q,
+    )
+  ) {
+    intents.push("EMERGENCY_SNAPSHOT");
+  }
+
+  // Medication family — do not match fabricated protocol / "administer" alone
+  if (
+    !/protocol\s*9|protocol\s+zeta/i.test(q) &&
+    /medicat|medicine|meds?\b|dose|pill|metformin|lunch med|with food|already give|gave her|(administer|administration).*(med|dose|pill|metformin)|gave .* (med|dose|pill)/.test(
       q,
     )
   ) {
@@ -132,10 +173,30 @@ export function classifyIntent(
     if (/change|changed|dr\.?\s*shah change|new med/.test(q)) {
       intents.push("MEDICATION_CHANGE");
     }
-    if (intents.length === 0) intents.push("MEDICATION_CURRENT");
+    if (intents.length === 0 || intents.every((i) => i.startsWith("RECIPIENT"))) {
+      intents.push("MEDICATION_CURRENT");
+    }
   }
 
-  if (/appoint|pt\b|physical therapy|clinic|doctor'?s visit|where do i (take|go)|bring|prepare for/.test(q)) {
+  // New booking vs existing appointment vs reschedule
+  if (
+    /schedule (a |an )?(doctor|dr|clinic|provider|pcp|physician)|book (a |an )?(doctor|appointment|visit)|make (a |an )?appointment|set up (a |an )?appointment|i want to schedule|i would like to schedule/.test(
+      q,
+    ) &&
+    !/reschedule|change (the |her |his )?appointment|move (the |her )?appointment/.test(q)
+  ) {
+    intents.push("APPOINTMENT_REQUEST_NEW");
+  } else if (
+    /reschedule|change (the |her |his )?appointment|move (the |pt |physical )?appointment|move pt|move physical therapy/.test(
+      q,
+    )
+  ) {
+    intents.push("APPOINTMENT_RESCHEDULE");
+  } else if (
+    /appoint|pt\b|physical therapy|clinic|doctor'?s visit|where do i (take|go)|bring|prepare for/.test(
+      q,
+    )
+  ) {
     if (/where|address|location|clinic|take her/.test(q)) intents.push("APPOINTMENT_LOGISTICS");
     if (/bring|prepare|what should i/.test(q)) intents.push("APPOINTMENT_PREPARATION");
     if (intents.every((i) => !i.startsWith("APPOINTMENT"))) intents.push("APPOINTMENT_NEXT");

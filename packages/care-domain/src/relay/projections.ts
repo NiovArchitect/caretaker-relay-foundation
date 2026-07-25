@@ -10,6 +10,52 @@ import {
   str,
 } from "./util.js";
 
+/**
+ * Derive leave-by from this appointment's start time (not a hardcoded 3:00).
+ * travelMinutes + bufferMinutes before start, labels in local wall-clock words when possible.
+ */
+function leaveByLabelForAppointment(
+  a: Record<string, unknown>,
+  bufferMinutes: number,
+  travelMinutes: number,
+): string {
+  const label = str(a.startsAtLabel);
+  // Prefer explicit time in label e.g. "3:00 PM" or "4:30 PM"
+  const m = label.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  let sessionLabel = label || str(a.startsAt) || "the appointment";
+  let leaveLabel = "Leave with extra travel time";
+  if (m && m[1] && m[2] && m[3]) {
+    let hour = Number(m[1]);
+    const min = Number(m[2]);
+    const mer = m[3].toUpperCase();
+    if (mer === "PM" && hour < 12) hour += 12;
+    if (mer === "AM" && hour === 12) hour = 0;
+    const totalMin = hour * 60 + min - bufferMinutes - travelMinutes;
+    const lh = Math.floor(((totalMin % (24 * 60)) + 24 * 60) % (24 * 60) / 60);
+    const lm = ((totalMin % 60) + 60) % 60;
+    const merOut = lh >= 12 ? "PM" : "AM";
+    const h12 = lh % 12 === 0 ? 12 : lh % 12;
+    leaveLabel = `Leave by about ${h12}:${String(lm).padStart(2, "0")} ${merOut}`;
+    sessionLabel = `${Number(m[1])}:${m[2]} ${mer}`;
+  } else if (a.startsAt) {
+    const d = new Date(String(a.startsAt));
+    if (!Number.isNaN(d.getTime())) {
+      const leave = new Date(d.getTime() - (bufferMinutes + travelMinutes) * 60_000);
+      leaveLabel = `Leave by about ${leave.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/Los_Angeles",
+      })}`;
+      sessionLabel = d.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/Los_Angeles",
+      });
+    }
+  }
+  return `${leaveLabel} for a ${sessionLabel} session (about ${travelMinutes} min travel + buffer)`;
+}
+
 export type CareStateBag = {
   careRecipientId?: string;
   medicationSchedules?: Array<Record<string, unknown>>;
@@ -164,23 +210,24 @@ export function buildProjections(input: {
     const when = str(a.startsAtLabel ?? a.startsAt);
     const isPt = /physical therapy|pt/i.test(title);
     const fac = isPt ? SYNTHETIC_FACILITIES.pt : SYNTHETIC_FACILITIES.clinic;
+    // Leave-by must track THIS appointment's start — never a stale hardcoded time.
+    const leaveByLabel = leaveByLabelForAppointment(a, isPt ? 30 : 45, 18);
     REMINDERS.push({
       id: `rem-apt-${str(a.id) || title}`,
       kind: "appointment",
       title,
       whenLabel: when,
       phase: "hours_before",
-      leaveByLabel: isPt
-        ? "Leave by about 2:30 PM for a 3:00 PM session (about 18 min travel + park)"
-        : "Leave with extra time for parking",
+      leaveByLabel,
       location: str(a.location) || fac.address,
       mapsUrl: fac.mapsUrl,
     });
+    // Single day-before reminder only (avoid duplicate appointment noise)
     REMINDERS.push({
       id: `rem-apt-day-${str(a.id) || title}`,
       kind: "appointment",
-      title: `${title} (day-before reminder)`,
-      whenLabel: `Reminder before ${when}`,
+      title: `${title} — day-before`,
+      whenLabel: `Day-before reminder for ${when}`,
       phase: "day_before",
       location: str(a.location) || fac.address,
     });

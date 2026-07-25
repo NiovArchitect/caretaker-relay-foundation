@@ -59,11 +59,56 @@ export interface SourceRef {
   rawExcerpt?: string;
 }
 
+/** Confirmed condition — not the same as a transient observation. */
+export interface CareCondition {
+  id: string;
+  label: string;
+  status: "active" | "resolved" | "unknown";
+  verification: "CONFIRMED" | "REPORTED" | "UNCERTAIN";
+  sourceLabel?: string;
+  recordedAt?: string;
+  notes?: string;
+}
+
+/** Person-first care recipient profile (human model; not an EHR dump). */
+export interface CareRecipientProfile {
+  dateOfBirth?: string; // ISO date YYYY-MM-DD when known
+  pronouns?: string;
+  primaryLanguage?: string;
+  communicationNeeds?: string[];
+  confirmedConditions?: CareCondition[];
+  healthConcerns?: string[]; // not diagnoses
+  allergies?: Array<{ label: string; severity?: string; sourceLabel?: string }>;
+  primaryProviderName?: string;
+  otherProviders?: string[];
+  mobilityBaseline?: string;
+  assistiveDevices?: string[];
+  cognitiveSupportNeeds?: string[];
+  dietMealConsiderations?: string[];
+  dailyRoutineSummary?: string;
+  carePreferences?: string[];
+  likesDislikes?: string[];
+  safetyConsiderations?: string[];
+  emergencyContacts?: Array<{
+    name: string;
+    relationship?: string;
+    phone?: string;
+  }>;
+  careGoals?: string[];
+  supportNeeds?: string[];
+  transportationNotes?: string;
+  careLocationSummary?: string;
+  profileVerifiedAt?: string;
+  profileSourceSummary?: string;
+}
+
 export interface CareRecipient {
   id: string;
   displayName: string;
   preferredName?: string;
   householdId: string;
+  /** Person intelligence — optional; never invent when absent. */
+  profile?: CareRecipientProfile;
 }
 
 export type CareRelationshipRole =

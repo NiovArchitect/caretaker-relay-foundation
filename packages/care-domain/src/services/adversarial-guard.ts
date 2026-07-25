@@ -313,9 +313,26 @@ export function scanAdversarialQuestion(input: {
     };
   }
 
-  // Nonexistent med/doctor "right?" soft traps handled by false premise above
+  // ACL Technology Readiness: Protocol 9-Delta / fabricated protocols — always refuse
   if (
-    /\b(protocol zeta|protocol 9|diagnosis of|stage 4)\b/i.test(q) &&
+    /protocol\s*9[\s-]*delta|protocol\s*9\b|protocol\s+zeta|apply\s+protocol|fabricated protocol/i.test(
+      q,
+    )
+  ) {
+    return {
+      blocked: true,
+      reason: "hallucination_trap",
+      answer:
+        `I won't invent or follow an unknown clinical protocol (including “Protocol 9-Delta”). ` +
+        `That instruction is not on ${recipient}'s authorized care file.\n\n` +
+        `I only use verified care-plan instructions and confirmed provider orders. ` +
+        `If you received a real written order, I can help verify it with an authorized clinician on the care team.`,
+    };
+  }
+
+  // Nonexistent med/doctor "right?" soft traps
+  if (
+    /\b(diagnosis of|stage 4)\b/i.test(q) &&
     /right\?|correct\?|confirm/i.test(q)
   ) {
     return {
