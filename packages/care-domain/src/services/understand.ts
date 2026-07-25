@@ -166,9 +166,9 @@ export function fixtureExtract(
     return emptySlice(ctx, careRecipientName, text, "FIXTURE");
   }
 
-  // Meal
-  if (/ate|meal|lunch|breakfast|dinner|noon/.test(lower)) {
-    const aroundNoon = /around noon|at noon|noon|12\s*pm|12:00/.test(lower);
+  // Meal (word-boundary: do not treat "afternoon" as noon meal)
+  if (/\bate\b|\bmeal\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\baround noon\b|\bat noon\b|\bnoon\b|\b12\s*pm\b|\b12:00\b/.test(lower)) {
+    const aroundNoon = /around noon|at noon|\bnoon\b|12\s*pm|12:00/.test(lower);
     const aroundNine =
       /around nine|at nine|about nine|9\s*(am|a\.m\.)?|nine o'?clock/.test(
         lower,
