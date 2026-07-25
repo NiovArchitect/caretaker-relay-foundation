@@ -940,15 +940,17 @@ export async function understandCareInput(
         }
       }
       if (merged.length > parsed.candidates.length || !parsed.candidates.length) {
+        // Prefer live LLM surface labels when present; fixture only fills gaps.
+        // (Regression: overwriting meals with fixture hid scripted "LLM path" proof.)
         return {
           kind: "understood",
           slice: {
             ...parsed,
             candidates: merged.length ? merged : fixture.candidates,
-            meals: fixture.meals.length ? fixture.meals : parsed.meals,
-            observations: fixture.observations.length
-              ? fixture.observations
-              : parsed.observations,
+            meals: parsed.meals.length ? parsed.meals : fixture.meals,
+            observations: parsed.observations.length
+              ? parsed.observations
+              : fixture.observations,
             evidenceMode: "LIVE_FOUNDATION_BACKED",
             modelProvider: result.provider,
             modelName: result.model,
