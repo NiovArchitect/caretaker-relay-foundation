@@ -248,7 +248,47 @@ export function fixtureExtract(
   }
 
 // Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
+  // Positive / neutral wellbeing is valid caregiver evidence (REPORTED, not "needs checking")
   if (
+    /feels?\s+(very\s+)?(good|great|well|better|fine|ok|okay|herself|himself|comfortable|energetic)|seems?\s+(very\s+)?(good|great|well|better|fine|herself|himself|comfortable|energetic|off)|ate well|slept (well|poorly|badly|ok)|appears?\s+comfortable|more energetic|in good spirits|in a good mood|doing (well|better|fine)/i.test(
+      lower,
+    )
+  ) {
+    const negative = /not\s+(good|well|fine)|poorly|badly|off\b/.test(lower);
+    const slept = /slept/.test(lower);
+    const ate = /ate/.test(lower);
+    let statement = "Caregiver reported: general wellbeing / feels good";
+    if (slept && /poor|bad/.test(lower))
+      statement = "Caregiver reported: slept poorly";
+    else if (slept) statement = "Caregiver reported: slept well";
+    else if (ate) statement = "Caregiver reported: ate well";
+    else if (negative)
+      statement = "Caregiver reported: seems off / not their usual self";
+    else if (/energetic|energy/.test(lower))
+      statement = "Caregiver reported: more energetic than usual";
+    else if (/comfortable/.test(lower))
+      statement = "Caregiver reported: appears comfortable";
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "observation",
+          statement,
+          epistemicStatus: "REPORTED",
+          confidence: 0.88,
+          consequentiality: "low",
+          timeLabel: /\btoday\b/.test(lower)
+            ? "today"
+            : /\bnow\b|right now/.test(lower)
+              ? "now"
+              : undefined,
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  } else if (
     /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
       lower,
     )
@@ -264,8 +304,10 @@ export function fixtureExtract(
             : soft
               ? "Caregiver reported: seemed more tired than usual"
               : "Caregiver reported tiredness",
-          epistemicStatus: soft || dizzy ? "REPORTED" : "UNCERTAIN",
-          confidence: soft || dizzy ? 0.75 : 0.55,
+          // Soft caregiver observations are REPORTED evidence, not clinical NEEDS CHECKING
+          epistemicStatus: "REPORTED",
+          confidence: soft || dizzy ? 0.75 : 0.65,
+          consequentiality: dizzy ? "moderate" : "low",
         },
         ctx,
         careRecipientName,
