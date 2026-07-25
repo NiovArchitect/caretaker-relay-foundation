@@ -911,16 +911,39 @@ export async function understandCareInput(
         ),
       };
     }
+    const parsed = parseLlmJson(
+      result.text,
+      ctx,
+      careRecipientName,
+      source,
+      text,
+      { provider: result.provider, model: result.model },
+    );
+    // Empty LLM extraction (or empty after parse): structured fixture fallback
+    if (!parsed.candidates.length) {
+      const fallback = fixtureExtract(text, ctx, careRecipientName, {
+        recordedDoseOverride: opts.recordedDoseOverride,
+        now: opts.now,
+      });
+      if (fallback.candidates.length > 0) {
+        return {
+          kind: "understood",
+          slice: {
+            ...fallback,
+            evidenceMode: "LIVE_FOUNDATION_BACKED",
+            modelProvider: result.provider,
+            modelName: result.model,
+            uncertainties: [
+              "Model returned no structured candidates; used structured fallback extraction",
+              ...fallback.uncertainties,
+            ],
+          },
+        };
+      }
+    }
     return {
       kind: "understood",
-      slice: parseLlmJson(
-        result.text,
-        ctx,
-        careRecipientName,
-        source,
-        text,
-        { provider: result.provider, model: result.model },
-      ),
+      slice: parsed,
     };
   }
 
