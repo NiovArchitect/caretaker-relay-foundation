@@ -38,7 +38,8 @@ const NOTE_PREFIX = "CARE_NOTE_V1:";
 
 export function noteKindForRole(roleLabel: string): CareNoteKind {
   const r = roleLabel.toLowerCase();
-  if (/physician|provider|doctor|clinician/.test(r)) return "provider_update";
+  if (/physician|provider|doctor|clinician|\bnp\b|nurse|nurse.practitioner/.test(r))
+    return "provider_update";
   if (/professional|dsp|paid|direct support|in-home|agency/.test(r))
     return "dsp_support_note";
   return "family_care_update";

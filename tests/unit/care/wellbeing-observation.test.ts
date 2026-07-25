@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { fixtureExtract } from "../../../packages/care-domain/src/services/understand.js";
+import {
+  fixtureExtract,
+  toVerificationBundle,
+} from "../../../packages/care-domain/src/services/understand.js";
 import { people, careRecipient } from "../../../packages/care-domain/src/scenario/olivia.js";
 
 const ctx = {
@@ -36,6 +39,27 @@ describe("wellbeing caregiver observations", () => {
     );
     const obs = slice.candidates.find((c) => c.eventType === "observation");
     expect(obs?.epistemicStatus).toBe("REPORTED");
+  });
+
+  it("does not surface OpenAI/system fallback noise as verify items", () => {
+    const slice = fixtureExtract(
+      "Evelyn feels very good today.",
+      ctx,
+      careRecipient.displayName,
+    );
+    slice.uncertainties = [
+      "OpenAI provider failed: 429 You exceeded your current quota",
+      "Structured fallback extraction used while the language model was unavailable",
+    ];
+    const bundle = toVerificationBundle(slice);
+    expect(
+      bundle.items.every(
+        (i) => !/OpenAI|Structured fallback|quota/i.test(i.label),
+      ),
+    ).toBe(true);
+    expect(
+      bundle.items.some((i) => /wellbeing|feels good|observation/i.test(i.label)),
+    ).toBe(true);
   });
 
   it("covers ordinary caregiver wellbeing phrases", () => {

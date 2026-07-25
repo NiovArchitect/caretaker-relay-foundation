@@ -923,6 +923,15 @@ export function toVerificationBundle(
     return candidateToVerificationItem(c, discrepancy);
   });
   for (const u of understood.uncertainties) {
+    // Keep system/ops messages on the slice for audit — do not surface them
+    // as caregiver-facing verify rows when structured candidates already exist.
+    if (
+      /OpenAI|Anthropic|provider failed|quota|model unavailable|structured fallback|language model was unavailable|Model output was not valid|saved raw note for human review/i.test(
+        u,
+      )
+    ) {
+      continue;
+    }
     if (!items.some((i) => i.label === u)) {
       items.push({
         id: `v-unc-${items.length + 1}`,
