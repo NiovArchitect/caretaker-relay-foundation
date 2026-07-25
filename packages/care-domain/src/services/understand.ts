@@ -255,7 +255,30 @@ export function fixtureExtract(
     );
   }
 
-// Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
+// Provider / clinical-source documentation (role-aware note, not a diagnosis claim)
+  if (
+    /as prescribed|continue current|monitor (for |dizziness|symptoms)|provider (note|guidance|update)|clinical (note|guidance)|care team should|authorized instruction/i.test(
+      lower,
+    )
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "note",
+          statement: "Provider documentation: " + text.slice(0, 220),
+          epistemicStatus: "REPORTED",
+          confidence: 0.86,
+          consequentiality: "moderate",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  }
+
+  // Soft observation — MUST remain reported/uncertain, not "has fatigue" diagnosis
   // Positive / neutral wellbeing is valid caregiver evidence (REPORTED, not "needs checking")
   if (
     /feels?\s+(very\s+)?(good|great|well|better|fine|ok|okay|herself|himself|comfortable|energetic)|seems?\s+(very\s+)?(good|great|well|better|fine|herself|himself|comfortable|energetic|alert|off)|more\s+alert|ate\s+(well|all)|slept\s+(well|poorly|badly|ok)|appears?\s+comfortable|more energetic|in (a )?(good|great) mood|good spirits|doing (well|better|fine)|wasn'?t\s+(her|him|their)self|not\s+(her|him|their)self/i.test(
