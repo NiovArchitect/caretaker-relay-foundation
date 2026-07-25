@@ -26,9 +26,15 @@ import {
   answerAgeQuestion,
   answerDiagnosisQuestion,
   answerIdentityOverview,
+  answerMobilitySupport,
   emergencySnapshot,
   syntheticProviderSlots,
 } from "./recipient-profile.js";
+import {
+  isMedicationRedoseSafetyQuestion,
+  isUnresolvedWorkQuestion,
+  isVerificationStatusQuestion,
+} from "../relay/intents.js";
 import {
   formatCoverageHuman,
   listCoverage,
@@ -94,6 +100,7 @@ const DETERMINISTIC_INTENTS = new Set([
   "MEDICATION_CURRENT",
   "MEDICATION_DUE",
   "MEDICATION_ADMINISTRATION_HISTORY",
+  "MEDICATION_REDOSE_SAFETY",
   "MEDICATION_INSTRUCTIONS",
   "MEDICATION_UNCERTAINTY",
   "MEDICATION_CHANGE",
@@ -115,6 +122,7 @@ const DETERMINISTIC_INTENTS = new Set([
   "ESCALATION",
   "RECIPIENT_ROUTINE",
   "RECIPIENT_PREFERENCES",
+  "RECIPIENT_MOBILITY",
   "RECIPIENT_IDENTITY",
   "RECIPIENT_AGE",
   "RECIPIENT_DIAGNOSIS",
@@ -132,6 +140,7 @@ const DETERMINISTIC_INTENTS = new Set([
   "TREND",
   "OPEN_LOOP_STATUS",
   "WAITING_ON",
+  "VERIFICATION_STATUS",
 ]);
 
 export function canAnswerDeterministically(primary: string): boolean {
@@ -401,6 +410,134 @@ function answerWithState(
 
   // Continuity + person + scheduling intents
   const preClassified = classifyIntent(req.question, priorEntities);
+
+  // Medication redose safety — must not inherit admin-history "Yes" from prior turns
+  if (
+    preClassified.intents.includes("MEDICATION_REDOSE_SAFETY") ||
+    isMedicationRedoseSafetyQuestion(req.question)
+  ) {
+    // Fall through to answer engine with clean entities (no personHint bleed)
+    const engine = runAnswerEngine({
+      question: req.question,
+      principalId: req.principalId,
+      principalName: req.principalDisplayName,
+      roleLabel: req.roleLabel,
+      recipientId: req.careRecipientId,
+      recipientName: req.recipientDisplayName,
+      state,
+      priorEntities: {
+        medicationHint: preClassified.entities.medicationHint ?? "Metformin",
+        references: preClassified.entities.references ?? [],
+      },
+      conversationId,
+    });
+    const turn = persistTurn(store, {
+      principalId: req.principalId,
+      principalDisplayName: req.principalDisplayName,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      userMessage: req.question,
+      classified: engine.classified,
+      answer: engine.answer,
+      sourceRefs: engine.sourceRefs,
+      modelPath: "deterministic",
+    });
+    return {
+      ...engine,
+      durable: true,
+      turnId: turn.turnId,
+      canDeterministic: true,
+      evidenceBound: true,
+    };
+  }
+
+  // Appointment confirm must win over verification-status phrasing
+  if (preClassified.intents.includes("APPOINTMENT_CONFIRM_BOOK")) {
+    // fall through to personIntent path below
+  } else if (
+    // Verification status — explicit care-truth states
+    preClassified.intents.includes("VERIFICATION_STATUS") ||
+    isVerificationStatusQuestion(req.question)
+  ) {
+    const engine = runAnswerEngine({
+      question: req.question,
+      principalId: req.principalId,
+      principalName: req.principalDisplayName,
+      roleLabel: req.roleLabel,
+      recipientId: req.careRecipientId,
+      recipientName: req.recipientDisplayName,
+      state,
+      priorEntities,
+      conversationId,
+    });
+    const turn = persistTurn(store, {
+      principalId: req.principalId,
+      principalDisplayName: req.principalDisplayName,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      userMessage: req.question,
+      classified: engine.classified,
+      answer: engine.answer,
+      sourceRefs: engine.sourceRefs,
+      modelPath: "deterministic",
+    });
+    return {
+      ...engine,
+      durable: true,
+      turnId: turn.turnId,
+      canDeterministic: true,
+      evidenceBound: true,
+    };
+  }
+
+  // Unresolved work — orchestration + open uncertainties (not generic fallback)
+  if (
+    preClassified.intents.includes("WAITING_ON") ||
+    preClassified.intents.includes("OPEN_LOOP_STATUS") ||
+    isUnresolvedWorkQuestion(req.question)
+  ) {
+    const loops = summarizeOpenLoops(
+      store,
+      req.careRecipientId,
+      req.principalId,
+    );
+    const guidance = listProviderGuidance(store, req.careRecipientId);
+    const openReviews = (state.openSafetyReviews ?? []).map((r) =>
+      String(r.reason ?? r.message ?? "open safety review"),
+    );
+    const lines: string[] = [...loops.lines];
+    for (const r of openReviews) {
+      if (r) lines.push(`Needs checking: ${r}`);
+    }
+    // Surface handoff still-needs if present
+    if (latest?.stillNeedsAttention?.length) {
+      for (const n of latest.stillNeedsAttention.slice(0, 4)) {
+        lines.push(`Handoff still needs attention: ${n}`);
+      }
+    }
+    let answer: string;
+    if (lines.length === 0) {
+      answer =
+        `Nothing is currently flagged as unresolved for ${req.recipientDisplayName}. ` +
+        (guidance[0]
+          ? `Latest provider note on file: ${guidance[0].sourceDisplayName} — ${guidance[0].text.slice(0, 160)}`
+          : "Open coordination loops and verification items look clear.");
+    } else {
+      answer =
+        `Here's what is still open for ${req.recipientDisplayName}:\n` +
+        lines.map((l) => `• ${l}`).join("\n");
+      if (loops.waitingOnNames.length) {
+        answer += `\n\nWaiting on: ${loops.waitingOnNames.join(", ")}.`;
+      }
+    }
+    return persistDeterministicAnswer(
+      req,
+      answer,
+      ["orchestration:open_loops"],
+      "OPEN_LOOPS",
+    );
+  }
+
   const personIntent = preClassified.intents.find((i) =>
     [
       "CARE_COVERAGE",
@@ -410,6 +547,7 @@ function answerWithState(
       "RECIPIENT_IDENTITY",
       "RECIPIENT_PROFILE",
       "RECIPIENT_ALLERGIES",
+      "RECIPIENT_MOBILITY",
       "EMERGENCY_SNAPSHOT",
       "APPOINTMENT_REQUEST_NEW",
       "APPOINTMENT_RESCHEDULE",
@@ -493,23 +631,49 @@ function answerWithState(
         `2) Visit reason\n` +
         `3) Your confirmation (“confirm appointment request”)\n\n` +
         `Reply with a preferred slot (for example “Wednesday July 29 at 2:00 PM”).`;
+    } else if (personIntent === "RECIPIENT_MOBILITY") {
+      answer = answerMobilitySupport(recipient);
     } else if (personIntent === "APPOINTMENT_RESCHEDULE") {
-      const apts = store.getAppointments(req.careRecipientId);
-      const pt = apts.find((a) => /physical therapy|pt/i.test(a.title));
-      const current = pt
-        ? `${pt.title}: ${pt.startsAtLabel ?? pt.startsAt} · ${pt.location ?? "location on file"} · status ${pt.status}`
-        : apts[0]
-          ? `${apts[0].title}: ${apts[0].startsAtLabel ?? apts[0].startsAt}`
-          : "no appointment on file";
-      answer =
-        `I can help with a reschedule request for ${req.recipientDisplayName}.\n\n` +
-        `Current appointment on file:\n• ${current}\n\n` +
-        `Honest reschedule workflow:\n` +
-        `1) Confirm which appointment to move\n` +
-        `2) Propose a new day/time\n` +
-        `3) You verify before care truth updates\n` +
-        `4) Reminders and leave-by recalculate from the NEW start only\n\n` +
-        `Tell me the new preferred time.`;
+      const apts = store
+        .getAppointments(req.careRecipientId)
+        .filter((a) => a.status !== "cancelled");
+      const q = req.question.toLowerCase();
+      const named = apts.filter(
+        (a) =>
+          (/physical therapy|\bpt\b/.test(q) &&
+            /physical therapy|\bpt\b/i.test(a.title)) ||
+          (/doctor|clinic|pcp|primary/.test(q) &&
+            /doctor|clinic|primary|follow/i.test(a.title)) ||
+          (/therapy/.test(q) && /therapy/i.test(a.title)),
+      );
+      if (apts.length === 0) {
+        answer = `I don't have an appointment on file to move for ${req.recipientDisplayName}.`;
+      } else if (named.length === 1 || apts.length === 1) {
+        const target = named[0] ?? apts[0]!;
+        answer =
+          `I can help with a reschedule request for ${req.recipientDisplayName}.\n\n` +
+          `Current appointment on file:\n• ${target.title}: ${target.startsAtLabel ?? target.startsAt} · ${target.location ?? "location on file"} · status ${target.status}\n\n` +
+          `Honest reschedule workflow:\n` +
+          `1) Confirm this is the appointment to move (or name a different one)\n` +
+          `2) Propose a new day/time\n` +
+          `3) You verify before care truth updates\n` +
+          `4) Reminders and leave-by recalculate from the NEW start only\n\n` +
+          `Tell me the new preferred time.`;
+      } else {
+        // Multiple candidates — clarify rather than generic fallback or silent pick
+        answer =
+          `Sure — which appointment should I move for ${req.recipientDisplayName}?\n\n` +
+          apts
+            .slice(0, 6)
+            .map(
+              (a) =>
+                `• ${a.title}: ${a.startsAtLabel ?? a.startsAt}${
+                  a.location ? ` · ${a.location}` : ""
+                }`,
+            )
+            .join("\n") +
+          `\n\nReply with the appointment name (for example “physical therapy” or the clinic visit), then a new day/time.`;
+      }
     } else if (personIntent === "APPOINTMENT_CANCEL") {
       const apts = store.getAppointments(req.careRecipientId);
       const pt =
@@ -665,73 +829,25 @@ function answerWithState(
     );
   }
 
-  // Open-loop / waiting-on — orchestration state, not Q&A projection alone
-  if (
-    /waiting on|still waiting|are we waiting|who are we waiting|did maya answer|did (the )?doctor reply|did dr\.?\s*shah reply|anything unresolved|what still needs|what am i still waiting|open request|pending (request|clarification)/i.test(
-      qLow,
-    )
-  ) {
+  // Open-loop path already handled earlier via isUnresolvedWorkQuestion + intents.
+  // Keep a late safety net for residual phrasing.
+  if (isUnresolvedWorkQuestion(req.question)) {
     const loops = summarizeOpenLoops(
       store,
       req.careRecipientId,
       req.principalId,
     );
-    const guidance = listProviderGuidance(store, req.careRecipientId);
-    let answer: string;
-    if (loops.lines.length === 0) {
-      answer =
-        "Nothing is currently waiting on another person for this care recipient. " +
-        (guidance[0]
-          ? `Latest provider note on file: ${guidance[0].sourceDisplayName} — ${guidance[0].text.slice(0, 160)}`
-          : "All open coordination loops look closed.");
-    } else {
-      answer =
-        `Here's what is still open:\n` +
-        loops.lines.map((l) => `• ${l}`).join("\n");
-      if (loops.waitingOnNames.length) {
-        answer += `\n\nWaiting on: ${loops.waitingOnNames.join(", ")}.`;
-      }
-    }
-    const conversationId = conversationIdFor(
-      req.principalId,
-      req.careRecipientId,
+    const answer =
+      loops.lines.length === 0
+        ? `Nothing is currently flagged as unresolved for ${req.recipientDisplayName}.`
+        : `Here's what is still open:\n` +
+          loops.lines.map((l) => `• ${l}`).join("\n");
+    return persistDeterministicAnswer(
+      req,
+      answer,
+      ["orchestration:open_loops_late"],
+      "OPEN_LOOPS",
     );
-    const classified = {
-      intents: ["WAITING_ON", "OPEN_LOOP_STATUS"] as const,
-      primary: "WAITING_ON" as const,
-      decisionContext: "information" as const,
-      entities: { references: [] as string[] },
-      isQuestion: true,
-      isObservationUpdate: false,
-      needsClarification: false,
-    };
-    const turn = persistTurn(store, {
-      principalId: req.principalId,
-      principalDisplayName: req.principalDisplayName,
-      careRecipientId: req.careRecipientId,
-      roleLabel: req.roleLabel,
-      userMessage: req.question,
-      classified: { ...classified, intents: [...classified.intents] },
-      answer,
-      sourceRefs: ["orchestration"],
-      modelPath: "deterministic",
-    });
-    return {
-      answer,
-      intent: "WAITING_ON",
-      intents: ["WAITING_ON", "OPEN_LOOP_STATUS"],
-      persona: "family",
-      sourceRefs: ["orchestration"],
-      needsClarification: false,
-      projectionsUsed: ["OPEN_LOOPS"],
-      conversationId,
-      modelPath: "deterministic",
-      classified: { ...classified, intents: [...classified.intents] },
-      durable: true,
-      turnId: turn.turnId,
-      canDeterministic: true,
-      evidenceBound: true,
-    };
   }
 
   // Clinical-judgment questions: offer current provider from care-team data (not hardcoded names)

@@ -74,6 +74,68 @@ export function answerDiagnosisQuestion(
   return out;
 }
 
+/** Mobility / transfer / assistive support from authorized profile fields. */
+export function answerMobilitySupport(
+  recipient: CareRecipient | undefined,
+): string {
+  const name =
+    recipient?.preferredName || recipient?.displayName || "this person";
+  const p = profileOf(recipient);
+  const parts: string[] = [];
+  if (p.mobilityBaseline) {
+    parts.push(`Mobility baseline on file: ${p.mobilityBaseline}`);
+  }
+  if (p.assistiveDevices?.length) {
+    parts.push(
+      `Assistive devices: ${p.assistiveDevices.join("; ")}`,
+    );
+  } else if (p.mobilityBaseline) {
+    parts.push(`Assistive devices: none listed beyond baseline notes`);
+  }
+  if (p.supportNeeds?.length) {
+    const mobilityRelated = p.supportNeeds.filter((s) =>
+      /mobility|transfer|walk|transport|stand|assist|physical/i.test(s),
+    );
+    const list =
+      mobilityRelated.length > 0 ? mobilityRelated : p.supportNeeds.slice(0, 3);
+    parts.push(
+      `Support needs on file:\n` + list.map((s) => `• ${s}`).join("\n"),
+    );
+  }
+  if (p.safetyConsiderations?.length) {
+    const safetyMob = p.safetyConsiderations.filter((s) =>
+      /dizz|mobility|fall|stand|transfer|walk/i.test(s),
+    );
+    if (safetyMob.length) {
+      parts.push(
+        `Safety considerations:\n` + safetyMob.map((s) => `• ${s}`).join("\n"),
+      );
+    }
+  }
+  if (p.careGoals?.length) {
+    const goals = p.careGoals.filter((g) =>
+      /mobility|walk|safe|dizz/i.test(g),
+    );
+    if (goals.length) {
+      parts.push(
+        `Related care goals:\n` + goals.map((g) => `• ${g}`).join("\n"),
+      );
+    }
+  }
+  if (!parts.length) {
+    return (
+      `I don't have mobility, transfer, or assistive-device details on file for ${name}. ` +
+      `If you observe support needs during this visit, document them so they become shared care context.`
+    );
+  }
+  return (
+    `Transfer / mobility support for ${name} (authorized care profile):\n` +
+    parts.map((x) => (x.startsWith("Support") || x.startsWith("Safety") || x.startsWith("Related") ? x : `• ${x}`)).join("\n") +
+    `\n\nThis is functional baseline on file — not a new clinical order. ` +
+    `If transfer needs have changed, update the record after you observe them.`
+  );
+}
+
 export function answerIdentityOverview(
   recipient: CareRecipient | undefined,
 ): string {

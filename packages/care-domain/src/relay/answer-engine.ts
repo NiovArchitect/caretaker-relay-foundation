@@ -195,7 +195,52 @@ function composeAnswer(ctx: {
 
 
   // Intent handlers
-  if (intents.some((i) => i.startsWith("MEDICATION"))) {
+  if (intents.includes("MEDICATION_REDOSE_SAFETY")) {
+    // Safety-critical: history is evidence, never permission to administer again.
+    used.add("CURRENT_MEDICATIONS");
+    used.add("LAST_MEDICATION_ADMINISTRATIONS");
+    used.add("NEXT_24H_TASKS");
+    refs.push("provider_instruction");
+    refs.push("administration_record");
+    const last = adminRecords().slice(-1)[0];
+    const dueLine =
+      proj.NEXT_24H_TASKS.find((t) =>
+        /metformin|medication|dose|med/i.test(t),
+      ) ?? proj.NEXT_24H_TASKS[0];
+    parts.push(
+      `I can't tell you to give another dose from a chat question alone — a recorded administration is not permission to redose.`,
+    );
+    if (primaryMed) {
+      parts.push(
+        `Current authorized instruction for ${recipientName}:\n${medBlock()}`,
+      );
+    } else {
+      parts.push(
+        `I don't have a current medication instruction on file for ${recipientName}.`,
+      );
+    }
+    if (last) {
+      const status = str(last.epistemicStatus) || "REPORTED";
+      parts.push(
+        `Last recorded administration (${status}, not a new order):\n${describeAdmin(last)}`,
+      );
+    } else {
+      parts.push(`No administration is recorded yet for this medication.`);
+    }
+    if (dueLine) {
+      parts.push(`Schedule / due context on file:\n• ${dueLine}`);
+    }
+    if (proj.OPEN_UNCERTAINTIES.length) {
+      used.add("OPEN_UNCERTAINTIES");
+      parts.push(
+        `Open discrepancy — do not redose until this is cleared:\n• ${proj.OPEN_UNCERTAINTIES[0]}`,
+      );
+    }
+    parts.push(
+      `Because another dose could be unsafe, verify whether one is actually due against the schedule and last confirmed administration before giving anything. ` +
+        `If the plan is unclear or conflicting, check with the care team or clinic rather than guessing.`,
+    );
+  } else if (intents.some((i) => i.startsWith("MEDICATION"))) {
     if (intents.includes("MEDICATION_DUE") || intents.includes("MEDICATION_CURRENT")) {
       used.add("NEXT_24H_TASKS");
       if (persona === "family") {
@@ -247,8 +292,9 @@ function composeAnswer(ctx: {
             (hit.source as { whyVisible?: string } | undefined)?.whyVisible ??
               "",
           );
+          const status = str(hit.epistemicStatus) || "REPORTED";
           parts.push(
-            `Yes — I have a record from ${who}:\n${describeAdmin(hit)}`,
+            `Recorded administration from ${who} (${status} — not a new dose authorization):\n${describeAdmin(hit)}`,
           );
           if (/confirmed/i.test(confNote)) {
             parts.push(confNote);
@@ -635,6 +681,110 @@ function composeAnswer(ctx: {
       `Around lunchtime for ${recipientName}: medication support per plan (${str(primaryMed?.scheduleTime ?? "schedule on file")}), meals with food if instructed, watch fatigue/dizziness after eating.`,
     );
     parts.push(`Preferences / person-centered notes:\n• ${proj.DSP_SUPPORT_NOTES[0]}`);
+  }
+
+  if (intents.includes("RECIPIENT_MOBILITY")) {
+    used.add("DSP_SUPPORT_NOTES");
+    used.add("RECIPIENT_MOBILITY");
+    // Projections may not carry full profile; surface support notes + explicit mobility language
+    const mobilityHints = proj.DSP_SUPPORT_NOTES.filter((n) =>
+      /mobility|walk|transfer|rail|stand|assist|device|gait/i.test(n),
+    );
+    if (mobilityHints.length) {
+      parts.push(
+        `Mobility / transfer support on file for ${recipientName}:\n` +
+          mobilityHints.map((n) => `• ${n}`).join("\n"),
+      );
+    } else if (proj.DSP_SUPPORT_NOTES[0]) {
+      parts.push(
+        `Support notes on file for ${recipientName}:\n• ${proj.DSP_SUPPORT_NOTES[0]}`,
+      );
+      parts.push(
+        `I don't have a more specific transfer protocol beyond the mobility baseline and support notes — check the About profile for mobility details if present.`,
+      );
+    } else {
+      parts.push(
+        `I don't have transfer/mobility support details on file for ${recipientName}. ` +
+          `If you observe needs during this visit, document them so the next caregiver can see them.`,
+      );
+    }
+  }
+
+  if (intents.includes("VERIFICATION_STATUS")) {
+    used.add("OPEN_UNCERTAINTIES");
+    used.add("LAST_MEDICATION_ADMINISTRATIONS");
+    used.add("LATEST_PROVIDER_INSTRUCTIONS");
+    const last = adminRecords().slice(-1)[0];
+    const openU = proj.OPEN_UNCERTAINTIES;
+    const lines: string[] = [];
+    lines.push(`Verification status for ${recipientName} (from care truth, not a clinical judgment):`);
+    if (primaryMed) {
+      lines.push(
+        `• Medication instruction (${str(primaryMed.name)} ${str(primaryMed.dose)}): **CONFIRMED** authorized plan on file` +
+          (str(primaryMed.authorizedBy)
+            ? ` (${str(primaryMed.authorizedBy)})`
+            : ""),
+      );
+    }
+    if (last) {
+      const st = str(last.epistemicStatus) || "REPORTED";
+      const label =
+        st === "CONFIRMED"
+          ? "CONFIRMED"
+          : st === "UNCERTAIN"
+            ? "NEEDS CHECKING"
+            : st === "CORRECTED"
+              ? "CORRECTED"
+              : "REPORTED";
+      lines.push(
+        `• Latest administration record: **${label}** — ${describeAdmin(last)}`,
+      );
+    } else {
+      lines.push(`• Latest administration record: **UNKNOWN** — none on file`);
+    }
+    if (openU.length) {
+      lines.push(
+        `• Open item: **NEEDS CHECKING** — ${openU[0]}`,
+      );
+    } else {
+      lines.push(`• Open discrepancies: none flagged`);
+    }
+    if (proj.LATEST_PROVIDER_INSTRUCTIONS[0]) {
+      lines.push(
+        `• Provider guidance on file: **CONFIRMED / AUTHORIZED** — ${proj.LATEST_PROVIDER_INSTRUCTIONS[0]}`,
+      );
+    }
+    lines.push(
+      `Statuses used: CONFIRMED · REPORTED · NEEDS CHECKING · UNKNOWN · CORRECTED. ` +
+        `If you meant a different item (observation, appointment, note), name it and I'll check that record's state.`,
+    );
+    parts.push(lines.join("\n"));
+  }
+
+  if (
+    (intents.includes("WAITING_ON") || intents.includes("OPEN_LOOP_STATUS")) &&
+    !parts.length
+  ) {
+    used.add("OPEN_UNCERTAINTIES");
+    used.add("NEXT_24H_TASKS");
+    used.add("ACTIVE_HANDOFF");
+    const openLines = [
+      ...proj.OPEN_UNCERTAINTIES.map((u) => `Needs checking: ${u}`),
+      ...(proj.ACTIVE_HANDOFF?.stillNeedsAttention ?? []).map(
+        (a) => `Handoff still needs attention: ${a}`,
+      ),
+      ...proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `Upcoming: ${t}`),
+    ];
+    if (openLines.length) {
+      parts.push(
+        `Here's what still looks open for ${recipientName}:\n` +
+          openLines.map((l) => `• ${l}`).join("\n"),
+      );
+    } else {
+      parts.push(
+        `Nothing is flagged as unresolved for ${recipientName} right now. Open coordination loops and medication discrepancies look clear.`,
+      );
+    }
   }
 
   if (intents.includes("DOCUMENT_PREP")) {
