@@ -308,7 +308,7 @@ export function classifyIntent(
 
   // Coverage / next helper — before identity (avoid "who is" → profile dump)
   if (
-    /who is helping|helping now|who comes after|next caregiver|next helper|who is next|when is maya|how much longer am i|taking over|who is covering|who is with|tonight.*(help|cover)/.test(
+    /who is helping|helping now|who comes after|next caregiver|next helper|who is next|when is maya|how much longer am i|tak(es|ing) over|who (takes|is taking) over|who is covering|who is with|tonight.*(help|cover)|who is responsible after|after i leave|after me\b|who comes next|who takes over after/.test(
       q,
     )
   ) {
@@ -538,6 +538,7 @@ export function classifyIntent(
   // Primary priority: safety > verification > open loops > mobility > first match
   const priority: RelayIntent[] = [
     "MEDICATION_REDOSE_SAFETY",
+    "CARE_COVERAGE",
     "VERIFICATION_STATUS",
     "WAITING_ON",
     "OPEN_LOOP_STATUS",

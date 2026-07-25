@@ -258,3 +258,18 @@ describe("judge-torture defect closure — semantic intents", () => {
     );
   });
 });
+
+describe("coverage successor phrasing", () => {
+  it("classifies take-over / after-leave as CARE_COVERAGE", () => {
+    for (const q of [
+      "Who takes over after me?",
+      "Who is responsible after I leave?",
+      "Who comes after me?",
+      "Who takes over?",
+    ]) {
+      const c = classifyIntent(q);
+      expect(c.intents, q).toContain("CARE_COVERAGE");
+      expect(c.primary, q).toBe("CARE_COVERAGE");
+    }
+  });
+});
