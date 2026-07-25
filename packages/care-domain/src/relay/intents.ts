@@ -127,11 +127,19 @@ export function classifyIntent(
 
   // Coverage / next helper — before identity (avoid "who is" → profile dump)
   if (
-    /who is helping|helping now|who comes after|next caregiver|next helper|when is maya|how much longer am i|taking over|who is covering|who is with|tonight.*(help|cover)/.test(
+    /who is helping|helping now|who comes after|next caregiver|next helper|who is next|when is maya|how much longer am i|taking over|who is covering|who is with|tonight.*(help|cover)/.test(
       q,
     )
   ) {
     intents.push("CARE_COVERAGE");
+  }
+
+  if (
+    /emergency contact|who (do i|should i) call|crisis contact|emergency phone/.test(
+      q,
+    )
+  ) {
+    intents.push("EMERGENCY_SNAPSHOT");
   }
 
   if (
