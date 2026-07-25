@@ -404,6 +404,87 @@ function composeAnswer(ctx: {
     }
   }
 
+  if (intents.includes("STATUS_SYNTHESIS")) {
+    used.add("RECENT_CHANGES");
+    used.add("RECENT_OBSERVATION_CLUSTERS");
+    used.add("CURRENT_MEDICATIONS");
+    used.add("NEXT_APPOINTMENT");
+    used.add("OPEN_UNCERTAINTIES");
+    used.add("ACTIVE_HANDOFF");
+    if (persona === "physician") {
+      parts.push(
+        `Clinical-facing status for ${recipientName} (from authorized care record + caregiver reports):`,
+      );
+      parts.push(
+        `Medications: ${str(primaryMed?.name) || "none on file"} ${str(primaryMed?.dose) || ""}` +
+          (primaryMed && str(primaryMed.authorizedBy)
+            ? ` · authorized by ${str(primaryMed.authorizedBy)}`
+            : ""),
+      );
+      if (proj.RECENT_OBSERVATION_CLUSTERS[0]) {
+        const c = proj.RECENT_OBSERVATION_CLUSTERS[0];
+        parts.push(
+          `Caregiver-reported observations: ${c.theme} (${c.count} · most recent ${c.mostRecentLabel}) — REPORTED, not diagnosis.`,
+        );
+      } else {
+        parts.push(
+          `Caregiver-reported observations: none clustered recently on file.`,
+        );
+      }
+      if (proj.OPEN_UNCERTAINTIES[0]) {
+        parts.push(`Unresolved / needs review: ${proj.OPEN_UNCERTAINTIES[0]}`);
+      }
+      if (proj.NEXT_APPOINTMENT) {
+        parts.push(
+          `Next appointment: ${str(proj.NEXT_APPOINTMENT.title)} · ${str(proj.NEXT_APPOINTMENT.startsAtLabel ?? proj.NEXT_APPOINTMENT.startsAt)}`,
+        );
+      }
+      parts.push(
+        `Provenance: medication schedules are authorized instructions; observations are caregiver-reported until confirmed. I will not invent clinical status.`,
+      );
+    } else if (persona === "professional_dsp") {
+      parts.push(`Support-relevant picture for ${recipientName}:`);
+      parts.push(
+        proj.RECENT_CHANGES.slice(0, 4).map((c) => `• ${c}`).join("\n") ||
+          "• No new events listed since last context",
+      );
+      if (proj.DSP_SUPPORT_NOTES[0]) {
+        parts.push(`Support notes: ${proj.DSP_SUPPORT_NOTES[0]}`);
+      }
+      parts.push(
+        `Document your own observations separately. Family reports remain REPORTED.`,
+      );
+    } else {
+      parts.push(`Here's a plain-language picture of ${recipientName} right now:`);
+      if (proj.RECENT_OBSERVATION_CLUSTERS[0]) {
+        const c = proj.RECENT_OBSERVATION_CLUSTERS[0];
+        parts.push(
+          `Recent caregiver reports: ${c.theme} (last noted ${c.mostRecentLabel}).`,
+        );
+      } else {
+        parts.push(
+          `No new wellbeing observations are on file for today yet — you can share one in Relay.`,
+        );
+      }
+      if (primaryMed) {
+        parts.push(
+          `Medication plan: ${str(primaryMed.name)} ${str(primaryMed.dose)} · ${str(primaryMed.scheduleTime || primaryMed.scheduleLabel || "schedule on file")}.`,
+        );
+      }
+      if (proj.NEXT_APPOINTMENT) {
+        parts.push(
+          `Coming up: ${str(proj.NEXT_APPOINTMENT.title)} · ${str(proj.NEXT_APPOINTMENT.startsAtLabel ?? "")}.`,
+        );
+      }
+      if (proj.OPEN_UNCERTAINTIES[0]) {
+        parts.push(`Still open: ${proj.OPEN_UNCERTAINTIES[0]}`);
+      }
+      parts.push(
+        `This is a synthesis of authorized care records — not a diagnosis. Ask if you want details on meds, appointments, or who is helping next.`,
+      );
+    }
+  }
+
   if (
     intents.includes("CHANGE_SINCE") ||
     intents.includes("RECENT_ACTIVITY") ||

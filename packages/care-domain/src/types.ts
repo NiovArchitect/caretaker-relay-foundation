@@ -422,6 +422,11 @@ export interface CareCandidate {
   sourceSpeakerName?: string;
   timeLabel?: string;
   dateLabel?: string;
+  /** Server-authoritative when the report was captured. */
+  recordedAt?: string;
+  /** When the care event is understood to have occurred (defaults to recordedAt). */
+  effectiveAt?: string;
+  timePrecision?: "exact" | "day" | "approximate" | "unknown";
   confidence: number;
   epistemicStatus: EpistemicStatus;
   consequentiality: SafetyClass;

@@ -34,6 +34,7 @@ import {
   candidateToVerificationItem,
 } from "./safety.js";
 import { extractDoseFromText } from "./dose-units.js";
+import { resolveEffectiveAt } from "./care-time.js";
 
 export interface UnderstandOptions {
   /**
@@ -115,9 +116,16 @@ function mkCandidate(
         partial.recordedDose && /\d/.test(partial.recordedDose),
       ),
     });
+  const times = resolveEffectiveAt(
+    partial.statement + " " + (partial.timeLabel ?? ""),
+    new Date(source.recordedAt || Date.now()),
+  );
   return {
     id: `cand-${idx}-${Date.now().toString(36)}`,
     eventType: partial.eventType,
+    recordedAt: times.recordedAt,
+    effectiveAt: times.effectiveAt,
+    timePrecision: times.precision,
     statement: partial.statement,
     careRecipientId: ctx.careRecipientId,
     careRecipientName,

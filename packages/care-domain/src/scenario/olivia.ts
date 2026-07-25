@@ -382,6 +382,11 @@ export function seedOliviaScenario(store: CareStore): void {
 
   // Second lightweight recipient for multi-space architecture proof.
   store.upsertRecipient(secondaryRecipient);
+  store.upsertPerson({
+    id: "p-dr-cole",
+    displayName: "Dr. Amara Cole",
+    kind: "provider",
+  });
   store.upsertRelationship({
     id: "rel-sadeil-robert",
     careRecipientId: secondaryRecipient.id,
@@ -390,12 +395,54 @@ export function seedOliviaScenario(store: CareStore): void {
     roleLabel: "Family caregiver",
     responsibilities: ["Occasional coverage"],
     access: {
-      informationCategories: ["Daily updates", "Appointments"],
-      allowedActions: ["receive_updates", "view_appointments"],
+      informationCategories: ["*", "Daily updates", "Appointments", "Care plan"],
+      allowedActions: [
+        "*",
+        "receive_updates",
+        "view_appointments",
+        "view_plan",
+        "record_observations",
+      ],
       canEscalate: true,
       authorityLimits: ["Limited demo access"],
     },
     status: "active",
+  });
+  // Maya is NOT on Robert's care team (membership proof)
+  store.upsertRelationship({
+    id: "rel-cole-robert",
+    careRecipientId: secondaryRecipient.id,
+    personId: "p-dr-cole",
+    role: "physician",
+    roleLabel: "Primary care physician",
+    responsibilities: ["Clinical instructions"],
+    access: {
+      informationCategories: ["Health observations", "Medication record"],
+      allowedActions: ["view_health", "update_instructions"],
+      canEscalate: true,
+      authorityLimits: [],
+    },
+    status: "active",
+    organizationName: "Harbor Primary Care",
+  });
+  store.upsertMedSchedule({
+    id: "med-robert-lisinopril",
+    careRecipientId: secondaryRecipient.id,
+    name: "Lisinopril",
+    dose: "10 mg",
+    scheduleLabel: "Morning",
+    scheduleTime: "8:00 AM",
+    authorizedBy: "Dr. Amara Cole",
+    authorizedAt: "2025-01-10",
+    mealRelation: "With or without food",
+    source: {
+      id: "src-robert-lisinopril",
+      kind: "provider_instruction",
+      label: "Dr. Amara Cole medication schedule",
+      actorName: "Dr. Amara Cole",
+      recordedAt: "2025-01-10T00:00:00Z",
+      whyVisible: "Primary care instruction for Robert Hale (synthetic lab).",
+    },
   });
 
   // Do NOT overwrite appointments if care activity already exists (restart continuity).

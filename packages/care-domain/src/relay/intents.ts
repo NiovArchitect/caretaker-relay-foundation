@@ -49,6 +49,7 @@ export type RelayIntent =
   | "OPEN_LOOP_STATUS"
   | "WAITING_ON"
   | "VERIFICATION_STATUS"
+  | "STATUS_SYNTHESIS"
   | "CARE_UPDATE"; // tell path, not pure Q
 
 /** Permission-to-administer / redose questions — safety-critical, not history. */
@@ -281,6 +282,16 @@ export function classifyIntent(
   if (/\bshe\b|\bher\b|\bmom\b|\bevelyn\b/.test(q)) references.push("recipient");
   if (/\byesterday\b/.test(q)) references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
+
+  // High-value synthesis: "How is Evelyn doing?"
+  if (
+    /how is (evelyn|robert|she|he|mom|they) doing|how('s| is) (she|he|evelyn|robert) (doing|today)|how are they|how is everything|what's (the )?latest (on|with)|how's (evelyn|robert|mom)/i.test(
+      q,
+    )
+  ) {
+    intents.push("STATUS_SYNTHESIS");
+    intents.push("CHANGE_SINCE");
+  }
 
   // Safety-critical: redose / permission-to-give — before history inheritance
   if (isMedicationRedoseSafetyQuestion(q)) {
@@ -538,6 +549,7 @@ export function classifyIntent(
   // Primary priority: safety > verification > open loops > mobility > first match
   const priority: RelayIntent[] = [
     "MEDICATION_REDOSE_SAFETY",
+    "STATUS_SYNTHESIS",
     "CARE_COVERAGE",
     "VERIFICATION_STATUS",
     "WAITING_ON",

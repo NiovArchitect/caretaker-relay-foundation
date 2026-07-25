@@ -141,6 +141,8 @@ const DETERMINISTIC_INTENTS = new Set([
   "OPEN_LOOP_STATUS",
   "WAITING_ON",
   "VERIFICATION_STATUS",
+  "STATUS_SYNTHESIS",
+  "CHANGE_SINCE",
 ]);
 
 export function canAnswerDeterministically(primary: string): boolean {
