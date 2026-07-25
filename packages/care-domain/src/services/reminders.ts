@@ -256,7 +256,8 @@ export function recalculateAppointmentReminders(
       sourceId: input.appointment.id,
       actionType: "open_appointment",
       actionTarget: `appointment:${input.appointment.id}`,
-      dedupeKey: `apt-change-notif:${input.appointment.id}:${sourceVersion}:${pid}`,
+      // Stable active key (no sourceVersion) so edits do not flood unread inbox
+      dedupeKey: `apt-change-notif:${input.appointment.id}:${pid}`,
     });
   }
 

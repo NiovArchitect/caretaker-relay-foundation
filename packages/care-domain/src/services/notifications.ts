@@ -253,6 +253,79 @@ export function markResolved(
   });
 }
 
+/** Unread = not yet viewed and not resolved. */
+export function isUnreadNotification(n: CareNotification): boolean {
+  return !n.seenAt && !n.resolvedAt;
+}
+
+export function countUnreadForPrincipal(
+  store: CareStore,
+  principalId: string,
+  careRecipientId?: string,
+): number {
+  return listNotificationsForPrincipal(store, principalId, careRecipientId).filter(
+    isUnreadNotification,
+  ).length;
+}
+
+/** Mark all active notifications as seen (opens inbox). */
+export function markAllSeenForPrincipal(
+  store: CareStore,
+  principalId: string,
+  careRecipientId?: string,
+): number {
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const notif of listNotificationsForPrincipal(
+    store,
+    principalId,
+    careRecipientId,
+  )) {
+    if (!notif.seenAt && !notif.resolvedAt) {
+      patchNotification(store, principalId, notif.id, { seenAt: now });
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Lab / synthetic cleanup: resolve historical noise so unread is credible.
+ * Resolves unresolved notifications older than `olderThanMs` (default 5 min).
+ * Does not delete rows — history retained with resolvedAt.
+ */
+export function resolveStaleNotifications(
+  store: CareStore,
+  principalId: string,
+  opts?: { careRecipientId?: string; olderThanMs?: number },
+): number {
+  const olderThanMs = opts?.olderThanMs ?? 5 * 60 * 1000;
+  const cutoff = Date.now() - olderThanMs;
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const notif of listNotificationsForPrincipal(
+    store,
+    principalId,
+    opts?.careRecipientId,
+  )) {
+    if (notif.resolvedAt) continue;
+    const created = Date.parse(notif.createdAt);
+    if (Number.isFinite(created) && created <= cutoff) {
+      patchNotification(store, principalId, notif.id, {
+        seenAt: now,
+        acknowledgedAt: now,
+        resolvedAt: now,
+        metadata: {
+          ...(notif.metadata ?? {}),
+          resolvedReason: "stale_lab_cleanup",
+        },
+      });
+      n++;
+    }
+  }
+  return n;
+}
+
 export function notificationFromCoordination(input: {
   store: CareStore;
   careRecipientId: string;

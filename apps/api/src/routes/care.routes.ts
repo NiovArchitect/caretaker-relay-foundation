@@ -27,6 +27,9 @@ import {
   markSeen,
   markAcknowledged,
   markResolved,
+  markAllSeenForPrincipal,
+  resolveStaleNotifications,
+  countUnreadForPrincipal,
   respondToClarification,
   listOpenClarificationsForTarget,
   startClarificationOrchestration,
@@ -1518,6 +1521,7 @@ export async function registerCareRoutes(
       principal.carePersonId,
       careRecipientId,
     );
+    const unread = rows.filter((n) => !n.seenAt && !n.resolvedAt);
     return reply.code(200).send({
       ok: true,
       notifications: rows.map((n) => ({
@@ -1541,7 +1545,75 @@ export async function registerCareRoutes(
         dedupe_key: n.dedupeKey,
         metadata: n.metadata ?? null,
       })),
+      unread_count: unread.length,
+      total_count: rows.length,
       authority: "server",
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Bulk lifecycle: mark_all_seen | resolve_stale (lab cleanup). */
+  app.post<{
+    Body: {
+      action?: string;
+      care_recipient_id?: string;
+      older_than_ms?: number;
+    };
+  }>("/api/v1/care/notifications/bulk", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const action = typeof body.action === "string" ? body.action : "";
+    const careRecipientId =
+      typeof body.care_recipient_id === "string"
+        ? body.care_recipient_id
+        : undefined;
+    if (careRecipientId) {
+      const access = runtime.access(principal.carePersonId, careRecipientId);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+    }
+    let changed = 0;
+    if (action === "mark_all_seen") {
+      changed = markAllSeenForPrincipal(
+        runtime.store,
+        principal.carePersonId,
+        careRecipientId,
+      );
+    } else if (action === "resolve_stale") {
+      const older =
+        typeof body.older_than_ms === "number" && body.older_than_ms >= 0
+          ? body.older_than_ms
+          : 0; // 0 = resolve all unresolved historical noise for lab
+      changed = resolveStaleNotifications(runtime.store, principal.carePersonId, {
+        careRecipientId,
+        olderThanMs: older,
+      });
+    } else {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "action must be mark_all_seen|resolve_stale",
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    const unread = countUnreadForPrincipal(
+      runtime.store,
+      principal.carePersonId,
+      careRecipientId,
+    );
+    return reply.code(200).send({
+      ok: true,
+      action,
+      changed,
+      unread_count: unread,
       correlation_id: correlationId(request),
     });
   });
