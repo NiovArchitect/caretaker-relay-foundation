@@ -94,6 +94,38 @@ export function decodeVerificationFromUpdate(
   }
 }
 
+/**
+ * Production guard: when NODE_ENV=production and no delivery adapter configured,
+ * still issue durable challenges but mark delivery as external-required.
+ * Test/local may expose plain codes only when CARE_EXPOSE_VERIFY_CODE=1.
+ */
+export function verificationDeliveryStatus(
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  adapter: "none" | "test" | "smtp" | "sms";
+  exposeCodeAllowed: boolean;
+  productionReady: boolean;
+} {
+  const provider = (env.CARE_VERIFICATION_PROVIDER ?? "none").toLowerCase();
+  const adapter =
+    provider === "smtp" || provider === "sms" || provider === "test"
+      ? (provider as "smtp" | "sms" | "test")
+      : "none";
+  const exposeCodeAllowed =
+    env.CARE_EXPOSE_VERIFY_CODE === "1" ||
+    (env.NODE_ENV !== "production" && adapter !== "smtp" && adapter !== "sms");
+  // Production must not silently use test adapter
+  if (env.NODE_ENV === "production" && adapter === "test") {
+    return { adapter: "none", exposeCodeAllowed: false, productionReady: false };
+  }
+  return {
+    adapter: env.NODE_ENV === "production" && adapter === "test" ? "none" : adapter,
+    exposeCodeAllowed:
+      env.NODE_ENV === "production" ? env.CARE_EXPOSE_VERIFY_CODE === "1" && adapter === "test" : exposeCodeAllowed,
+    productionReady: adapter === "smtp" || adapter === "sms",
+  };
+}
+
 export function createVerificationChallenge(
   store: CareStore,
   input: {

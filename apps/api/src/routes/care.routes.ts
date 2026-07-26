@@ -30,6 +30,20 @@ import {
   denyAccessRequest,
   PROVISIONAL_REQUEST_BUCKET,
   type CareAccessRequest,
+  resolveDomainCapabilities,
+  projectRecipientProfile,
+  projectCurrentState,
+  canViewMedicationPlan,
+  canExportRecord,
+  canViewAudit,
+  createProvisionalRecipient,
+  listProvisionalForCreator,
+  findProvisional,
+  bindProvisionalToRecipient,
+  activateProvisional,
+  declineProvisional,
+  evaluateAiPhiGate,
+  redactAuditDetails,
   notificationFromCoordination,
   listNotificationsForPrincipal,
   markSeen,
@@ -452,12 +466,16 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const id = (request.params as { id: string }).id;
-    const access = runtime.access(principal.carePersonId, id);
-    if (!access.allowed) {
+    const caps = resolveDomainCapabilities(
+      runtime.store,
+      principal.carePersonId,
+      id,
+    );
+    if ("denied" in caps && caps.denied) {
       return reply.code(403).send({
         ok: false,
-        code: access.code,
-        message: access.reason,
+        code: caps.code,
+        message: caps.reason,
         correlation_id: correlationId(request),
       });
     }
@@ -470,22 +488,42 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    const meds = runtime.store.getMedSchedules(id).map((m) => ({
-      name: m.name,
-      dose: m.dose,
-      scheduleLabel: m.scheduleLabel,
-      authorizedBy: m.authorizedBy,
-    }));
+    const projected = projectRecipientProfile(
+      recipient,
+      caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+    );
+    const meds = canViewMedicationPlan(
+      caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+    )
+      ? runtime.store.getMedSchedules(id).map((m) => ({
+          name: m.name,
+          dose: m.dose,
+          scheduleLabel: m.scheduleLabel,
+          authorizedBy: m.authorizedBy,
+        }))
+      : [];
+    runtime.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: principal.carePersonId,
+      action: "CARE_DATA_VIEW",
+      careRecipientId: id,
+      details: redactAuditDetails({
+        surface: "profile",
+        redacted_fields: projected.redacted_fields,
+      }),
+    });
     return reply.code(200).send({
       ok: true,
       recipient: {
-        id: recipient.id,
-        displayName: recipient.displayName,
-        preferredName: recipient.preferredName,
-        householdId: recipient.householdId,
-        profile: recipient.profile ?? null,
+        id: projected.id,
+        displayName: projected.displayName,
+        preferredName: projected.preferredName,
+        householdId: projected.householdId,
+        profile: projected.profile,
       },
       medications: meds,
+      redacted_fields: projected.redacted_fields,
+      minimum_necessary: true,
       correlation_id: correlationId(request),
     });
   });
@@ -736,6 +774,26 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    // When live LLM path and BAA required, block unapproved PHI model use
+    const requestedMode = body.mode ?? runtime.understandMode;
+    if (requestedMode === "llm") {
+      const gate = evaluateAiPhiGate(process.env);
+      if (!gate.allowed) {
+        runtime.store.writeAudit({
+          at: new Date().toISOString(),
+          actorPersonId: principal.carePersonId,
+          action: "AI_MODEL_CALL_BLOCKED",
+          careRecipientId,
+          details: redactAuditDetails({ code: gate.code, surface: "understand" }),
+        });
+        return reply.code(403).send({
+          ok: false,
+          code: gate.code,
+          message: gate.message,
+          correlation_id: correlationId(request),
+        });
+      }
+    }
 
     // Low-confidence STT involving medication → force review note
     const stt = body.transcript_meta;
@@ -983,6 +1041,24 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    if (runtime.understandMode === "llm") {
+      const gate = evaluateAiPhiGate(process.env);
+      if (!gate.allowed) {
+        runtime.store.writeAudit({
+          at: new Date().toISOString(),
+          actorPersonId: principal.carePersonId,
+          action: "AI_MODEL_CALL_BLOCKED",
+          careRecipientId,
+          details: redactAuditDetails({ code: gate.code, surface: "answer" }),
+        });
+        return reply.code(403).send({
+          ok: false,
+          code: gate.code,
+          message: gate.message,
+          correlation_id: correlationId(request),
+        });
+      }
+    }
     const access = runtime.access(principal.carePersonId, careRecipientId);
     if (!access.allowed) {
       return reply.code(403).send({
@@ -1120,18 +1196,37 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const { id } = request.params as { id: string };
-    const access = runtime.access(principal.carePersonId, id);
-    if (!access.allowed) {
+    const caps = resolveDomainCapabilities(
+      runtime.store,
+      principal.carePersonId,
+      id,
+    );
+    if ("denied" in caps && caps.denied) {
       return reply.code(403).send({
         ok: false,
-        code: access.code,
-        message: access.reason,
+        code: caps.code,
+        message: caps.reason,
         correlation_id: correlationId(request),
       });
     }
+    const raw = runtime.store.getCurrentState(id);
+    if (!raw) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "No care state",
+        correlation_id: correlationId(request),
+      });
+    }
+    const state = projectCurrentState(
+      raw,
+      caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+    );
     return reply.code(200).send({
       ok: true,
-      state: runtime.store.getCurrentState(id),
+      state,
+      redacted_domains: state.redacted_domains,
+      minimum_necessary: true,
       durable: runtime.durable,
       store_backend: runtime.storeBackend,
       correlation_id: correlationId(request),
@@ -1162,20 +1257,51 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const { id } = request.params as { id: string };
-    const access = runtime.access(principal.carePersonId, id);
-    if (!access.allowed) {
+    const caps = resolveDomainCapabilities(
+      runtime.store,
+      principal.carePersonId,
+      id,
+    );
+    if ("denied" in caps && caps.denied) {
       return reply.code(403).send({
         ok: false,
-        code: access.code,
-        message: access.reason,
+        code: caps.code,
+        message: caps.reason,
         correlation_id: correlationId(request),
       });
     }
+    const projected = projectCurrentState(
+      {
+        careRecipientId: id,
+        householdId: runtime.store.getRecipient(id)?.householdId ?? "",
+        events: runtime.store.getEvents(id),
+        observations: [],
+        appointments: [],
+        tasks: [],
+        medicationRecords: [],
+        medicationSchedules: [],
+        handoffs: [],
+        openSafetyReviews: [],
+        lastUpdatedAt: new Date().toISOString(),
+      },
+      caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+    );
+    const audit = canViewAudit(
+      caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+    )
+      ? runtime.store.listAudit({ careRecipientId: id })
+      : [];
     return reply.code(200).send({
       ok: true,
-      events: runtime.store.getEvents(id),
-      corrections: runtime.store.getCorrections(id),
-      audit: runtime.store.listAudit({ careRecipientId: id }),
+      events: projected.events,
+      corrections: canViewAudit(
+        caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+      )
+        ? runtime.store.getCorrections(id)
+        : [],
+      audit,
+      redacted_domains: projected.redacted_domains,
+      minimum_necessary: true,
       correlation_id: correlationId(request),
     });
   });
@@ -1184,9 +1310,41 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const { id } = request.params as { id: string };
+    const caps = resolveDomainCapabilities(
+      runtime.store,
+      principal.carePersonId,
+      id,
+    );
+    if ("denied" in caps && caps.denied) {
+      return reply.code(403).send({
+        ok: false,
+        code: (caps as { code: string }).code,
+        message: (caps as { reason: string }).reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    if (
+      !canExportRecord(
+        caps as import("@caretaker-relay/care-domain").DomainCapabilities,
+      )
+    ) {
+      return reply.code(403).send({
+        ok: false,
+        code: "MISSING_ACTION",
+        message: "Export not permitted for this membership scope",
+        correlation_id: correlationId(request),
+      });
+    }
     const q = request.query as { format?: string };
     const format = q?.format === "markdown" ? "markdown" : "json";
     const result = runtime.export(principal.carePersonId, id, format);
+    runtime.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: principal.carePersonId,
+      action: "CARE_EXPORT",
+      careRecipientId: id,
+      details: redactAuditDetails({ format }),
+    });
     await runtime.flush();
     if (!result.ok) {
       return reply.code(403).send({
@@ -1815,6 +1973,287 @@ export async function registerCareRoutes(
         care_recipient_id: denied.careRecipientId,
         decided_at: denied.decidedAt,
       },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /** Provisional recipient lifecycle (no name-based discovery). */
+  app.post<{
+    Body: {
+      preferred_name?: string;
+      claimed_authority?: string;
+      creator_note?: string;
+    };
+  }>("/api/v1/care/provisional-recipients", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const preferredName =
+      typeof body.preferred_name === "string" ? body.preferred_name.trim() : "";
+    const claimed =
+      typeof body.claimed_authority === "string"
+        ? body.claimed_authority.trim()
+        : "";
+    if (preferredName.length < 2 || !claimed) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "preferred_name and claimed_authority required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const p = createProvisionalRecipient(runtime.store, {
+      preferredName,
+      createdByPersonId: principal.carePersonId,
+      createdByDisplayName: principal.displayName,
+      claimedAuthority: claimed,
+      creatorNote:
+        typeof body.creator_note === "string" ? body.creator_note : undefined,
+    });
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      provisional: {
+        id: p.id,
+        preferred_name: p.preferredName,
+        status: p.status,
+        claimed_authority: p.claimedAuthority,
+        created_at: p.createdAt,
+        expires_at: p.expiresAt,
+      },
+      note: "Draft only. No care access. No automatic match to existing people.",
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/provisional-recipients/mine", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const list = listProvisionalForCreator(
+      runtime.store,
+      principal.carePersonId,
+    );
+    return reply.code(200).send({
+      ok: true,
+      provisional_recipients: list.map((p) => ({
+        id: p.id,
+        preferred_name: p.preferredName,
+        status: p.status,
+        claimed_authority: p.claimedAuthority,
+        bound_recipient_id: p.boundRecipientId,
+        created_at: p.createdAt,
+        expires_at: p.expiresAt,
+      })),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { care_recipient_id?: string };
+  }>("/api/v1/care/provisional-recipients/:id/bind", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const careRecipientId =
+      typeof request.body?.care_recipient_id === "string"
+        ? request.body.care_recipient_id
+        : "";
+    if (!careRecipientId) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "care_recipient_id required (explicit; no name search)",
+        correlation_id: correlationId(request),
+      });
+    }
+    const found = findProvisional(runtime.store, id);
+    if (!found) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Provisional not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = bindProvisionalToRecipient(runtime.store, found, {
+      careRecipientId,
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+    });
+    if (!result.ok) {
+      return reply.code(result.code === "FORBIDDEN" ? 403 : 400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      provisional: {
+        id: result.provisional.id,
+        status: result.provisional.status,
+        bound_recipient_id: result.provisional.boundRecipientId,
+      },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post(
+    "/api/v1/care/provisional-recipients/:id/activate",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const found = findProvisional(runtime.store, id);
+      if (!found) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "Provisional not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      const result = activateProvisional(
+        runtime.store,
+        found,
+        principal.carePersonId,
+      );
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        provisional: {
+          id: result.provisional.id,
+          status: result.provisional.status,
+          bound_recipient_id: result.provisional.boundRecipientId,
+          activated_at: result.provisional.activatedAt,
+        },
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{ Body: { reason?: string } }>(
+    "/api/v1/care/provisional-recipients/:id/decline",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const found = findProvisional(runtime.store, id);
+      if (!found) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "Provisional not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      const next = declineProvisional(
+        runtime.store,
+        found,
+        principal.carePersonId,
+        typeof request.body?.reason === "string"
+          ? request.body.reason
+          : undefined,
+      );
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        provisional: { id: next.id, status: next.status },
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  /** Scope modification — controlling authority only. */
+  app.post<{
+    Body: {
+      person_id?: string;
+      information_categories?: string[];
+      allowed_actions?: string[];
+    };
+  }>("/api/v1/care/recipients/:id/access/scope", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const decision = runtime.authorize({
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      action: "manage_membership",
+      dataDomain: "access",
+    });
+    if (!decision.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: decision.reasonCode,
+        message: decision.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const personId =
+      typeof request.body?.person_id === "string" ? request.body.person_id : "";
+    if (!personId) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "person_id required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const rel = runtime.store.getRelationship(id, personId);
+    if (!rel || rel.status !== "active") {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Active membership not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    const cats = Array.isArray(request.body?.information_categories)
+      ? request.body!.information_categories!.filter(
+          (c): c is string => typeof c === "string",
+        )
+      : rel.access.informationCategories;
+    const acts = Array.isArray(request.body?.allowed_actions)
+      ? request.body!.allowed_actions!.filter(
+          (c): c is string => typeof c === "string",
+        )
+      : rel.access.allowedActions;
+    const nextAccess = {
+      ...rel.access,
+      informationCategories: cats,
+      allowedActions: acts,
+    };
+    runtime.store.upsertRelationship({ ...rel, access: nextAccess });
+    const consent = runtime.store.getConsent(id, personId);
+    if (consent) {
+      runtime.store.upsertConsent({ ...consent, scope: nextAccess });
+    }
+    runtime.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: principal.carePersonId,
+      action: "SCOPE_MODIFIED",
+      careRecipientId: id,
+      details: redactAuditDetails({
+        person_id: personId,
+        categories: cats,
+        actions: acts,
+      }),
+    });
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      person_id: personId,
+      access: nextAccess,
       correlation_id: correlationId(request),
     });
   });

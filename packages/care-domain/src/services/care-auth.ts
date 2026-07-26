@@ -11,6 +11,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { CareStore } from "../store/memory-store.js";
 import type { AuthCareContext } from "../types.js";
 import { people, careRecipient, HOUSEHOLD_OLIVIA } from "../scenario/olivia.js";
+import { careLabSessionDenylist } from "./session-denylist.js";
 
 export interface CareSessionClaims {
   sub: string; // care person id OR foundation entity id
@@ -275,6 +276,13 @@ export class CareAuthService {
         message: "Invalid or expired care session",
       };
     }
+    if (careLabSessionDenylist.isRevoked(claims.sid)) {
+      return {
+        ok: false,
+        code: "SESSION_REVOKED",
+        message: "Session has been revoked",
+      };
+    }
     if (!claims.ops.includes("read") && !claims.ops.includes("write")) {
       return {
         ok: false,
@@ -283,6 +291,17 @@ export class CareAuthService {
       };
     }
     return { ok: true, claims };
+  }
+
+  /** Immediately invalidate a lab JWT session id. */
+  revokeSession(
+    sessionId: string,
+    opts?: { reason?: string; actorPersonId?: string },
+  ): void {
+    careLabSessionDenylist.revoke(sessionId, {
+      reason: opts?.reason ?? "logout",
+      actorPersonId: opts?.actorPersonId,
+    });
   }
 
   toAuthCareContext(

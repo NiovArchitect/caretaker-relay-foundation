@@ -707,12 +707,55 @@ export class CareRuntimeService {
     ) {
       await this.foundationAuth.logout(resolved.sessionId, resolved.entityId);
     }
+    // Lab JWT path: immediate denylist invalidation
+    if (resolved.authMode === "care_lab_jwt") {
+      this.labAuth.revokeSession(resolved.sessionId, {
+        reason: "logout",
+        actorPersonId: resolved.carePersonId,
+      });
+    }
     this.store.writeAudit({
       at: new Date().toISOString(),
       actorPersonId: resolved.carePersonId,
       action: "SESSION_LOGOUT",
       details: {
         session_id: resolved.sessionId,
+        auth_mode: resolved.authMode,
+      },
+    });
+    await this.flush();
+    return { ok: true };
+  }
+
+  /** Revoke current session immediately (lab denylist + foundation terminate). */
+  async revokeActiveSession(
+    authorizationHeader: string | undefined,
+    reason = "revoked",
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    const resolved = await this.resolveBearer(authorizationHeader);
+    if (!resolved.ok) {
+      return { ok: false, code: resolved.code, message: resolved.message };
+    }
+    if (resolved.authMode === "care_lab_jwt") {
+      this.labAuth.revokeSession(resolved.sessionId, {
+        reason,
+        actorPersonId: resolved.carePersonId,
+      });
+    }
+    if (
+      resolved.authMode === "foundation_auth_service" &&
+      this.foundationAuth &&
+      resolved.entityId
+    ) {
+      await this.foundationAuth.logout(resolved.sessionId, resolved.entityId);
+    }
+    this.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: resolved.carePersonId,
+      action: "SESSION_REVOKED",
+      details: {
+        session_id: resolved.sessionId,
+        reason,
         auth_mode: resolved.authMode,
       },
     });
