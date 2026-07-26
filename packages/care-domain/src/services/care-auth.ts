@@ -12,6 +12,7 @@ import type { CareStore } from "../store/memory-store.js";
 import type { AuthCareContext } from "../types.js";
 import { people, careRecipient, HOUSEHOLD_OLIVIA } from "../scenario/olivia.js";
 import { careLabSessionDenylist } from "./session-denylist.js";
+import { getSharedSessionRevocation } from "./shared-session-revocation.js";
 
 export interface CareSessionClaims {
   sub: string; // care person id OR foundation entity id
@@ -192,6 +193,7 @@ export class CareAuthService {
       };
     }
     const { token, session_id } = this.mintSession(principal, "care_lab");
+    this.trackSession(principal.carePersonId, session_id);
     return { ok: true, token, session_id, principal };
   }
 
@@ -216,6 +218,7 @@ export class CareAuthService {
       };
     }
     const { token, session_id } = this.mintSession(principal, "care_lab");
+    this.trackSession(principal.carePersonId, session_id);
     return { ok: true, token, session_id, principal };
   }
 
@@ -293,14 +296,81 @@ export class CareAuthService {
     return { ok: true, claims };
   }
 
-  /** Immediately invalidate a lab JWT session id. */
+  /**
+   * Async validation including shared multi-instance denylist.
+   * Prefer this over validateBearer when awaiting is available.
+   */
+  async validateBearerShared(
+    authorizationHeader: string | undefined,
+  ): Promise<
+    | { ok: true; claims: CareSessionClaims }
+    | { ok: false; code: string; message: string }
+  > {
+    const base = this.validateBearer(authorizationHeader);
+    if (!base.ok) return base;
+    try {
+      const revoked = await getSharedSessionRevocation().isSessionRevoked(
+        base.claims.sid,
+      );
+      if (revoked) {
+        // Mirror into process-local for fast subsequent checks
+        careLabSessionDenylist.revoke(base.claims.sid, {
+          reason: "shared_denylist",
+        });
+        return {
+          ok: false,
+          code: "SESSION_REVOKED",
+          message: "Session has been revoked",
+        };
+      }
+    } catch {
+      /* shared store failure: fall back to local only */
+    }
+    return base;
+  }
+
+  /** Immediately invalidate a lab JWT session id (local + shared). */
   revokeSession(
     sessionId: string,
-    opts?: { reason?: string; actorPersonId?: string },
+    opts?: { reason?: string; actorPersonId?: string; principalId?: string },
   ): void {
     careLabSessionDenylist.revoke(sessionId, {
       reason: opts?.reason ?? "logout",
       actorPersonId: opts?.actorPersonId,
+    });
+    void getSharedSessionRevocation().revokeSession(sessionId, {
+      reason: opts?.reason ?? "logout",
+      actorPersonId: opts?.actorPersonId,
+      principalId: opts?.principalId,
+    });
+  }
+
+  async revokeSessionAsync(
+    sessionId: string,
+    opts?: { reason?: string; actorPersonId?: string; principalId?: string },
+  ): Promise<void> {
+    this.revokeSession(sessionId, opts);
+    await getSharedSessionRevocation().revokeSession(sessionId, {
+      reason: opts?.reason ?? "logout",
+      actorPersonId: opts?.actorPersonId,
+      principalId: opts?.principalId,
+    });
+  }
+
+  /** Track session for principal-wide wipe (suspension). */
+  trackSession(principalId: string, sessionId: string): void {
+    void getSharedSessionRevocation().trackPrincipalSession(
+      principalId,
+      sessionId,
+    );
+  }
+
+  async revokeAllSessionsForPrincipal(
+    principalId: string,
+    reason = "suspension",
+  ): Promise<number> {
+    return getSharedSessionRevocation().revokeAllForPrincipal(principalId, {
+      reason,
     });
   }
 

@@ -7,8 +7,16 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { CareRuntimeService, type CareStoreBackend } from "./services/care/care-runtime.service.js";
 import { registerCareRoutes } from "./routes/care.routes.js";
 import type { LLMProvider } from "@caretaker-relay/care-domain";
-import { MemoryNonceStore } from "./redis.js";
+import {
+  validateCareProductionConfig,
+  setSharedSessionRevocation,
+  SharedSessionRevocation,
+  MemorySharedRevocationAdapter,
+  type SharedRevocationAdapter,
+} from "@caretaker-relay/care-domain";
+import { MemoryNonceStore, makeDefaultNonceStore } from "./redis.js";
 import { logger } from "./logger.js";
+import Redis from "ioredis";
 
 export interface BuildCareAppConfig {
   jwtSecret?: string;
@@ -64,6 +72,68 @@ export async function buildCareApp(
     process.env.JWT_SECRET ??
     "caretaker-relay-care-lab-jwt-secret-do-not-use-in-prod";
 
+  // Production configuration gates (fail-closed on hard errors)
+  const configValidation = validateCareProductionConfig(process.env);
+  if (!configValidation.ok && process.env.NODE_ENV === "production") {
+    const msg = `Care API configuration invalid: ${configValidation.errors.join("; ")}`;
+    logger.error({ errors: configValidation.errors }, msg);
+    throw new Error(msg);
+  }
+  if (configValidation.warnings.length) {
+    logger.warn(
+      { warnings: configValidation.warnings, mode: configValidation.mode },
+      "Care API configuration warnings",
+    );
+  }
+
+  // Shared session revocation: Redis when available (multi-instance safe).
+  // Tests use memory-shared unless CARE_USE_REDIS_SESSION=1.
+  // Never auto-attach Redis during vitest unless explicitly forced
+  const isTestRuntime =
+    process.env.NODE_ENV === "test" ||
+    process.env.VITEST === "true" ||
+    Boolean(process.env.VITEST_WORKER_ID);
+  const useRedisSessions =
+    Boolean(process.env.REDIS_URL) &&
+    !isTestRuntime &&
+    process.env.CARE_USE_REDIS_SESSION !== "0";
+  if (
+    (useRedisSessions || process.env.CARE_USE_REDIS_SESSION === "1") &&
+    process.env.REDIS_URL
+  ) {
+    try {
+      const client = new Redis(process.env.REDIS_URL!, {
+        maxRetriesPerRequest: 2,
+        enableOfflineQueue: true,
+        connectTimeout: 2000,
+        lazyConnect: true,
+      });
+      await client.connect();
+      const prefix = process.env.REDIS_KEY_PREFIX ?? "cr:";
+      const adapter: SharedRevocationAdapter = {
+        async setEx(key, ttlSeconds, value) {
+          await client.set(`${prefix}${key}`, value, "EX", ttlSeconds);
+        },
+        async get(key) {
+          return client.get(`${prefix}${key}`);
+        },
+        async del(key) {
+          await client.del(`${prefix}${key}`);
+        },
+      };
+      setSharedSessionRevocation(new SharedSessionRevocation(adapter));
+      logger.info("Shared session revocation using Redis");
+    } catch (err) {
+      logger.warn(
+        { err },
+        "Redis session revocation unavailable; using memory shared",
+      );
+      setSharedSessionRevocation(
+        new SharedSessionRevocation(new MemorySharedRevocationAdapter(true)),
+      );
+    }
+  }
+
   let storeBackend = config.storeBackend;
   if (!storeBackend) {
     if (config.storePath) storeBackend = "file";
@@ -73,10 +143,17 @@ export async function buildCareApp(
     else storeBackend = "memory";
   }
 
-  const understandMode = resolveUnderstandMode(config);
+  let understandMode = resolveUnderstandMode(config);
+  // Fail closed AI when config disallows live model
+  if (!configValidation.flags.aiLiveAllowed && understandMode === "llm") {
+    understandMode = "fixture";
+    logger.warn("Live AI disabled by production configuration gates");
+  }
   const llmProvider =
     config.llmProvider ??
-    (understandMode === "llm" ? tryCreateLlmProvider() : undefined);
+    (understandMode === "llm" && configValidation.flags.aiLiveAllowed
+      ? tryCreateLlmProvider()
+      : undefined);
   const effectiveMode: "fixture" | "llm" =
     understandMode === "llm" && llmProvider ? "llm" : "fixture";
 
@@ -88,12 +165,19 @@ export async function buildCareApp(
     seedFoundationAuth: config.seedFoundationAuth ?? storeBackend === "prisma",
     understandMode: effectiveMode,
     llmProvider,
-    nonceStore: new MemoryNonceStore(),
+    nonceStore:
+      useRedisSessions || process.env.CARE_USE_REDIS_SESSION === "1"
+        ? makeDefaultNonceStore()
+        : new MemoryNonceStore(),
   });
 
   const app = Fastify({
     logger: config.logger ?? false,
   });
+
+  // Expose safe config on app for routes/health
+  (app as FastifyInstance & { careConfigStatus?: typeof configValidation }).careConfigStatus =
+    configValidation;
 
   /**
    * CORS for Caretaker Relay caregiver UI.
@@ -144,7 +228,10 @@ export async function buildCareApp(
     }
   });
 
-  await registerCareRoutes(app, runtime);
+  await registerCareRoutes(app, runtime, {
+    labLoginEnabled: configValidation.flags.labLoginEnabled,
+    configStatus: configValidation.publicStatus,
+  });
 
   app.get("/api/v1/health", async (_req, reply) => {
     return reply.code(200).send({
@@ -158,6 +245,7 @@ export async function buildCareApp(
       llm_keys_present: Boolean(
         process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
       ),
+      deployment_config: configValidation.publicStatus,
     });
   });
 

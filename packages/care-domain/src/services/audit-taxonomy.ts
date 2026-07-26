@@ -33,6 +33,7 @@ export const CARE_AUDIT_ACTIONS = [
   "AI_MODEL_CALL_BLOCKED",
   "AI_MODEL_CALL",
   "ACCOUNT_SUSPENDED",
+  "ACCOUNT_REACTIVATED",
 ] as const;
 
 export type CareAuditAction = (typeof CARE_AUDIT_ACTIONS)[number];

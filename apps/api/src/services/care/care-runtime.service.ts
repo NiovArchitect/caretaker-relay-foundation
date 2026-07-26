@@ -17,6 +17,9 @@ import {
   verifyContactCode,
   isContactVerified,
   normalizeEmail,
+  isAccountSuspended,
+  suspendAccount,
+  reactivateAccount,
   people,
   type CareStore,
   type LLMProvider,
@@ -325,8 +328,15 @@ export class CareRuntimeService {
     const peekIss = peekJwtIss(token);
 
     if (peekIss === "caretaker-relay-care-auth") {
-      const lab = this.labAuth.validateBearer(authorizationHeader);
+      const lab = await this.labAuth.validateBearerShared(authorizationHeader);
       if (lab.ok) {
+        if (isAccountSuspended(this.store, lab.claims.carePersonId)) {
+          return {
+            ok: false,
+            code: "ACCOUNT_SUSPENDED",
+            message: "Account is suspended",
+          };
+        }
         return {
           ok: true,
           carePersonId: lab.claims.carePersonId,
@@ -359,6 +369,13 @@ export class CareRuntimeService {
               message: "Session entity not linked to care principal",
             };
           }
+          if (isAccountSuspended(this.store, link.carePersonId)) {
+            return {
+              ok: false,
+              code: "ACCOUNT_SUSPENDED",
+              message: "Account is suspended",
+            };
+          }
           return {
             ok: true,
             carePersonId: link.carePersonId,
@@ -376,8 +393,15 @@ export class CareRuntimeService {
     }
 
     // Lab JWT fallback (secondary path)
-    const lab = this.labAuth.validateBearer(authorizationHeader);
+    const lab = await this.labAuth.validateBearerShared(authorizationHeader);
     if (lab.ok) {
+      if (isAccountSuspended(this.store, lab.claims.carePersonId)) {
+        return {
+          ok: false,
+          code: "ACCOUNT_SUSPENDED",
+          message: "Account is suspended",
+        };
+      }
       return {
         ok: true,
         carePersonId: lab.claims.carePersonId,
@@ -707,11 +731,12 @@ export class CareRuntimeService {
     ) {
       await this.foundationAuth.logout(resolved.sessionId, resolved.entityId);
     }
-    // Lab JWT path: immediate denylist invalidation
+    // Lab JWT path: local + shared multi-instance denylist
     if (resolved.authMode === "care_lab_jwt") {
-      this.labAuth.revokeSession(resolved.sessionId, {
+      await this.labAuth.revokeSessionAsync(resolved.sessionId, {
         reason: "logout",
         actorPersonId: resolved.carePersonId,
+        principalId: resolved.carePersonId,
       });
     }
     this.store.writeAudit({
@@ -737,9 +762,10 @@ export class CareRuntimeService {
       return { ok: false, code: resolved.code, message: resolved.message };
     }
     if (resolved.authMode === "care_lab_jwt") {
-      this.labAuth.revokeSession(resolved.sessionId, {
+      await this.labAuth.revokeSessionAsync(resolved.sessionId, {
         reason,
         actorPersonId: resolved.carePersonId,
+        principalId: resolved.carePersonId,
       });
     }
     if (
@@ -758,6 +784,41 @@ export class CareRuntimeService {
         reason,
         auth_mode: resolved.authMode,
       },
+    });
+    await this.flush();
+    return { ok: true };
+  }
+
+  async suspendPrincipal(
+    targetPersonId: string,
+    actorPersonId: string,
+    reason: string,
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    if (!reason.trim()) {
+      return { ok: false, code: "BAD_REQUEST", message: "reason required" };
+    }
+    // Lab admin: only primary seed principal or self-service not allowed for others without control
+    // For product: Marcus-style controlling principal OR same person cannot suspend others without *
+    suspendAccount(this.store, {
+      carePersonId: targetPersonId,
+      reason: reason.trim(),
+      suspendedByPersonId: actorPersonId,
+    });
+    await this.labAuth.revokeAllSessionsForPrincipal(
+      targetPersonId,
+      "account_suspension",
+    );
+    await this.flush();
+    return { ok: true };
+  }
+
+  async reactivatePrincipal(
+    targetPersonId: string,
+    actorPersonId: string,
+  ): Promise<{ ok: true }> {
+    reactivateAccount(this.store, {
+      carePersonId: targetPersonId,
+      reactivatedByPersonId: actorPersonId,
     });
     await this.flush();
     return { ok: true };

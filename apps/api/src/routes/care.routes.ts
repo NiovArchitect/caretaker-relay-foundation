@@ -44,6 +44,7 @@ import {
   declineProvisional,
   evaluateAiPhiGate,
   redactAuditDetails,
+  recordCareDataView,
   notificationFromCoordination,
   listNotificationsForPrincipal,
   markSeen,
@@ -158,15 +159,24 @@ const CARE_PERSON_EMAIL: Record<string, { email: string; password: string }> = {
   },
 };
 
+export type CareRouteOptions = {
+  labLoginEnabled?: boolean;
+  configStatus?: Record<string, string | boolean | number>;
+};
+
 export async function registerCareRoutes(
   app: FastifyInstance,
   runtime: CareRuntimeService,
+  options: CareRouteOptions = {},
 ): Promise<void> {
+  const labLoginEnabled = options.labLoginEnabled !== false;
   app.get("/api/v1/care/health", async (_req, reply) => {
     return reply.code(200).send({
       ok: true,
       ...runtime.productMeta(),
       timestamp: new Date().toISOString(),
+      deployment_config: options.configStatus ?? null,
+      lab_login_enabled: labLoginEnabled,
     });
   });
 
@@ -383,6 +393,14 @@ export async function registerCareRoutes(
   app.post<{
     Body: { care_person_id?: string; password?: string };
   }>("/api/v1/care/auth/lab-login", async (request, reply) => {
+    if (!labLoginEnabled) {
+      return reply.code(403).send({
+        ok: false,
+        code: "LAB_LOGIN_DISABLED",
+        message: "Lab login is disabled in this deployment mode",
+        correlation_id: correlationId(request),
+      });
+    }
     // Prefer foundation login when prisma backend seeded
     const body = request.body ?? {};
     const id = typeof body.care_person_id === "string" ? body.care_person_id : "";
@@ -502,15 +520,12 @@ export async function registerCareRoutes(
           authorizedBy: m.authorizedBy,
         }))
       : [];
-    runtime.store.writeAudit({
-      at: new Date().toISOString(),
+    recordCareDataView(runtime.store, {
       actorPersonId: principal.carePersonId,
-      action: "CARE_DATA_VIEW",
       careRecipientId: id,
-      details: redactAuditDetails({
-        surface: "profile",
-        redacted_fields: projected.redacted_fields,
-      }),
+      surface: "profile",
+      authorizationSource: "membership",
+      extra: { redacted_fields: projected.redacted_fields },
     });
     return reply.code(200).send({
       ok: true,
@@ -686,16 +701,134 @@ export async function registerCareRoutes(
       decision.effectiveScope.informationCategories.includes("*") ||
       decision.effectiveScope.allowedActions.includes("*") ||
       principal.carePersonId === id;
+    // Last meaningful access summary for controllers (from audit, no PHI content)
+    let accessSummary:
+      | Array<{
+          person_id: string;
+          last_access_at: string | null;
+          last_surface: string | null;
+        }>
+      | undefined;
+    if (controlling) {
+      const rows = runtime.whoCanSee(id);
+      const audits = runtime.store.listAudit({ careRecipientId: id });
+      accessSummary = rows.map((r) => {
+        const views = audits
+          .filter(
+            (a) =>
+              a.actorPersonId === r.personId &&
+              (a.action === "CARE_DATA_VIEW" || a.action === "CARE_ANSWER"),
+          )
+          .sort((a, b) => b.at.localeCompare(a.at));
+        const last = views[0];
+        const details = (last?.details ?? {}) as Record<string, unknown>;
+        return {
+          person_id: r.personId,
+          last_access_at: last?.at ?? null,
+          last_surface:
+            typeof details.surface === "string" ? details.surface : null,
+        };
+      });
+      recordCareDataView(runtime.store, {
+        actorPersonId: principal.carePersonId,
+        careRecipientId: id,
+        surface: "access",
+        purpose: "access_admin",
+      });
+    }
     return reply.code(200).send({
       ok: true,
       access: runtime.access(principal.carePersonId, id),
       // Full matrix only for controlling authority / self
       who_can_see_what: controlling ? runtime.whoCanSee(id) : undefined,
+      access_summary: accessSummary,
       self_scope: decision.effectiveScope,
       authorization_source: decision.authorizationSource,
       correlation_id: correlationId(request),
     });
   });
+
+  /** Account suspension — controlling lab principal or platform admin path. */
+  app.post<{
+    Body: { person_id?: string; reason?: string };
+  }>("/api/v1/care/accounts/suspend", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const personId =
+      typeof request.body?.person_id === "string" ? request.body.person_id : "";
+    const reason =
+      typeof request.body?.reason === "string" ? request.body.reason : "";
+    if (!personId || !reason.trim()) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "person_id and reason required",
+        correlation_id: correlationId(request),
+      });
+    }
+    // Allow self-suspension for testing OR primary seed controller
+    const isPrimary = principal.carePersonId === people.sadeil.id;
+    if (personId !== principal.carePersonId && !isPrimary) {
+      return reply.code(403).send({
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Not authorized to suspend this account",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = await runtime.suspendPrincipal(
+      personId,
+      principal.carePersonId,
+      reason,
+    );
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(200).send({
+      ok: true,
+      suspended: personId,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{ Body: { person_id?: string } }>(
+    "/api/v1/care/accounts/reactivate",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const personId =
+        typeof request.body?.person_id === "string"
+          ? request.body.person_id
+          : "";
+      if (!personId) {
+        return reply.code(400).send({
+          ok: false,
+          code: "BAD_REQUEST",
+          message: "person_id required",
+          correlation_id: correlationId(request),
+        });
+      }
+      if (principal.carePersonId !== people.sadeil.id) {
+        return reply.code(403).send({
+          ok: false,
+          code: "FORBIDDEN",
+          message: "Not authorized to reactivate accounts",
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.reactivatePrincipal(personId, principal.carePersonId);
+      return reply.code(200).send({
+        ok: true,
+        reactivated: personId,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
 
   app.post<{ Body: { person_id?: string } }>(
     "/api/v1/care/recipients/:id/access/revoke",
@@ -1094,20 +1227,30 @@ export async function registerCareRoutes(
       });
     }
 
+    recordCareDataView(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId,
+      surface: "relay_answer",
+      purpose: "relay",
+      extra: {
+        intent: result.intent,
+        model_path: result.modelPath,
+        turn_id: result.turnId,
+      },
+    });
     runtime.store.writeAudit({
       at: new Date().toISOString(),
       actorPersonId: principal.carePersonId,
       action: "CARE_ANSWER",
       careRecipientId,
-      details: {
-        question: question.slice(0, 200),
+      details: redactAuditDetails({
         intent: result.intent,
         persona: result.persona,
         model_path: result.modelPath,
         turn_id: result.turnId,
         conversation_id: result.conversationId,
         can_deterministic: result.canDeterministic,
-      },
+      }),
     });
     // Durable turns are already in-memory; flush asynchronously so judge-facing
     // Q&A is not blocked on a full Postgres snapshot upsert (~multi-second).
@@ -1222,6 +1365,12 @@ export async function registerCareRoutes(
       raw,
       caps as import("@caretaker-relay/care-domain").DomainCapabilities,
     );
+    recordCareDataView(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      surface: "state",
+      authorizationSource: "membership",
+    });
     return reply.code(200).send({
       ok: true,
       state,
@@ -1291,6 +1440,12 @@ export async function registerCareRoutes(
     )
       ? runtime.store.listAudit({ careRecipientId: id })
       : [];
+    recordCareDataView(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      surface: "timeline",
+      authorizationSource: "membership",
+    });
     return reply.code(200).send({
       ok: true,
       events: projected.events,
@@ -1338,12 +1493,12 @@ export async function registerCareRoutes(
     const q = request.query as { format?: string };
     const format = q?.format === "markdown" ? "markdown" : "json";
     const result = runtime.export(principal.carePersonId, id, format);
-    runtime.store.writeAudit({
-      at: new Date().toISOString(),
+    recordCareDataView(runtime.store, {
       actorPersonId: principal.carePersonId,
-      action: "CARE_EXPORT",
       careRecipientId: id,
-      details: redactAuditDetails({ format }),
+      surface: "export",
+      purpose: "export_record",
+      extra: { format },
     });
     await runtime.flush();
     if (!result.ok) {
