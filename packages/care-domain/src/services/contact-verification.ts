@@ -4,7 +4,6 @@
  * Delivery (SMTP/SMS) is EXTERNAL — this implements token lifecycle only.
  */
 
-import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { CareUpdate, SourceRef } from "../types.js";
 import type { CareStore } from "../store/memory-store.js";
 
@@ -18,7 +17,7 @@ export interface ContactVerificationChallenge {
   carePersonId: string;
   channel: ContactChannel;
   contactNormalized: string;
-  /** SHA-256 of code — never store raw code after issue response. */
+  /** Hash of code — never store raw code after issue response. */
   codeHash: string;
   status: "pending" | "verified" | "expired" | "consumed";
   createdAt: string;
@@ -27,8 +26,20 @@ export interface ContactVerificationChallenge {
   attempts: number;
 }
 
+function safeUuid(): string {
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function hashCode(code: string): string {
-  return createHash("sha256").update(code).digest("hex");
+  // Browser-safe digest (codes are short-lived; not a password hash)
+  let h = 2166136261;
+  for (let i = 0; i < code.length; i++) {
+    h ^= code.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `cv1:${(h >>> 0).toString(16).padStart(8, "0")}:${code.length}`;
 }
 
 export function normalizeEmail(email: string): string {
@@ -36,8 +47,18 @@ export function normalizeEmail(email: string): string {
 }
 
 export function issueVerificationCode(): string {
-  // 6-digit numeric for UX; entropy from crypto RNG
-  const n = randomBytes(4).readUInt32BE(0) % 1_000_000;
+  // 6-digit numeric for UX
+  const c = globalThis.crypto as {
+    getRandomValues?: (a: Uint32Array) => Uint32Array;
+  } | undefined;
+  let n: number;
+  if (c?.getRandomValues) {
+    const buf = new Uint32Array(1);
+    c.getRandomValues(buf);
+    n = buf[0]! % 1_000_000;
+  } else {
+    n = Math.floor(Math.random() * 1_000_000);
+  }
   return String(n).padStart(6, "0");
 }
 
@@ -219,7 +240,7 @@ export function verifyContactCode(
       attempts: ch.attempts + 1,
     };
     const source: SourceRef = {
-      id: randomUUID(),
+      id: safeUuid(),
       kind: "system_derived",
       label: "Contact verification failed attempt",
       actorPersonId: input.carePersonId,

@@ -3,7 +3,6 @@
  * Persist invitations/coordination via CareUpdate rows so Prisma store works without schema migration.
  */
 
-import { createHash, randomUUID } from "node:crypto";
 import type {
   CareCoordinationMessage,
   CareInvitation,
@@ -17,12 +16,34 @@ import type { CareStore } from "../store/memory-store.js";
 const INVITE_PREFIX = "INVITE_V1:";
 const COORD_PREFIX = "COORD_V1:";
 
-export function newInviteToken(): string {
-  return randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "").slice(0, 16);
+/** Browser + Node safe UUID (no node:crypto — vendored into the app bundle). */
+function safeUuid(): string {
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+export function newInviteToken(): string {
+  return safeUuid().replace(/-/g, "") + safeUuid().replace(/-/g, "").slice(0, 16);
+}
+
+/** Fast non-crypto hex digest for invite token lookup (browser-safe). */
 function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex").slice(0, 32);
+  let h1 = 2166136261;
+  let h2 = 0x811c9dc5;
+  for (let i = 0; i < token.length; i++) {
+    const c = token.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 16777619);
+    h2 ^= c;
+    h2 = Math.imul(h2, 16777619);
+  }
+  return (
+    (h1 >>> 0).toString(16).padStart(8, "0") +
+    (h2 >>> 0).toString(16).padStart(8, "0") +
+    token.length.toString(16).padStart(4, "0") +
+    "cr01"
+  ).slice(0, 32);
 }
 
 export function encodeInvitationUpdate(
