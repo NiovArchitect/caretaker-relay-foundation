@@ -11,11 +11,19 @@ import {
   exportCareData,
   whoCanSeeWhat,
   evaluateAccess,
+  authorize,
+  listAuthorizedRecipients,
+  createVerificationChallenge,
+  verifyContactCode,
+  isContactVerified,
+  normalizeEmail,
   people,
   type CareStore,
   type LLMProvider,
   type AuthCareContext,
   type VerificationBundle,
+  type AuthorizeInput,
+  type AuthorizeResult,
 } from "@caretaker-relay/care-domain";
 import { CareAuthService } from "@caretaker-relay/care-domain/care-auth";
 import { FileCareStore } from "@caretaker-relay/care-domain/file-store";
@@ -474,6 +482,242 @@ export class CareRuntimeService {
 
   access(actorPersonId: string, careRecipientId: string) {
     return evaluateAccess(this.store, actorPersonId, careRecipientId);
+  }
+
+  /**
+   * Central authorization decision — use for every recipient-scoped operation.
+   */
+  authorize(input: AuthorizeInput): AuthorizeResult {
+    return authorize(this.store, input);
+  }
+
+  listMemberships(actorPersonId: string) {
+    return listAuthorizedRecipients(this.store, actorPersonId);
+  }
+
+  /**
+   * Register a durable care account with ZERO recipient memberships.
+   * Role claim is stored as metadata only — never grants access.
+   */
+  async registerAccount(input: {
+    preferredName: string;
+    email: string;
+    password: string;
+    claimedRelationship?: string;
+    termsVersion?: string;
+  }): Promise<
+    | {
+        ok: true;
+        token: string;
+        session_id: string;
+        care_person_id: string;
+        entity_id?: string;
+        display_name: string;
+        roles: string[];
+        account_status: "unverified" | "pending_access";
+        authorized_recipients: number;
+        auth_mode: "foundation_auth_service" | "care_lab_jwt";
+        verification_code_dev_only?: string;
+      }
+    | { ok: false; code: string; message: string }
+  > {
+    const preferredName = input.preferredName.trim();
+    const email = normalizeEmail(input.email);
+    const password = input.password;
+    if (preferredName.length < 2) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "preferred_name required (min 2 characters)",
+      };
+    }
+    if (!email.includes("@")) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "valid email required",
+      };
+    }
+    if (!password || password.length < 8) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "password must be at least 8 characters",
+      };
+    }
+
+    const carePersonId = `p-acct-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const claimed = input.claimedRelationship?.trim() || "unspecified";
+    const roles = ["account_holder", "pending_access", `claim:${claimed}`];
+
+    // Prefer Foundation Entity + CarePrincipalLink when prisma backend available
+    if (this.storeBackend === "prisma" && this.foundationAuth) {
+      try {
+        const { getEntityByEmail } = await import("@niov/database");
+        const existing = await getEntityByEmail(email);
+        if (existing) {
+          return {
+            ok: false,
+            code: "EMAIL_IN_USE",
+            message: "An account with this email already exists",
+          };
+        }
+        const entity = await createEntity({
+          entity_type: "PERSON",
+          display_name: preferredName,
+          public_key: `cr_pk_${carePersonId}`,
+          email,
+          password,
+          clearance_level: 1,
+        });
+        await linkPrincipal(entity.entity_id, carePersonId, preferredName, roles);
+        this.store.upsertPerson({
+          id: carePersonId,
+          displayName: preferredName,
+          kind: "family_caregiver",
+        });
+        this.store.writeAudit({
+          at: new Date().toISOString(),
+          actorPersonId: carePersonId,
+          action: "ACCOUNT_REGISTERED",
+          details: {
+            entity_id: entity.entity_id,
+            email_domain: email.split("@")[1] ?? "",
+            claimed_relationship: claimed,
+            authorized_recipients: 0,
+            terms_version: input.termsVersion ?? null,
+          },
+        });
+        const { challenge, plainCode } = createVerificationChallenge(this.store, {
+          carePersonId,
+          channel: "email",
+          contact: email,
+        });
+        await this.flush();
+        const login = await this.foundationLogin(email, password);
+        if (!login.ok) {
+          return {
+            ok: false,
+            code: "REGISTERED_LOGIN_FAILED",
+            message: login.message,
+          };
+        }
+        return {
+          ok: true,
+          token: login.token,
+          session_id: login.session_id,
+          care_person_id: carePersonId,
+          entity_id: entity.entity_id,
+          display_name: preferredName,
+          roles,
+          account_status: "unverified",
+          authorized_recipients: 0,
+          auth_mode: "foundation_auth_service",
+          // Lab/dev only: never log PHI; code returned only when CARE_EXPOSE_VERIFY_CODE=1
+          verification_code_dev_only:
+            process.env.CARE_EXPOSE_VERIFY_CODE === "1" ? plainCode : undefined,
+        };
+      } catch (err) {
+        logger.warn({ err }, "[care] foundation register failed; falling back to lab account");
+      }
+    }
+
+    // Lab / file / memory path — dynamic CareAuth principal, zero memberships
+    this.labAuth.registerPrincipal({
+      carePersonId,
+      displayName: preferredName,
+      roles,
+      passwordLab: password,
+      email,
+      accountStatus: "unverified",
+      claimedRelationship: claimed,
+    });
+    this.store.upsertPerson({
+      id: carePersonId,
+      displayName: preferredName,
+      kind: "family_caregiver",
+    });
+    this.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: carePersonId,
+      action: "ACCOUNT_REGISTERED",
+      details: {
+        email_domain: email.split("@")[1] ?? "",
+        claimed_relationship: claimed,
+        authorized_recipients: 0,
+        auth_path: "care_lab_register",
+        terms_version: input.termsVersion ?? null,
+      },
+    });
+    const { plainCode } = createVerificationChallenge(this.store, {
+      carePersonId,
+      channel: "email",
+      contact: email,
+    });
+    await this.flush();
+    const minted = this.labAuth.loginLab(carePersonId, password);
+    if (!minted.ok) {
+      return { ok: false, code: minted.code, message: minted.message };
+    }
+    return {
+      ok: true,
+      token: minted.token,
+      session_id: minted.session_id,
+      care_person_id: carePersonId,
+      display_name: preferredName,
+      roles,
+      account_status: "unverified",
+      authorized_recipients: 0,
+      auth_mode: "care_lab_jwt",
+      verification_code_dev_only:
+        process.env.CARE_EXPOSE_VERIFY_CODE === "1" ||
+        process.env.NODE_ENV !== "production"
+          ? plainCode
+          : undefined,
+    };
+  }
+
+  issueContactVerification(carePersonId: string, email: string) {
+    return createVerificationChallenge(this.store, {
+      carePersonId,
+      channel: "email",
+      contact: email,
+    });
+  }
+
+  verifyContact(carePersonId: string, code: string) {
+    return verifyContactCode(this.store, { carePersonId, code });
+  }
+
+  isVerified(carePersonId: string): boolean {
+    return isContactVerified(this.store, carePersonId);
+  }
+
+  async logoutSession(
+    authorizationHeader: string | undefined,
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    const resolved = await this.resolveBearer(authorizationHeader);
+    if (!resolved.ok) {
+      return { ok: false, code: resolved.code, message: resolved.message };
+    }
+    if (
+      resolved.authMode === "foundation_auth_service" &&
+      this.foundationAuth &&
+      resolved.entityId
+    ) {
+      await this.foundationAuth.logout(resolved.sessionId, resolved.entityId);
+    }
+    this.store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: resolved.carePersonId,
+      action: "SESSION_LOGOUT",
+      details: {
+        session_id: resolved.sessionId,
+        auth_mode: resolved.authMode,
+      },
+    });
+    await this.flush();
+    return { ok: true };
   }
 
   export(

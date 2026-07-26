@@ -833,6 +833,12 @@ export class PrismaCareStore implements CareStore {
   getRelationship(careRecipientId: string, personId: string) {
     return this.memory.getRelationship(careRecipientId, personId);
   }
+  getRelationshipsForPerson(personId: string) {
+    return this.memory.getRelationshipsForPerson(personId);
+  }
+  listRecipients() {
+    return this.memory.listRecipients();
+  }
   revokeAccess(careRecipientId: string, personId: string, at: string): void {
     this.memory.revokeAccess(careRecipientId, personId, at);
     this.dirty = true;

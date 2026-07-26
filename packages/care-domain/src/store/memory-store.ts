@@ -47,6 +47,9 @@ export interface CareStore {
     careRecipientId: string,
     personId: string,
   ): CareRelationship | undefined;
+  /** All relationships for a person across recipients (membership scan). */
+  getRelationshipsForPerson(personId: string): CareRelationship[];
+  listRecipients(): CareRecipient[];
   revokeAccess(careRecipientId: string, personId: string, at: string): void;
   upsertConsent(c: ConsentRecord): void;
   getConsent(
@@ -162,6 +165,12 @@ export class MemoryCareStore implements CareStore {
     personId: string,
   ): CareRelationship | undefined {
     return this.relationships.get(this.relKey(careRecipientId, personId));
+  }
+  getRelationshipsForPerson(personId: string): CareRelationship[] {
+    return [...this.relationships.values()].filter((r) => r.personId === personId);
+  }
+  listRecipients(): CareRecipient[] {
+    return [...this.recipients.values()];
   }
   revokeAccess(careRecipientId: string, personId: string, at: string): void {
     const rel = this.getRelationship(careRecipientId, personId);

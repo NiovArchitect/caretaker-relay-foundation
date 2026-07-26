@@ -32,6 +32,17 @@ export interface CarePrincipalDirectoryEntry {
   /** Optional Foundation entity_id when linked */
   foundationEntityId?: string;
   passwordLab?: string;
+  /** Normalized email for registered accounts (lab / durable register path). */
+  email?: string;
+  /** Account lifecycle status — role claim is not authorization. */
+  accountStatus?:
+    | "unverified"
+    | "verified"
+    | "pending_access"
+    | "active"
+    | "suspended"
+    | "closed";
+  claimedRelationship?: string;
 }
 
 /** Lab directory for Olivia scenario principals (synthetic). */
@@ -125,6 +136,46 @@ export class CareAuthService {
     private readonly directory: CarePrincipalDirectoryEntry[] = defaultLabDirectory(),
   ) {}
 
+  /** Register a dynamic principal (durable account path without Foundation Entity). */
+  registerPrincipal(entry: CarePrincipalDirectoryEntry): void {
+    const existing = this.directory.findIndex(
+      (p) => p.carePersonId === entry.carePersonId,
+    );
+    if (existing >= 0) {
+      this.directory[existing] = entry;
+    } else {
+      this.directory.push(entry);
+    }
+  }
+
+  findPrincipal(
+    carePersonId: string,
+  ): CarePrincipalDirectoryEntry | undefined {
+    return this.directory.find((p) => p.carePersonId === carePersonId);
+  }
+
+  /** Issue a session JWT for an already-authenticated principal entry. */
+  mintSession(
+    principal: CarePrincipalDirectoryEntry,
+    kind: CareSessionClaims["kind"] = "care_lab",
+  ): { token: string; session_id: string } {
+    const session_id = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const claims: CareSessionClaims = {
+      sub: principal.carePersonId,
+      sid: session_id,
+      carePersonId: principal.carePersonId,
+      displayName: principal.displayName,
+      roles: principal.roles,
+      ops: ["read", "write"],
+      iat: now,
+      exp: now + 60 * 60 * 12,
+      iss: "caretaker-relay-care-auth",
+      kind,
+    };
+    return { token: signHs256(claims, this.secret), session_id };
+  }
+
   loginLab(
     carePersonId: string,
     password: string,
@@ -139,21 +190,31 @@ export class CareAuthService {
         message: "Invalid care credentials",
       };
     }
-    const session_id = randomUUID();
-    const now = Math.floor(Date.now() / 1000);
-    const claims: CareSessionClaims = {
-      sub: principal.carePersonId,
-      sid: session_id,
-      carePersonId: principal.carePersonId,
-      displayName: principal.displayName,
-      roles: principal.roles,
-      ops: ["read", "write"],
-      iat: now,
-      exp: now + 60 * 60 * 12,
-      iss: "caretaker-relay-care-auth",
-      kind: "care_lab",
-    };
-    const token = signHs256(claims, this.secret);
+    const { token, session_id } = this.mintSession(principal, "care_lab");
+    return { ok: true, token, session_id, principal };
+  }
+
+  /** Login by email for registered dynamic accounts (lab JWT path). */
+  loginByEmail(
+    email: string,
+    password: string,
+  ):
+    | { ok: true; token: string; session_id: string; principal: CarePrincipalDirectoryEntry }
+    | { ok: false; code: string; message: string } {
+    const normalized = email.trim().toLowerCase();
+    const principal = this.directory.find(
+      (p) =>
+        (p as CarePrincipalDirectoryEntry & { email?: string }).email ===
+          normalized && p.passwordLab === password,
+    );
+    if (!principal) {
+      return {
+        ok: false,
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid care credentials",
+      };
+    }
+    const { token, session_id } = this.mintSession(principal, "care_lab");
     return { ok: true, token, session_id, principal };
   }
 

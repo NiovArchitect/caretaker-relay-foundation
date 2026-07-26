@@ -22,6 +22,14 @@ import {
   defaultInviteAccess,
   newInviteToken,
   answerRelayQuestion,
+  encodeAccessRequestUpdate,
+  listAccessRequestsForRecipient,
+  listAccessRequestsForRequester,
+  findAccessRequest,
+  approveAccessRequest,
+  denyAccessRequest,
+  PROVISIONAL_REQUEST_BUCKET,
+  type CareAccessRequest,
   notificationFromCoordination,
   listNotificationsForPrincipal,
   markSeen,
@@ -149,6 +157,141 @@ export async function registerCareRoutes(
   });
 
   /**
+   * Durable account registration — zero recipient memberships by default.
+   * Role/relationship claim is metadata only; never grants recipient access.
+   */
+  app.post<{
+    Body: {
+      preferred_name?: string;
+      display_name?: string;
+      email?: string;
+      password?: string;
+      claimed_relationship?: string;
+      terms_version?: string;
+    };
+  }>("/api/v1/care/auth/register", async (request, reply) => {
+    const body = request.body ?? {};
+    const preferredName =
+      (typeof body.preferred_name === "string" && body.preferred_name) ||
+      (typeof body.display_name === "string" && body.display_name) ||
+      "";
+    const result = await runtime.registerAccount({
+      preferredName,
+      email: typeof body.email === "string" ? body.email : "",
+      password: typeof body.password === "string" ? body.password : "",
+      claimedRelationship:
+        typeof body.claimed_relationship === "string"
+          ? body.claimed_relationship
+          : undefined,
+      termsVersion:
+        typeof body.terms_version === "string" ? body.terms_version : undefined,
+    });
+    if (!result.ok) {
+      const status =
+        result.code === "EMAIL_IN_USE"
+          ? 409
+          : result.code === "BAD_REQUEST"
+            ? 400
+            : 400;
+      return reply.code(status).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(201).send({
+      ...result,
+      correlation_id: correlationId(request),
+      note: "New accounts have zero authorized recipients until invitation or approval.",
+    });
+  });
+
+  app.post("/api/v1/care/auth/logout", async (request, reply) => {
+    const result = await runtime.logoutSession(request.headers.authorization);
+    if (!result.ok) {
+      return reply.code(401).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(200).send({
+      ok: true,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { email?: string; code?: string };
+  }>("/api/v1/care/auth/verify-contact", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const code =
+      typeof request.body?.code === "string" ? request.body.code : "";
+    if (!code) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "code required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = runtime.verifyContact(principal.carePersonId, code);
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      verified: true,
+      channel: result.challenge.channel,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{ Body: { email?: string } }>(
+    "/api/v1/care/auth/request-verification",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const email =
+        typeof request.body?.email === "string" ? request.body.email : "";
+      if (!email) {
+        return reply.code(400).send({
+          ok: false,
+          code: "BAD_REQUEST",
+          message: "email required",
+          correlation_id: correlationId(request),
+        });
+      }
+      const { plainCode } = runtime.issueContactVerification(
+        principal.carePersonId,
+        email,
+      );
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        issued: true,
+        // Delivery is EXTERNAL (SMTP). Dev/lab may expose code.
+        verification_code_dev_only:
+          process.env.CARE_EXPOSE_VERIFY_CODE === "1" ||
+          process.env.NODE_ENV !== "production"
+            ? plainCode
+            : undefined,
+        correlation_id: correlationId(request),
+        note: "SMTP/SMS delivery is an external integration dependency.",
+      });
+    },
+  );
+
+  /**
    * Primary login: Foundation AuthService (Entity + Session + JWT).
    * Body: { email, password } OR { care_person_id, password } mapped to seed emails.
    */
@@ -178,17 +321,46 @@ export async function registerCareRoutes(
       });
     }
     const result = await runtime.foundationLogin(email, password);
-    if (!result.ok) {
-      const status = result.code === "SUSPENDED" ? 403 : 401;
-      return reply.code(status).send({
-        ok: false,
-        code: result.code,
-        message: result.message,
+    if (result.ok) {
+      const memberships = runtime.listMemberships(result.care_person_id);
+      return reply.code(200).send({
+        ...result,
+        authorized_recipients: memberships.length,
+        memberships,
         correlation_id: correlationId(request),
       });
     }
-    return reply.code(200).send({
-      ...result,
+    // Registered lab accounts (memory/file) or unlinked emails
+    const labEmail = runtime.labAuth.loginByEmail(email, password);
+    if (labEmail.ok) {
+      const memberships = runtime.listMemberships(
+        labEmail.principal.carePersonId,
+      );
+      runtime.store.writeAudit({
+        at: new Date().toISOString(),
+        actorPersonId: labEmail.principal.carePersonId,
+        action: "CARE_LAB_EMAIL_LOGIN",
+        details: { session_id: labEmail.session_id },
+      });
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        token: labEmail.token,
+        session_id: labEmail.session_id,
+        care_person_id: labEmail.principal.carePersonId,
+        display_name: labEmail.principal.displayName,
+        roles: labEmail.principal.roles,
+        auth_mode: "care_lab_jwt",
+        authorized_recipients: memberships.length,
+        memberships,
+        correlation_id: correlationId(request),
+      });
+    }
+    const status = result.code === "SUSPENDED" ? 403 : 401;
+    return reply.code(status).send({
+      ok: false,
+      code: result.code,
+      message: result.message,
       correlation_id: correlationId(request),
     });
   });
@@ -456,10 +628,33 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const { id } = request.params as { id: string };
+    // SECURITY: never return who_can_see_what without active membership
+    const decision = runtime.authorize({
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      action: "view_access_matrix",
+      dataDomain: "access",
+      purpose: "access_matrix_view",
+    });
+    if (!decision.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: decision.reasonCode,
+        message: decision.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const controlling =
+      decision.effectiveScope.informationCategories.includes("*") ||
+      decision.effectiveScope.allowedActions.includes("*") ||
+      principal.carePersonId === id;
     return reply.code(200).send({
       ok: true,
       access: runtime.access(principal.carePersonId, id),
-      who_can_see_what: runtime.whoCanSee(id),
+      // Full matrix only for controlling authority / self
+      who_can_see_what: controlling ? runtime.whoCanSee(id) : undefined,
+      self_scope: decision.effectiveScope,
+      authorization_source: decision.authorizationSource,
       correlation_id: correlationId(request),
     });
   });
@@ -1011,6 +1206,7 @@ export async function registerCareRoutes(
   app.get("/api/v1/care/me", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
+    const memberships = runtime.listMemberships(principal.carePersonId);
     return reply.code(200).send({
       ok: true,
       care_person_id: principal.carePersonId,
@@ -1018,6 +1214,11 @@ export async function registerCareRoutes(
       roles: principal.roles,
       session_id: principal.sessionId,
       auth_mode: principal.authMode,
+      entity_id: principal.entityId ?? null,
+      authorized_recipients: memberships.length,
+      memberships,
+      contact_verified: runtime.isVerified(principal.carePersonId),
+      pending_recipient_access: memberships.length === 0,
       correlation_id: correlationId(request),
     });
   });
@@ -1220,9 +1421,10 @@ export async function registerCareRoutes(
     const principal = await requireCareAuth(runtime, request, reply);
     if (!principal) return;
     const { token } = request.params as { token: string };
+    const recipientIds = runtime.store.listRecipients().map((r) => r.id);
     const inv = findInvitationByTokenGlobal(
       runtime.store,
-      [olivia.id],
+      recipientIds.length > 0 ? recipientIds : [olivia.id],
       token,
     );
     if (!inv) {
@@ -1330,6 +1532,288 @@ export async function registerCareRoutes(
         role: inv.role,
         role_label: inv.roleLabel,
         status: "active",
+      },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /**
+   * Access request — requester asks for recipient membership.
+   * Does NOT grant access until approved by controlling authority.
+   */
+  app.post<{
+    Body: {
+      care_recipient_id?: string;
+      provisional_recipient_name?: string;
+      claimed_relationship?: string;
+      reason?: string;
+    };
+  }>("/api/v1/care/access-requests", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const provisionalName =
+      typeof body.provisional_recipient_name === "string"
+        ? body.provisional_recipient_name.trim()
+        : "";
+    const careRecipientId =
+      typeof body.care_recipient_id === "string" && body.care_recipient_id
+        ? body.care_recipient_id
+        : PROVISIONAL_REQUEST_BUCKET;
+    const reason =
+      typeof body.reason === "string" ? body.reason.trim() : "";
+    const claimed =
+      typeof body.claimed_relationship === "string"
+        ? body.claimed_relationship.trim()
+        : "";
+    if (!reason || !claimed) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "claimed_relationship and reason required",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (careRecipientId === PROVISIONAL_REQUEST_BUCKET && !provisionalName) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "provisional_recipient_name required when care_recipient_id omitted",
+        correlation_id: correlationId(request),
+      });
+    }
+    // Ensure provisional bucket exists as a non-PHI system recipient for storage
+    if (!runtime.store.getRecipient(careRecipientId)) {
+      if (careRecipientId === PROVISIONAL_REQUEST_BUCKET) {
+        runtime.store.upsertRecipient({
+          id: PROVISIONAL_REQUEST_BUCKET,
+          displayName: "Access request queue",
+          preferredName: "Access requests",
+          householdId: "hh-access-requests",
+        });
+      } else {
+        return reply.code(404).send({
+          ok: false,
+          code: "UNKNOWN_RECIPIENT",
+          message: "Care recipient not found",
+          correlation_id: correlationId(request),
+        });
+      }
+    }
+    const now = new Date().toISOString();
+    const req: CareAccessRequest = {
+      id: runtime.store.newId("ar"),
+      careRecipientId,
+      provisionalRecipientName: provisionalName || undefined,
+      requesterPersonId: principal.carePersonId,
+      requesterDisplayName: principal.displayName,
+      claimedRelationship: claimed,
+      reason,
+      status: "pending",
+      createdAt: now,
+    };
+    const source = {
+      id: runtime.store.newId("src"),
+      kind: "system_derived" as const,
+      label: "Access request submitted",
+      actorName: principal.displayName,
+      actorPersonId: principal.carePersonId,
+      recordedAt: now,
+      whyVisible: "Requester submitted access request — not yet authorized",
+    };
+    runtime.store.addUpdate(encodeAccessRequestUpdate(req, source));
+    runtime.store.writeAudit({
+      at: now,
+      actorPersonId: principal.carePersonId,
+      action: "ACCESS_REQUEST_SUBMITTED",
+      careRecipientId,
+      details: {
+        request_id: req.id,
+        claimed_relationship: claimed,
+        provisional: careRecipientId === PROVISIONAL_REQUEST_BUCKET,
+      },
+    });
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      access_request: {
+        id: req.id,
+        care_recipient_id: req.careRecipientId,
+        provisional_recipient_name: req.provisionalRecipientName,
+        status: req.status,
+        claimed_relationship: req.claimedRelationship,
+        created_at: req.createdAt,
+      },
+      authorized_recipients: runtime.listMemberships(principal.carePersonId)
+        .length,
+      note: "Request recorded. Access remains zero until approval or invitation.",
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/access-requests/mine", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const recipientIds = runtime.store.listRecipients().map((r) => r.id);
+    const list = listAccessRequestsForRequester(
+      runtime.store,
+      principal.carePersonId,
+      recipientIds,
+    );
+    return reply.code(200).send({
+      ok: true,
+      access_requests: list.map((r) => ({
+        id: r.id,
+        care_recipient_id: r.careRecipientId,
+        provisional_recipient_name: r.provisionalRecipientName,
+        status: r.status,
+        claimed_relationship: r.claimedRelationship,
+        reason: r.reason,
+        created_at: r.createdAt,
+        decided_at: r.decidedAt,
+      })),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get(
+    "/api/v1/care/recipients/:id/access-requests",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const decision = runtime.authorize({
+        actorPersonId: principal.carePersonId,
+        careRecipientId: id,
+        action: "approve_access",
+        dataDomain: "access",
+      });
+      if (!decision.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: decision.reasonCode,
+          message: decision.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const list = listAccessRequestsForRecipient(runtime.store, id);
+      return reply.code(200).send({
+        ok: true,
+        access_requests: list.map((r) => ({
+          id: r.id,
+          requester_person_id: r.requesterPersonId,
+          requester_display_name: r.requesterDisplayName,
+          status: r.status,
+          claimed_relationship: r.claimedRelationship,
+          reason: r.reason,
+          created_at: r.createdAt,
+          decided_at: r.decidedAt,
+        })),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { decision?: "approve" | "deny"; role?: string; role_label?: string };
+  }>("/api/v1/care/access-requests/:requestId/decide", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { requestId } = request.params as { requestId: string };
+    const body = request.body ?? {};
+    const decision =
+      body.decision === "approve" || body.decision === "deny"
+        ? body.decision
+        : "";
+    if (!decision) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "decision must be approve or deny",
+        correlation_id: correlationId(request),
+      });
+    }
+    const recipientIds = runtime.store.listRecipients().map((r) => r.id);
+    const found = findAccessRequest(runtime.store, requestId, recipientIds);
+    if (!found) {
+      return reply.code(404).send({
+        ok: false,
+        code: "NOT_FOUND",
+        message: "Access request not found",
+        correlation_id: correlationId(request),
+      });
+    }
+    if (found.status !== "pending") {
+      return reply.code(409).send({
+        ok: false,
+        code: "NOT_PENDING",
+        message: `Request is ${found.status}`,
+        correlation_id: correlationId(request),
+      });
+    }
+    // Provisional bucket cannot be approved into real membership without a real recipient
+    if (
+      decision === "approve" &&
+      found.careRecipientId === PROVISIONAL_REQUEST_BUCKET
+    ) {
+      return reply.code(400).send({
+        ok: false,
+        code: "PROVISIONAL_REQUIRES_BIND",
+        message:
+          "Provisional requests must be bound to a real recipient before approval",
+        correlation_id: correlationId(request),
+      });
+    }
+    const authz = runtime.authorize({
+      actorPersonId: principal.carePersonId,
+      careRecipientId: found.careRecipientId,
+      action: "approve_access",
+      dataDomain: "access",
+    });
+    if (!authz.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: authz.reasonCode,
+        message: authz.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    if (decision === "approve") {
+      const approved = approveAccessRequest(
+        runtime.store,
+        found,
+        principal.carePersonId,
+        {
+          role: (body.role as CareRelationshipRole) || "family_caregiver",
+          roleLabel:
+            typeof body.role_label === "string" ? body.role_label : undefined,
+        },
+      );
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        access_request: {
+          id: approved.id,
+          status: approved.status,
+          care_recipient_id: approved.careRecipientId,
+          decided_at: approved.decidedAt,
+        },
+        correlation_id: correlationId(request),
+      });
+    }
+    const denied = denyAccessRequest(
+      runtime.store,
+      found,
+      principal.carePersonId,
+    );
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      access_request: {
+        id: denied.id,
+        status: denied.status,
+        care_recipient_id: denied.careRecipientId,
+        decided_at: denied.decidedAt,
       },
       correlation_id: correlationId(request),
     });
