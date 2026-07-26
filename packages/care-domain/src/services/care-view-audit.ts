@@ -29,7 +29,11 @@ export type CareViewSurface =
   | "coordination"
   | "notifications"
   | "reminders"
-  | "orchestration";
+  | "orchestration"
+  | "role_projection"
+  | "events"
+  | "schedule"
+  | "actions";
 
 const lastEmit = new Map<string, number>();
 

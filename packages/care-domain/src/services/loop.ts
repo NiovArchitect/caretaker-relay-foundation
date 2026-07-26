@@ -670,6 +670,14 @@ export class CareLoopService {
     evidenceMode: EvidenceMode,
     status: CareEvent["epistemicStatus"],
   ): CareEvent {
+    const eventAt = candidate.effectiveAt ?? candidate.recordedAt ?? now;
+    const reportAt = candidate.recordedAt ?? now;
+    const truthState =
+      status === "CONFIRMED"
+        ? ("confirmed" as const)
+        : status === "UNCERTAIN"
+          ? ("disputed" as const)
+          : ("reported" as const);
     const evt: CareEvent = {
       id: this.config.store.newId("evt"),
       careRecipientId: ctx.careRecipientId,
@@ -677,13 +685,37 @@ export class CareLoopService {
       type: candidate.eventType,
       title: candidate.statement,
       statement: candidate.statement,
-      occurredAt: now,
+      occurredAt: eventAt,
+      eventAt,
+      reportAt,
+      ingestedAt: now,
       epistemicStatus: status,
       safetyClass: candidate.consequentiality,
       source: candidate.sourceReference,
       confidence: candidate.confidence,
       intendedRecipientPersonId: candidate.intendedRecipientPersonId,
       evidenceMode,
+      actorPrincipalId: ctx.actorPersonId,
+      actorActiveRole: ctx.roles?.[0],
+      authorityBasis: "membership",
+      purpose: "care_coordination",
+      truthState,
+      confidenceLabel:
+        truthState === "confirmed"
+          ? "confirmed"
+          : truthState === "disputed"
+            ? "unknown"
+            : "reported",
+      dedupeKey: [
+        ctx.careRecipientId,
+        candidate.eventType,
+        eventAt,
+        ctx.actorPersonId,
+        candidate.statement.trim().toLowerCase().slice(0, 80),
+      ].join("|"),
+      approvalState: "none",
+      executionState: "none",
+      correlationId: this.config.store.newId("corr"),
     };
     return this.config.store.addEvent(evt);
   }

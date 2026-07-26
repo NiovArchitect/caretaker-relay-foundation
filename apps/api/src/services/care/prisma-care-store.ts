@@ -164,6 +164,10 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const e of events) {
+      const src = e.source as unknown as SourceRef & {
+        _careEtl?: Partial<CareEvent>;
+      };
+      const etl = src?._careEtl ?? {};
       this.memory.addEvent({
         id: e.id,
         careRecipientId: e.care_recipient_id,
@@ -175,11 +179,31 @@ export class PrismaCareStore implements CareStore {
         notes: e.notes ?? undefined,
         epistemicStatus: e.epistemic_status as CareEvent["epistemicStatus"],
         safetyClass: e.safety_class as CareEvent["safetyClass"],
-        source: e.source as unknown as SourceRef,
+        source: src,
         confidence: e.confidence ?? undefined,
         intendedRecipientPersonId: e.intended_recipient_person_id ?? undefined,
         supersededById: e.superseded_by_id ?? undefined,
         evidenceMode: e.evidence_mode as CareEvent["evidenceMode"],
+        eventAt: etl.eventAt ?? e.occurred_at,
+        reportAt: etl.reportAt,
+        ingestedAt: etl.ingestedAt,
+        timezone: etl.timezone,
+        actorPrincipalId: etl.actorPrincipalId,
+        actorActiveRole: etl.actorActiveRole,
+        authorityBasis: etl.authorityBasis,
+        dataDomain: etl.dataDomain,
+        purpose: etl.purpose,
+        truthState: etl.truthState,
+        confidenceLabel: etl.confidenceLabel,
+        dedupeKey: etl.dedupeKey,
+        conflictGroupId: etl.conflictGroupId,
+        conflictWithIds: etl.conflictWithIds,
+        correctionTargetId: etl.correctionTargetId,
+        scheduleState: etl.scheduleState,
+        approvalState: etl.approvalState,
+        executionState: etl.executionState,
+        correlationId: etl.correlationId,
+        structured: etl.structured,
       });
     }
     for (const o of observations) {
@@ -471,8 +495,33 @@ export class PrismaCareStore implements CareStore {
       });
     }
 
-    // Events: upsert each
+    // Events: upsert each (ETL provenance packed into source._careEtl — no schema migration)
     for (const e of snap.events) {
+      const sourceWithEtl = {
+        ...(e.source as object),
+        _careEtl: {
+          eventAt: e.eventAt,
+          reportAt: e.reportAt,
+          ingestedAt: e.ingestedAt,
+          timezone: e.timezone,
+          actorPrincipalId: e.actorPrincipalId,
+          actorActiveRole: e.actorActiveRole,
+          authorityBasis: e.authorityBasis,
+          dataDomain: e.dataDomain,
+          purpose: e.purpose,
+          truthState: e.truthState,
+          confidenceLabel: e.confidenceLabel,
+          dedupeKey: e.dedupeKey,
+          conflictGroupId: e.conflictGroupId,
+          conflictWithIds: e.conflictWithIds,
+          correctionTargetId: e.correctionTargetId,
+          scheduleState: e.scheduleState,
+          approvalState: e.approvalState,
+          executionState: e.executionState,
+          correlationId: e.correlationId,
+          structured: e.structured,
+        },
+      };
       await prisma.careEventRow.upsert({
         where: { id: e.id },
         create: {
@@ -486,7 +535,7 @@ export class PrismaCareStore implements CareStore {
           notes: e.notes ?? null,
           epistemic_status: e.epistemicStatus,
           safety_class: e.safetyClass,
-          source: e.source as object,
+          source: sourceWithEtl as object,
           confidence: e.confidence ?? null,
           intended_recipient_person_id: e.intendedRecipientPersonId ?? null,
           superseded_by_id: e.supersededById ?? null,
@@ -498,6 +547,8 @@ export class PrismaCareStore implements CareStore {
           epistemic_status: e.epistemicStatus,
           superseded_by_id: e.supersededById ?? null,
           title: e.title,
+          source: sourceWithEtl as object,
+          notes: e.notes ?? null,
         },
       });
     }

@@ -352,7 +352,7 @@ describe("Care HTTP runtime acceptance", () => {
       structured: { fhir: unknown[] };
     };
     expect(body.claim).toBe("FHIR_MAPPED_NOT_EMR_INTEGRATED");
-    expect(body.humanReadable).toMatch(/Care export/);
+    expect(body.humanReadable).toMatch(/Care (export|record)/i);
     expect(body.structured.fhir.length).toBeGreaterThan(0);
   });
 

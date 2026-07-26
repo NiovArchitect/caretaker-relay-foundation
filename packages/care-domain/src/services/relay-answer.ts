@@ -40,6 +40,7 @@ import {
   listCoverage,
   seedDefaultCoverage,
 } from "./care-coverage.js";
+import { roleAwareRelayState } from "./role-projection.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -307,10 +308,14 @@ export function answerRelayQuestion(
   req: RelayAnswerRequest,
 ): RelayAnswerResponse {
   const store = req.store;
+  // Role-aware retrieval: project before answer engine — never full dump + hide in LLM.
+  const roleState = req.stateOverride
+    ? undefined
+    : roleAwareRelayState(store, req.principalId, req.careRecipientId);
   const state =
     req.stateOverride ??
     stateToBag(
-      store.getCurrentState(req.careRecipientId),
+      roleState ?? store.getCurrentState(req.careRecipientId),
       req.careRecipientId,
     );
 

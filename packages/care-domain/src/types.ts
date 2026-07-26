@@ -205,8 +205,53 @@ export type CareEventType =
   | "note"
   | "correction"
   | "handoff"
-  | "access_change";
+  | "access_change"
+  | "consent_change"
+  | "shift_observation"
+  | "clinical_note"
+  | "schedule_change"
+  | "reminder"
+  | "incident";
 
+/** Schedule / action lifecycle (internal engine). */
+export type ScheduleLifecycleState =
+  | "proposed"
+  | "requested"
+  | "tentative"
+  | "confirmed"
+  | "cancelled"
+  | "rescheduled"
+  | "completed"
+  | "missed";
+
+export type CareTruthState =
+  | "reported"
+  | "confirmed"
+  | "disputed"
+  | "corrected"
+  | "cancelled"
+  | "superseded";
+
+export type CareAuthorityBasis =
+  | "membership"
+  | "assignment"
+  | "invitation"
+  | "consent"
+  | "provisional_draft"
+  | "system"
+  | "self";
+
+export type CareConfidenceLabel =
+  | "confirmed"
+  | "reported"
+  | "inferred"
+  | "unknown";
+
+/**
+ * Canonical durable care event.
+ * Optional ETL fields are backward-compatible; older rows omit them.
+ * Server store + Prisma CareEventRow.source Json carries full provenance.
+ */
 export interface CareEvent {
   id: string;
   careRecipientId: string;
@@ -214,6 +259,7 @@ export interface CareEvent {
   type: CareEventType;
   title: string;
   statement: string;
+  /** @deprecated prefer eventAt — retained for existing rows */
   occurredAt: string;
   notes?: string;
   epistemicStatus: EpistemicStatus;
@@ -223,6 +269,30 @@ export interface CareEvent {
   intendedRecipientPersonId?: string;
   supersededById?: string;
   evidenceMode: EvidenceMode;
+  /** When the care fact happened (or is scheduled). Defaults to occurredAt. */
+  eventAt?: string;
+  /** When it was reported into Relay. Defaults to source.recordedAt. */
+  reportAt?: string;
+  /** Server ingest wall time. */
+  ingestedAt?: string;
+  timezone?: string;
+  actorPrincipalId?: string;
+  actorActiveRole?: string;
+  authorityBasis?: CareAuthorityBasis;
+  dataDomain?: string;
+  purpose?: string;
+  sensitivity?: SafetyClass;
+  truthState?: CareTruthState;
+  confidenceLabel?: CareConfidenceLabel;
+  dedupeKey?: string;
+  conflictGroupId?: string;
+  conflictWithIds?: string[];
+  correctionTargetId?: string;
+  scheduleState?: ScheduleLifecycleState;
+  approvalState?: "none" | "pending" | "approved" | "rejected";
+  executionState?: "none" | "pending" | "executed" | "failed" | "skipped";
+  correlationId?: string;
+  structured?: Record<string, unknown>;
 }
 
 export interface Observation {
@@ -243,11 +313,19 @@ export interface Appointment {
   startsAtLabel?: string;
   endsAt?: string;
   location?: string;
+  /** Legacy UI status; scheduleState is the authoritative lifecycle. */
   status: "scheduled" | "moved" | "completed" | "cancelled";
+  scheduleState?: ScheduleLifecycleState;
   epistemicStatus: EpistemicStatus;
   source?: SourceRef;
   previousStartsAtLabel?: string;
   changeSource?: string;
+  /** Prior appointment id when rescheduled. */
+  rescheduledFromId?: string;
+  timezone?: string;
+  assigneePersonId?: string;
+  coveragePersonId?: string;
+  recurrenceRule?: string;
 }
 
 export interface MedicationSchedule {

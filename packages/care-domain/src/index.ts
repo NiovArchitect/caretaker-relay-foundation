@@ -56,6 +56,10 @@ export * from "./services/recipient-profile.js";
 export * from "./services/care-notes.js";
 export * from "./services/care-coverage.js";
 export * from "./services/care-history.js";
+export * from "./services/care-event-etl.js";
+export * from "./services/role-projection.js";
+export * from "./services/schedule-engine.js";
+export * from "./services/care-actions.js";
 
 import { MemoryCareStore } from "./store/memory-store.js";
 import { CareLoopService } from "./services/loop.js";
