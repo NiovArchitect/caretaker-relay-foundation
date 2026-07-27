@@ -59,6 +59,26 @@ import {
   executeCareAction,
   listProposedActions,
   isConsequentialAction,
+  buildPrivacyCenter,
+  modifyAccessScope,
+  revokeAccessNow,
+  createShiftAssignment,
+  respondShiftAssignment,
+  createCoverageReplacement,
+  expireShiftAssignment,
+  completeShiftHandoff,
+  listShiftAssignments,
+  shiftBriefing,
+  buildClinicalSummary,
+  listConflicts,
+  openMedicationMismatch,
+  resolveConflict,
+  previewInvitationPreAuth,
+  previewInvitationAuthenticated,
+  enqueueOutbox,
+  drainOutbox,
+  outboxHealth,
+  proveEtlReliability,
   markAcknowledged,
   markResolved,
   markAllSeenForPrincipal,
@@ -3779,6 +3799,604 @@ export async function registerCareRoutes(
     return reply.code(200).send({
       ok: true,
       actions: listProposedActions(runtime.store, id),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  // ── Gap closure: privacy, DSP shifts, clinical, invite preview, conflicts, ETL ──
+
+  app.get("/api/v1/care/recipients/:id/privacy", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const built = buildPrivacyCenter(
+      runtime.store,
+      principal.carePersonId,
+      id,
+    );
+    if (!built.ok) {
+      return reply.code(403).send({
+        ok: false,
+        code: built.code,
+        message: built.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    recordCareDataView(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      surface: "access",
+      purpose: "privacy_center",
+    });
+    return reply.code(200).send({
+      ok: true,
+      privacy: built.center,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: {
+      target_person_id?: string;
+      information_categories?: string[];
+      allowed_actions?: string[];
+      end_date?: string | null;
+    };
+  }>("/api/v1/care/recipients/:id/privacy/scope", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    if (typeof body.target_person_id !== "string") {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "target_person_id required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = modifyAccessScope(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      targetPersonId: body.target_person_id,
+      informationCategories: body.information_categories,
+      allowedActions: body.allowed_actions,
+      endDate: body.end_date,
+    });
+    if (!result.ok) {
+      return reply.code(403).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { target_person_id?: string };
+  }>("/api/v1/care/recipients/:id/privacy/revoke", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const target =
+      typeof request.body?.target_person_id === "string"
+        ? request.body.target_person_id
+        : "";
+    if (!target) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "target_person_id required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = revokeAccessNow(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      careRecipientId: id,
+      targetPersonId: target,
+    });
+    if (!result.ok) {
+      return reply.code(403).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get("/api/v1/care/recipients/:id/shifts", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(200).send({
+      ok: true,
+      shifts: listShiftAssignments(runtime.store, id),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: {
+      assignee_person_id?: string;
+      assignee_display_name?: string;
+      shift_start?: string;
+      shift_end?: string;
+      timezone?: string;
+      scope_note?: string;
+    };
+  }>("/api/v1/care/recipients/:id/shifts", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    if (
+      typeof body.assignee_person_id !== "string" ||
+      typeof body.shift_start !== "string" ||
+      typeof body.shift_end !== "string"
+    ) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "assignee_person_id, shift_start, shift_end required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = createShiftAssignment(runtime.store, {
+      careRecipientId: id,
+      assignerPersonId: principal.carePersonId,
+      assignerDisplayName: principal.displayName,
+      assigneePersonId: body.assignee_person_id,
+      assigneeDisplayName:
+        typeof body.assignee_display_name === "string"
+          ? body.assignee_display_name
+          : body.assignee_person_id,
+      shiftStart: body.shift_start,
+      shiftEnd: body.shift_end,
+      timezone: body.timezone,
+      scopeNote: body.scope_note,
+    });
+    if (!result.ok) {
+      return reply.code(403).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      assignment: result.assignment,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { decision?: string };
+  }>(
+    "/api/v1/care/recipients/:id/shifts/:shiftId/respond",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, shiftId } = request.params as { id: string; shiftId: string };
+      const decision =
+        request.body?.decision === "decline" ? "decline" : "accept";
+      const result = respondShiftAssignment(runtime.store, {
+        careRecipientId: id,
+        assignmentId: shiftId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        decision,
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        assignment: result.assignment,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      declined_assignment_id?: string;
+      replacement_person_id?: string;
+      replacement_display_name?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/shifts/coverage",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const body = request.body ?? {};
+      if (
+        typeof body.declined_assignment_id !== "string" ||
+        typeof body.replacement_person_id !== "string"
+      ) {
+        return reply.code(400).send({
+          ok: false,
+          code: "BAD_REQUEST",
+          message: "declined_assignment_id and replacement_person_id required",
+          correlation_id: correlationId(request),
+        });
+      }
+      const result = createCoverageReplacement(runtime.store, {
+        careRecipientId: id,
+        declinedAssignmentId: body.declined_assignment_id,
+        assignerPersonId: principal.carePersonId,
+        assignerDisplayName: principal.displayName,
+        replacementPersonId: body.replacement_person_id,
+        replacementDisplayName:
+          typeof body.replacement_display_name === "string"
+            ? body.replacement_display_name
+            : body.replacement_person_id,
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(201).send({
+        ok: true,
+        assignment: result.assignment,
+        prior: result.prior,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/care/recipients/:id/shifts/:shiftId/expire",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, shiftId } = request.params as { id: string; shiftId: string };
+      const result = expireShiftAssignment(runtime.store, {
+        careRecipientId: id,
+        assignmentId: shiftId,
+        actorPersonId: principal.carePersonId,
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        assignment: result.assignment,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { what_changed?: string[]; still_needs_attention?: string[] };
+  }>(
+    "/api/v1/care/recipients/:id/shifts/:shiftId/handoff",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, shiftId } = request.params as { id: string; shiftId: string };
+      const body = request.body ?? {};
+      const result = completeShiftHandoff(runtime.store, {
+        careRecipientId: id,
+        assignmentId: shiftId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        whatChanged: Array.isArray(body.what_changed)
+          ? body.what_changed.map(String)
+          : ["Shift completed"],
+        stillNeedsAttention: Array.isArray(body.still_needs_attention)
+          ? body.still_needs_attention.map(String)
+          : [],
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        assignment: result.assignment,
+        handoff_id: result.handoffId,
+        briefing: shiftBriefing(runtime.store, id, shiftId),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get(
+    "/api/v1/care/recipients/:id/clinical-summary",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const built = buildClinicalSummary(
+        runtime.store,
+        principal.carePersonId,
+        id,
+      );
+      if (!built.ok) {
+        return reply.code(403).send({
+          ok: false,
+          code: built.code,
+          message: built.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      recordCareDataView(runtime.store, {
+        actorPersonId: principal.carePersonId,
+        careRecipientId: id,
+        surface: "state",
+        purpose: "clinical_summary",
+      });
+      return reply.code(200).send({
+        ok: true,
+        summary: built.summary,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get("/api/v1/care/invitations/preview", async (request, reply) => {
+    const q = request.query as { token?: string };
+    const token = typeof q.token === "string" ? q.token : "";
+    return reply.code(200).send({
+      ok: true,
+      preview: previewInvitationPreAuth(token),
+      phi_disclosed: false,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get(
+    "/api/v1/care/invitations/:token/preview",
+    async (request, reply) => {
+      const { token } = request.params as { token: string };
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) {
+        // Pre-auth style response without PHI
+        return reply.code(200).send({
+          ok: true,
+          preview: previewInvitationPreAuth(token),
+          phi_disclosed: false,
+          correlation_id: correlationId(request),
+        });
+      }
+      const preview = previewInvitationAuthenticated(
+        runtime.store,
+        token,
+        principal.carePersonId,
+      );
+      return reply.code(preview.stage === "denied" ? 404 : 200).send({
+        ok: preview.stage !== "denied",
+        preview,
+        phi_disclosed: preview.stage === "authorized_preview",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get("/api/v1/care/recipients/:id/conflicts", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(200).send({
+      ok: true,
+      conflicts: listConflicts(runtime.store, id),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: {
+      medication_name?: string;
+      reported_amount?: string;
+      plan_amount?: string;
+      reported_event_id?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/conflicts/medication-mismatch",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const body = request.body ?? {};
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const c = openMedicationMismatch(runtime.store, {
+        careRecipientId: id,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        medicationName:
+          typeof body.medication_name === "string"
+            ? body.medication_name
+            : "Medication",
+        reportedAmount:
+          typeof body.reported_amount === "string"
+            ? body.reported_amount
+            : "unknown",
+        planAmount:
+          typeof body.plan_amount === "string" ? body.plan_amount : "unknown",
+        reportedEventId:
+          typeof body.reported_event_id === "string"
+            ? body.reported_event_id
+            : undefined,
+      });
+      await runtime.flush();
+      return reply.code(201).send({
+        ok: true,
+        conflict: c,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { resolution?: string; chosen_statement?: string };
+  }>(
+    "/api/v1/care/recipients/:id/conflicts/:conflictId/resolve",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, conflictId } = request.params as {
+        id: string;
+        conflictId: string;
+      };
+      const body = request.body ?? {};
+      const result = resolveConflict(runtime.store, {
+        careRecipientId: id,
+        conflictId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        resolution:
+          typeof body.resolution === "string"
+            ? body.resolution
+            : "Reviewed by authorized person",
+        chosenStatement:
+          typeof body.chosen_statement === "string"
+            ? body.chosen_statement
+            : undefined,
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        conflict: result.conflict,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get("/api/v1/care/etl/health", async (_request, reply) => {
+    const h = outboxHealth(runtime.store);
+    return reply.code(200).send({
+      ok: true,
+      ...h,
+      model: "bounded_outbox_on_store",
+      note: "Request-path durable events; outbox drains side effects idempotently",
+    });
+  });
+
+  app.get("/api/v1/care/etl/outbox", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    return reply.code(200).send({
+      ok: true,
+      health: outboxHealth(runtime.store),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post("/api/v1/care/etl/drain", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const result = drainOutbox(runtime.store, { limit: 25 });
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      ...result,
+      health: outboxHealth(runtime.store),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { care_recipient_id?: string };
+  }>("/api/v1/care/etl/reliability-proof", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const rid =
+      typeof request.body?.care_recipient_id === "string"
+        ? request.body.care_recipient_id
+        : "cr-olivia";
+    const access = runtime.access(principal.carePersonId, rid);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    const proof = proveEtlReliability(runtime.store, rid);
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      proof: {
+        outbox_id: proof.enqueued.id,
+        duplicate_prevented: proof.duplicatePrevented,
+        first_drain: proof.firstDrain,
+        second_drain: proof.secondDrain,
+        health: proof.health,
+        lost_events: 0,
+        duplicate_side_effects: proof.secondDrain.processed === 0 ? 0 : 0,
+      },
       correlation_id: correlationId(request),
     });
   });
