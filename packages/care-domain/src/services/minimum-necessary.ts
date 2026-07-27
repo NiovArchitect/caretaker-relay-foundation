@@ -109,12 +109,19 @@ function domainsFromScope(scope: AccessScope): Set<CareDataDomain> {
   out.add("schedules_coverage");
   for (const c of cats) {
     const cl = c.toLowerCase();
-    if (cl.includes("daily") || cl.includes("observation") || cl.includes("health")) {
+    if (
+      cl.includes("daily") ||
+      cl.includes("observation") ||
+      cl.includes("health") ||
+      cl.includes("task") ||
+      cl.includes("handoff")
+    ) {
       out.add("daily_observations");
       out.add("meals_hydration");
       out.add("mobility");
       out.add("symptoms");
       out.add("preferences_routines");
+      out.add("handoffs");
     }
     if (cl.includes("medication")) {
       out.add("medication_plan");

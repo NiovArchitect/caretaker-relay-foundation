@@ -200,6 +200,30 @@ function ensureAssignee(
       kind: "professional",
     });
   }
+  /** Shift acceptance must grant observation/task/handoff domains for the window. */
+  const shiftAccess = {
+    informationCategories: [
+      "daily",
+      "Daily updates",
+      "observation",
+      "Health observations",
+      "Care tasks",
+      "Care instructions",
+      "Appointments",
+      "medication_admin",
+      "handoff",
+    ],
+    allowedActions: [
+      "view",
+      "record",
+      "handoff",
+      "record_observations",
+      "complete_tasks",
+      "view_schedule",
+    ],
+    canEscalate: true,
+    authorityLimits: ["shift_scoped", "no_care_plan_change"],
+  };
   const rel: CareRelationship = existing
     ? {
         ...existing,
@@ -208,6 +232,29 @@ function ensureAssignee(
         role: "paid_caregiver",
         roleLabel: "Direct support professional",
         scheduleNotes: "Active shift assignment",
+        // Merge shift domains — do not leave stale transport-only scopes active mid-shift.
+        access: {
+          informationCategories: [
+            ...new Set([
+              ...(existing.access.informationCategories ?? []),
+              ...shiftAccess.informationCategories,
+            ]),
+          ],
+          allowedActions: [
+            ...new Set([
+              ...(existing.access.allowedActions ?? []),
+              ...shiftAccess.allowedActions,
+            ]),
+          ],
+          canEscalate: true,
+          authorityLimits: [
+            ...new Set([
+              ...(existing.access.authorityLimits ?? []),
+              "shift_scoped",
+              "no_care_plan_change",
+            ]),
+          ],
+        },
       }
     : {
         id: store.newId("rel"),
@@ -216,17 +263,7 @@ function ensureAssignee(
         role: "paid_caregiver",
         roleLabel: "Direct support professional",
         responsibilities: ["Shift care", "Observations", "Handoff"],
-        access: {
-          informationCategories: [
-            "daily",
-            "observation",
-            "medication_admin",
-            "handoff",
-          ],
-          allowedActions: ["view", "record", "handoff"],
-          canEscalate: true,
-          authorityLimits: ["shift_scoped", "no_care_plan_change"],
-        },
+        access: shiftAccess,
         status: "active",
         startDate: new Date().toISOString().slice(0, 10),
         endDate,
