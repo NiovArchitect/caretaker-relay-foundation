@@ -92,6 +92,22 @@ import {
   notificationOpsStatus,
   shiftBoundaryChecklist,
   calendarTruthForAppointment,
+  transitionHandoffLifecycle,
+  ensureHandoffLifecycle,
+  getHandoffLifecycle,
+  buildSharedHandoffPacket,
+  escalateNoResponseForRecipient,
+  declineNotification,
+  applyRecurrenceException,
+  listRecurrenceExceptions,
+  expandRecurrenceOccurrences,
+  ingestDocumentText,
+  listCareTextDocuments,
+  confirmDocumentProposal,
+  leaveCareCircle,
+  archiveCareSpace,
+  getArchiveState,
+  representativeAuthorityNote,
   markAcknowledged,
   markResolved,
   markAllSeenForPrincipal,
@@ -3551,6 +3567,7 @@ export async function registerCareRoutes(
       assignee_person_id?: string;
       coverage_person_id?: string;
       appointment_id?: string;
+      recurrence_rule?: string;
     };
   }>("/api/v1/care/recipients/:id/schedule", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
@@ -3592,6 +3609,10 @@ export async function registerCareRoutes(
       appointmentId:
         typeof body.appointment_id === "string"
           ? body.appointment_id
+          : undefined,
+      recurrenceRule:
+        typeof body.recurrence_rule === "string"
+          ? body.recurrence_rule
           : undefined,
     });
     if (!result.ok) {
@@ -4841,4 +4862,474 @@ export async function registerCareRoutes(
       });
     },
   );
+
+  // ── Final harmonization closure routes ─────────────────────────────────
+
+  app.get(
+    "/api/v1/care/recipients/:id/handoffs/:handoffId/lifecycle",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, handoffId } = request.params as {
+        id: string;
+        handoffId: string;
+      };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const handoff = runtime.store
+        .getHandoffs(id)
+        .find((h) => h.id === handoffId);
+      if (!handoff) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "Handoff not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      const lifecycle = ensureHandoffLifecycle(
+        runtime.store,
+        handoff,
+        principal.carePersonId,
+      );
+      return reply.code(200).send({
+        ok: true,
+        lifecycle,
+        packet: buildSharedHandoffPacket(runtime.store, handoff, lifecycle),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      status?: string;
+      alternate_person_id?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/handoffs/:handoffId/lifecycle",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, handoffId } = request.params as {
+        id: string;
+        handoffId: string;
+      };
+      const body = request.body ?? {};
+      const status =
+        typeof body.status === "string" ? body.status : "acknowledged";
+      const result = transitionHandoffLifecycle(runtime.store, {
+        careRecipientId: id,
+        handoffId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        status: status as
+          | "draft"
+          | "ready"
+          | "sent"
+          | "delivered"
+          | "seen"
+          | "acknowledged"
+          | "correction_required"
+          | "completed"
+          | "expired"
+          | "escalated",
+        alternatePersonId:
+          typeof body.alternate_person_id === "string"
+            ? body.alternate_person_id
+            : null,
+      });
+      if (!result.ok) {
+        return reply
+          .code(result.code === "NOT_FOUND" ? 404 : 400)
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        lifecycle: result.lifecycle,
+        packet: buildSharedHandoffPacket(
+          runtime.store,
+          result.handoff,
+          result.lifecycle,
+        ),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      alternate_person_id?: string;
+      alternate_display_name?: string;
+      window_ms?: number;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/notifications/escalate-no-response",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const body = request.body ?? {};
+      const alt =
+        typeof body.alternate_person_id === "string"
+          ? body.alternate_person_id
+          : "p-sadeil";
+      const result = escalateNoResponseForRecipient(runtime.store, {
+        careRecipientId: id,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        alternatePersonId: alt,
+        alternateDisplayName:
+          typeof body.alternate_display_name === "string"
+            ? body.alternate_display_name
+            : undefined,
+        windowMs:
+          typeof body.window_ms === "number" ? body.window_ms : undefined,
+      });
+      if (!result.ok) {
+        return reply.code(403).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        results: result.results,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { reason?: string };
+  }>(
+    "/api/v1/care/notifications/:id/decline",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const body = request.body ?? {};
+      const n = declineNotification(
+        runtime.store,
+        principal.carePersonId,
+        id,
+        typeof body.reason === "string" ? body.reason : undefined,
+      );
+      if (!n) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "Notification not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        notification: n,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      series_appointment_id?: string;
+      occurrence_starts_at?: string;
+      kind?: string;
+      scope?: string;
+      new_starts_at?: string;
+      reason?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/schedule/recurrence-exception",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const body = request.body ?? {};
+      const result = applyRecurrenceException(runtime.store, {
+        careRecipientId: id,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        seriesAppointmentId:
+          typeof body.series_appointment_id === "string"
+            ? body.series_appointment_id
+            : "",
+        occurrenceStartsAt:
+          typeof body.occurrence_starts_at === "string"
+            ? body.occurrence_starts_at
+            : new Date().toISOString(),
+        kind:
+          body.kind === "cancel" ||
+          body.kind === "pause" ||
+          body.kind === "resume" ||
+          body.kind === "reschedule"
+            ? body.kind
+            : "skip",
+        scope:
+          body.scope === "this_and_future" || body.scope === "entire_series"
+            ? body.scope
+            : "this_occurrence",
+        newStartsAt:
+          typeof body.new_starts_at === "string" ? body.new_starts_at : null,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(201).send({
+        ok: true,
+        exception: result.exception,
+        preview: result.preview,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get(
+    "/api/v1/care/recipients/:id/schedule/:appointmentId/occurrences",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, appointmentId } = request.params as {
+        id: string;
+        appointmentId: string;
+      };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const apt = runtime.store
+        .getAppointments(id)
+        .find((a) => a.id === appointmentId);
+      if (!apt) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "Appointment not found",
+          correlation_id: correlationId(request),
+        });
+      }
+      const occurrences = expandRecurrenceOccurrences(
+        apt.startsAt,
+        apt.recurrenceRule,
+        8,
+      );
+      const exceptions = listRecurrenceExceptions(runtime.store, id, apt.id);
+      return reply.code(200).send({
+        ok: true,
+        recurrence_rule: apt.recurrenceRule ?? null,
+        occurrences,
+        exceptions,
+        note: "Internal expansion only — not a provider calendar",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get("/api/v1/care/recipients/:id/documents", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    return reply.code(200).send({
+      ok: true,
+      documents: listCareTextDocuments(runtime.store, id),
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { title?: string; body?: string };
+  }>("/api/v1/care/recipients/:id/documents", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    const result = ingestDocumentText(runtime.store, {
+      careRecipientId: id,
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+      title: typeof body.title === "string" ? body.title : "Care document",
+      body: typeof body.body === "string" ? body.body : "",
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      document: result.document,
+      proposals: result.proposals,
+      note: "Proposals require human confirmation before becoming care truth",
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { decision?: string };
+  }>(
+    "/api/v1/care/recipients/:id/documents/proposals/:proposalId",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, proposalId } = request.params as {
+        id: string;
+        proposalId: string;
+      };
+      const body = request.body ?? {};
+      const result = confirmDocumentProposal(runtime.store, {
+        careRecipientId: id,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        proposalId,
+        decision: body.decision === "reject" ? "reject" : "confirm",
+      });
+      if (!result.ok) {
+        return reply.code(400).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        result: result.result,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { reason?: string };
+  }>("/api/v1/care/recipients/:id/leave", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    const result = leaveCareCircle(runtime.store, {
+      careRecipientId: id,
+      actorPersonId: principal.carePersonId,
+      reason: typeof body.reason === "string" ? body.reason : undefined,
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      message: result.message,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: { reason?: string; sensitive?: boolean };
+  }>("/api/v1/care/recipients/:id/archive", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const body = request.body ?? {};
+    const result = archiveCareSpace(runtime.store, {
+      careRecipientId: id,
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+      reason:
+        typeof body.reason === "string" ? body.reason : "Archived by controller",
+      sensitive: body.sensitive === true,
+    });
+    if (!result.ok) {
+      return reply.code(403).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(200).send({
+      ok: true,
+      archive: result.archive,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get(
+    "/api/v1/care/recipients/:id/archive-state",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      return reply.code(200).send({
+        ok: true,
+        archive: getArchiveState(runtime.store, id),
+        representative: representativeAuthorityNote(
+          runtime.store,
+          id,
+          principal.carePersonId,
+        ),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  // silence unused import guards for getHandoffLifecycle when only ensure is used
+  void getHandoffLifecycle;
 }

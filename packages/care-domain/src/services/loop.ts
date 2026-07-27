@@ -23,6 +23,7 @@ import type {
   VerificationBundle,
 } from "../types.js";
 import { evaluateAccess } from "./access.js";
+import { createNotificationIfNew } from "./notifications.js";
 import {
   understandCareInput,
   toVerificationBundle,
@@ -632,9 +633,32 @@ export class CareLoopService {
       },
     });
 
+    // Propagate correction to active circle (authorized members only).
+    // Original event preserved; superseded; viewers receive in-app notice.
+    for (const rel of this.config.store.getRelationships(ctx.careRecipientId)) {
+      if (rel.status !== "active") continue;
+      if (rel.personId === ctx.actorPersonId) continue;
+      createNotificationIfNew(this.config.store, {
+        principalId: rel.personId,
+        careRecipientId: ctx.careRecipientId,
+        type: "CARE_UPDATE",
+        priority: "important",
+        title: "Correction to care record",
+        body: `Previous: ${prior.statement.slice(0, 80)} → Now: ${correctedValue.slice(0, 80)}. Original evidence preserved.`,
+        sourceType: "correction",
+        sourceId: correction.id,
+        actorPersonId: ctx.actorPersonId,
+        actorDisplayName: ctx.actorDisplayName,
+        actionType: "open_correction",
+        actionTarget: correction.id,
+        dedupeKey: `corr-prop:${correction.id}:${rel.personId}`,
+      });
+    }
+
     return {
       kind: "persisted",
-      message: "Correction saved. Previous evidence preserved.",
+      message:
+        "Correction saved. Previous evidence preserved. Authorized circle notified.",
       evidenceMode: "SYNTHETIC_FOUNDATION_BACKED",
       auditIds: [audit.id],
       persisted: {

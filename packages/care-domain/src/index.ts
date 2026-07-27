@@ -68,6 +68,11 @@ export * from "./services/invitation-preview.js";
 export * from "./services/etl-outbox.js";
 export * from "./services/care-work-items.js";
 export * from "./services/harmonized-ops.js";
+export * from "./services/handoff-lifecycle.js";
+export * from "./services/no-response-escalation.js";
+export * from "./services/recurrence-exceptions.js";
+export * from "./services/document-actions.js";
+export * from "./services/care-space-lifecycle.js";
 
 import { MemoryCareStore } from "./store/memory-store.js";
 import { CareLoopService } from "./services/loop.js";
