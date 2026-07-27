@@ -140,6 +140,9 @@ export function buildProjections(input: {
     stillNeedsAttention: string[];
     toPersonId?: string;
   } | null;
+  /** Live care circle — never hard-code Evelyn/Marcus. */
+  careTeam?: Array<{ name: string; role: string; phone?: string }>;
+  personNameMap?: Record<string, string>;
 }): CareProjections {
   const meds = input.state.medicationSchedules ?? [];
   const apts = input.state.appointments ?? [];
@@ -252,27 +255,18 @@ export function buildProjections(input: {
     OPEN_UNCERTAINTIES: [...new Set(OPEN_UNCERTAINTIES)].slice(0, 6),
     LATEST_PROVIDER_INSTRUCTIONS,
     RECENT_CHANGES,
-    CARE_TEAM_NOW: [
-      { name: "Marcus Carter", role: "Primary family caregiver", phone: "+1-555-0101" },
-      { name: "Maya Bennett", role: "Family / friend caregiver", phone: "+1-555-0102" },
-      {
-        name: "Daniel Kim",
-        role: "Professional caregiver / DSP support",
-        phone: "+1-555-0103",
-      },
-      {
-        name: "Dr. Priya Shah",
-        role: "Primary care physician",
-        phone: "+1-555-0199",
-      },
-    ],
+    CARE_TEAM_NOW: (input.careTeam ?? []).slice(0, 8),
     LAST_MEDICATION_ADMINISTRATIONS: records.slice(-5),
     RECENT_OBSERVATION_CLUSTERS: clusters,
     ACTIVE_HANDOFF: input.handoff
       ? {
           whatChanged: input.handoff.whatChanged,
           stillNeedsAttention: input.handoff.stillNeedsAttention,
-          toName: resolvePersonName(input.handoff.toPersonId),
+          toName: resolvePersonName(
+            input.handoff.toPersonId,
+            undefined,
+            input.personNameMap,
+          ),
         }
       : null,
     REMINDERS,
@@ -292,39 +286,24 @@ export function buildProjections(input: {
         note: SYNTHETIC_FACILITIES.clinic.note,
       },
     ],
-    // Recipient-specific: only attach dementia-oriented watch when profile/evidence supports it
+    // Watchlist only when observations/meds exist — not bound to a named fixture
     DEMENTIA_WATCH:
-      input.recipientId === "cr-olivia" ||
-      /evelyn/i.test(input.recipientName)
+      clusters.length || meds.length
         ? [
-            "Medication timing and with-food instructions",
-            "Dizziness or balance changes after meals",
-            "Fatigue after lunch compared with baseline",
-            "Hydration and meal completion",
-            "Mobility safety around transfers",
+            "Medication timing and with-food instructions when on plan",
+            "Dizziness or balance changes after meals when reported",
+            "Fatigue compared with recent baseline when reported",
+            "Hydration and meal completion when tracked",
+            "Mobility safety around transfers when notes exist",
           ]
-        : input.recipientId === "cr-robert" || /robert/i.test(input.recipientName)
-          ? [
-              "Morning medication routine",
-              "Steady walking tolerance",
-              "Support preferences during appointments",
-            ]
-          : [],
-    DSP_SUPPORT_NOTES:
-      input.recipientId === "cr-robert" || /robert/i.test(input.recipientName)
-        ? [
-            "Person-centered: ask Robert preferences before rushing a task",
-            "Document observations before leaving",
-            "Medication assist only per authorized care plan (Dr. Amara Cole)",
-            "Escalate concerns to Marcus and the clinic when needed",
-          ]
-        : [
-            "Person-centered: respect Evelyn's pace around lunch",
-            "Document observations before leaving; do not invent clinical conclusions",
-            "Medication assist only per current authorized care plan",
-            "Escalate unresolved medication mismatch to family primary + clinic",
-            "Share only role-authorized information with the next caregiver",
-          ],
+        : [],
+    DSP_SUPPORT_NOTES: [
+      `Person-centered: respect ${input.recipientName}'s pace and preferences`,
+      "Document observations before leaving; do not invent clinical conclusions",
+      "Medication assist only per current authorized care plan",
+      "Escalate unresolved medication mismatch to authorized family/clinic contacts",
+      "Share only role-authorized information with the next caregiver",
+    ],
   };
 }
 

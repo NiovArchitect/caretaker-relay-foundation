@@ -25,8 +25,12 @@ describe("relay intelligence restoration", () => {
     });
   }
 
-  it("normalizes evenlyn typo", () => {
-    expect(normalizeCareQuestionText("How is evenlyn")).toMatch(/Evelyn/i);
+  it("normalizes evenlyn typo against active recipient name only", () => {
+    expect(
+      normalizeCareQuestionText("How is evenlyn", ["Evelyn"]),
+    ).toMatch(/Evelyn/i);
+    // Without recipient context, do not hard-code Evelyn
+    expect(normalizeCareQuestionText("How is evenlyn")).toBe("How is evenlyn");
   });
 
   it("answers how is evenlyn / how is evelyn / feeling", () => {

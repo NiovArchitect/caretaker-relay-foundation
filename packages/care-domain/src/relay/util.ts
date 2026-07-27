@@ -4,20 +4,19 @@ export function str(v: unknown): string {
   return v == null ? "" : String(v);
 }
 
+/**
+ * Resolve a person display name without fixture hard-codes.
+ * Prefer store-provided name map / fallback; never invent Evelyn/Marcus.
+ */
 export function resolvePersonName(
   id: string | null | undefined,
   fallback?: string,
+  nameMap?: Record<string, string>,
 ): string {
-  const map: Record<string, string> = {
-    "p-sadeil": "Marcus Carter",
-    "p-maya": "Maya Bennett",
-    "p-walter": "Daniel Kim",
-    "p-dr-shah": "Dr. Priya Shah",
-    "p-pt": "Physical Therapy",
-    system: "System",
-  };
   if (!id) return fallback ?? "Someone in the care circle";
-  return map[id] ?? fallback ?? "Care team member";
+  if (nameMap?.[id]) return nameMap[id];
+  if (id === "system") return "System";
+  return fallback ?? "Care team member";
 }
 
 export function plainDiscrepancyMessage(

@@ -62,6 +62,33 @@ export type RelayAnswerResponse = AnswerEngineResult & {
   evidenceBound: boolean;
 };
 
+function careTeamFromStore(
+  store: CareStore,
+  careRecipientId: string,
+): Array<{ name: string; role: string; phone?: string }> {
+  const out: Array<{ name: string; role: string; phone?: string }> = [];
+  for (const rel of store.getRelationships(careRecipientId)) {
+    if (rel.status !== "active") continue;
+    const person = store.getPerson(rel.personId);
+    out.push({
+      name: person?.displayName ?? rel.roleLabel ?? rel.personId,
+      role: rel.roleLabel || rel.role,
+    });
+  }
+  return out;
+}
+
+function personNameMapFromStore(store: CareStore): Record<string, string> {
+  const map: Record<string, string> = { system: "System" };
+  for (const recipient of store.listRecipients()) {
+    for (const rel of store.getRelationships(recipient.id)) {
+      const p = store.getPerson(rel.personId);
+      if (p) map[p.id] = p.displayName;
+    }
+  }
+  return map;
+}
+
 function stateToBag(
   state: CurrentCareState | undefined,
   careRecipientId: string,
@@ -949,6 +976,8 @@ function answerWithState(
       : null,
     priorEntities,
     conversationId,
+    careTeam: careTeamFromStore(store, req.careRecipientId),
+    personNameMap: personNameMapFromStore(store),
     resolveMemory: (classified, q) =>
       resolveWithDurableMemory(
         store,

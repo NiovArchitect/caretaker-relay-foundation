@@ -259,24 +259,41 @@ export function classifyPersona(roleLabel: string | undefined | null): Caregiver
   return "unknown";
 }
 
-/** Normalize common caregiver typos for recipient names before intent match. */
-export function normalizeCareQuestionText(raw: string): string {
+/**
+ * Normalize typos against authorized recipient preferred names only.
+ * Never hard-code Evelyn/Marcus — pass active recipient first names.
+ */
+export function normalizeCareQuestionText(
+  raw: string,
+  recipientFirstNames: string[] = [],
+): string {
   let s = raw.trim();
-  // Evelyn / evenlyn / evelin / evelyn's
-  s = s.replace(/\bevenlyn\b/gi, "Evelyn");
-  s = s.replace(/\bevelin\b/gi, "Evelyn");
-  s = s.replace(/\bevelynn\b/gi, "Evelyn");
-  s = s.replace(/\bevelyns\b/gi, "Evelyn's");
-  s = s.replace(/\brobort\b/gi, "Robert");
-  s = s.replace(/\broberts\b/gi, "Robert's");
+  for (const name of recipientFirstNames) {
+    const first = name.trim().split(/\s+/)[0];
+    if (!first || first.length < 3) continue;
+    // Common vowel-swap / double-letter caregiver typos for this first name
+    const lower = first.toLowerCase();
+    // e.g. evenlyn for evelyn: allow one transposition pattern around vowels
+    const re = new RegExp(
+      `\\b${lower.slice(0, 2)}[a-z]{0,3}${lower.slice(-2)}\\b`,
+      "gi",
+    );
+    s = s.replace(re, (m) => {
+      if (m.toLowerCase() === lower) return m;
+      // only rewrite if edit distance-ish short
+      if (Math.abs(m.length - first.length) <= 2) return first;
+      return m;
+    });
+  }
   return s;
 }
 
 export function classifyIntent(
   raw: string,
   priorEntities?: ClassifiedTurn["entities"],
+  opts?: { recipientFirstNames?: string[] },
 ): ClassifiedTurn {
-  const text = normalizeCareQuestionText(raw);
+  const text = normalizeCareQuestionText(raw, opts?.recipientFirstNames ?? []);
   const q = text.toLowerCase();
   const isQuestion =
     QUESTION_RE.test(text) ||
@@ -300,14 +317,15 @@ export function classifyIntent(
     references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
 
-  // High-value synthesis: "How is Evelyn / How is she / How is evenlyn"
+  // High-value synthesis: "How is {name} / How is she / How is they"
   if (
-    /how('s| is) (evelyn|robert|she|he|mom|they|everything)\b/.test(q) ||
-    /how('s| is) (she|he|evelyn|robert) (doing|today|feeling|now)/.test(q) ||
+    /how('s| is) (she|he|mom|dad|they|everything|my (mom|dad|client|patient))\b/.test(
+      q,
+    ) ||
+    /how('s| is) (she|he) (doing|today|feeling|now)/.test(q) ||
     /how are they|how is everything|what's (the )?latest (on|with)/.test(q) ||
-    /how's (evelyn|robert|mom|she|he)/.test(q) ||
     /^how is\b/.test(q) ||
-    /\bhow is (evelyn|robert|she|he)\b/.test(q)
+    /\bhow (is|did|was) [a-z]{2,20}\b/.test(q)
   ) {
     intents.push("STATUS_SYNTHESIS");
     intents.push("CHANGE_SINCE");
@@ -689,11 +707,8 @@ export function classifyIntent(
     medicationHint = medicationHint ?? "Metformin";
   }
 
+  // Person hints only from prior conversation entities — not fixture cast
   let personHint = priorEntities?.personHint;
-  if (/maya/.test(q)) personHint = "Maya Bennett";
-  if (/daniel/.test(q)) personHint = "Daniel Kim";
-  if (/marcus/.test(q)) personHint = "Marcus Carter";
-  if (/dr\.?\s*shah|priya/.test(q)) personHint = "Dr. Priya Shah";
   // Named person + give/gave → admin history ONLY for history-shaped questions,
   // never for redose/permission ("should I give…")
   if (

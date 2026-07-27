@@ -38,6 +38,7 @@ export * from "./services/export.js";
 export * from "./services/idempotency.js";
 export * from "./fhir/mapping.js";
 export * from "./scenario/olivia.js";
+export * from "./scenario/care-universes.js";
 export * from "./datasets/golden.js";
 export * from "./relay/intents.js";
 export * from "./relay/projections.js";

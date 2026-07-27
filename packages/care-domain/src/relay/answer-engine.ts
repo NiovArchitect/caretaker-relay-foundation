@@ -41,6 +41,8 @@ export type AnswerEngineInput = {
   priorEntities?: ClassifiedTurn["entities"];
   resolveMemory?: (c: ClassifiedTurn, q: string) => ClassifiedTurn;
   conversationId?: string;
+  careTeam?: Array<{ name: string; role: string; phone?: string }>;
+  personNameMap?: Record<string, string>;
 };
 
 export type AnswerEngineResult = {
@@ -62,7 +64,11 @@ function str(v: unknown): string {
 
 export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
   const persona = classifyPersona(input.roleLabel);
-  let classified = classifyIntent(input.question, input.priorEntities);
+  const first =
+    input.recipientName.trim().split(/\s+/)[0] ?? input.recipientName;
+  let classified = classifyIntent(input.question, input.priorEntities, {
+    recipientFirstNames: [first, input.recipientName].filter(Boolean),
+  });
   if (input.resolveMemory) {
     classified = input.resolveMemory(classified, input.question);
   }
@@ -72,6 +78,8 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
     recipientId: input.recipientId,
     recipientName: input.recipientName,
     attentionLines: input.attentionLines,
+    careTeam: input.careTeam,
+    personNameMap: input.personNameMap,
     handoff: input.handoff,
   });
 

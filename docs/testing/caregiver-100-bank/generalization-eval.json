@@ -1,0 +1,378 @@
+{
+  "total_evaluations": 422,
+  "pass": 359,
+  "rate": 0.8507109004739336,
+  "generic": 0,
+  "fixture_name_leaks": 0,
+  "unauthorized_checks": 2,
+  "universes": [
+    "A_rich_family",
+    "B_sparse_new",
+    "C_dsp_idd",
+    "D_adrd",
+    "E_mobility",
+    "H_zero_access"
+  ],
+  "failed": [
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-004",
+      "rendered": "What is her medication",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-007",
+      "rendered": "Who is your caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-023",
+      "rendered": "What should I hand off to the next caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-031",
+      "rendered": "What medicines does she take today?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-032",
+      "rendered": "Has her noon medication been given yet?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-033",
+      "rendered": "Who confirmed her last medication?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-035",
+      "rendered": "When is the next medication due?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-038",
+      "rendered": "What appointments does she have today?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-039",
+      "rendered": "Which appointment is actually next?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-043",
+      "rendered": "Move her physical therapy to Friday afternoon.",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-073",
+      "rendered": "Who is with Alicia right now?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-074",
+      "rendered": "Who is helping after me?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-075",
+      "rendered": "Is tomorrow's shift covered?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-076",
+      "rendered": "Did Priya Patel accept the coverage request?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-079",
+      "rendered": "Who should I contact about the medication conflict?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician |  | Care team contacts"
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-080",
+      "rendered": "What do I need to do before the end of my shift?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Nothing urgent is flagged right now. |  | Coming up: | • Metformin 500 mg · 12:00 PM | • Physical therapy · "
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-082",
+      "rendered": "What reminders are coming up?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Nothing urgent is flagged right now. |  | Coming up: | • Metformin 500 mg · 12:00 PM | • Physical therapy · "
+    },
+    {
+      "universe": "A_rich_family",
+      "qid": "CQ-085",
+      "rendered": "What happens if nobody accepts the shift?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Nothing urgent is flagged right now. |  | Coming up: | • Metformin 500 mg · 12:00 PM | • Physical therapy · "
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-007",
+      "rendered": "Who is your caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-023",
+      "rendered": "What should I hand off to the next caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-038",
+      "rendered": "What appointments does she have today?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Upcoming appointment (logistics): | Physical therapy · Friday · 2:00 PM | Community PT (synthetic) | Trans"
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-039",
+      "rendered": "Which appointment is actually next?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Upcoming appointment (logistics): | Physical therapy · Friday · 2:00 PM | Community PT (synthetic) | Trans"
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-043",
+      "rendered": "Move her physical therapy to Friday afternoon.",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Upcoming appointment (logistics): | Physical therapy · Friday · 2:00 PM | Community PT (synthetic) | Trans"
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-073",
+      "rendered": "Who is with Noah right now?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-074",
+      "rendered": "Who is helping after me?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-075",
+      "rendered": "Is tomorrow's shift covered?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "C_dsp_idd",
+      "qid": "CQ-076",
+      "rendered": "Did Ethan Brooks accept the coverage request?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-004",
+      "rendered": "What is her medication",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-007",
+      "rendered": "Who is your caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-023",
+      "rendered": "What should I hand off to the next caregiver?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-031",
+      "rendered": "What medicines does she take today?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-032",
+      "rendered": "Has her noon medication been given yet?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-033",
+      "rendered": "Who confirmed her last medication?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-035",
+      "rendered": "When is the next medication due?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Metformin 500 mg | Take at 12:00 PM | With food | Authorized by Primary care physician"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-038",
+      "rendered": "What appointments does she have today?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-039",
+      "rendered": "Which appointment is actually next?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-043",
+      "rendered": "Move her physical therapy to Friday afternoon.",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Physical therapy | Friday · 2:00 PM | Location: Community PT (synthetic) | Status: scheduled | Travel: about"
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-073",
+      "rendered": "Who is with Helen right now?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-074",
+      "rendered": "Who is helping after me?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    },
+    {
+      "universe": "D_adrd",
+      "qid": "CQ-075",
+      "rendered": "Is tomorrow's shift covered?",
+      "pass": false,
+      "isGeneric": false,
+      "leaksFixture": false,
+      "preview": "Coverage for this person is not listed yet."
+    }
+  ]
+}
