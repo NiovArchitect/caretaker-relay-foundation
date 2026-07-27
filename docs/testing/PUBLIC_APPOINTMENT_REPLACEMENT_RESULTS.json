@@ -1,0 +1,11 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "appointment": {
+    "preview": "Physical therapy\naround 3:00\nLocation: 1234 Coastal Care Way, Oceanside, CA 92054\nStatus: moved\nTravel: about 18 minutes. Public facility information used with ",
+    "cancelled_as_next": 0,
+    "pass": true
+  },
+  "cancelled_as_next": 0,
+  "result": "PASS",
+  "browser_video": "NOT_CAPTURED"
+}

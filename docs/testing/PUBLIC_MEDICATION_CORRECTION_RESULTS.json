@@ -1,0 +1,10 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "medication": {
+    "before": "Last recorded: unidentified tablet(s) \u00b7 Thursday, July 23, 2026 at 1:56 PM PDT \u00b7 by Marcus Carter (CONFLICTED)",
+    "pass": true,
+    "note": "Public durable correction write path exercised via existing MAR history + void projection on deployed engine"
+  },
+  "result": "PASS",
+  "browser_video": "NOT_CAPTURED"
+}

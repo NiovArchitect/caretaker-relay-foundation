@@ -1,0 +1,21 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "revocation": {
+    "revoke_status": 200,
+    "before_status": 200,
+    "after": {
+      "status": 403,
+      "preview": "Access was revoked and no longer functions."
+    },
+    "replay": {
+      "status": 403,
+      "preview": "Access was revoked and no longer functions."
+    },
+    "stale": 0,
+    "pass": true
+  },
+  "stale_post_revocation_answers": 0,
+  "result": "PASS",
+  "browser_tabs": "API dual-request equivalent (follow-up + replay)",
+  "browser_video": "NOT_CAPTURED"
+}

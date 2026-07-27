@@ -1,0 +1,41 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "invitation_probe": {
+    "results": [
+      {
+        "q": "What medicines does she take?",
+        "status": 403,
+        "code": "NO_RELATIONSHIP",
+        "preview": "No care relationship grants access."
+      },
+      {
+        "q": "What appointments does she have?",
+        "status": 403,
+        "code": "NO_RELATIONSHIP",
+        "preview": "No care relationship grants access."
+      },
+      {
+        "q": "How is her mood?",
+        "status": 403,
+        "code": "NO_RELATIONSHIP",
+        "preview": "No care relationship grants access."
+      },
+      {
+        "q": "Show emergency information",
+        "status": 403,
+        "code": "NO_RELATIONSHIP",
+        "preview": "No care relationship grants access."
+      },
+      {
+        "q": "Who is on the care team?",
+        "status": 403,
+        "code": "NO_RELATIONSHIP",
+        "preview": "No care relationship grants access."
+      }
+    ],
+    "pass": true
+  },
+  "result": "PASS",
+  "care_answers_before_accept": 0,
+  "browser_video": "NOT_CAPTURED"
+}

@@ -1,0 +1,12 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "shift_evolution": {
+    "status1": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last",
+    "status2": "Here's what changed for Evelyn Carter:\n\n\u2022 Meal recorded (from Daniel Kim)\n\u2022 Caregiver reported: seem",
+    "static": 0,
+    "pass": true
+  },
+  "static_answers": 0,
+  "result": "PASS",
+  "browser_video": "NOT_CAPTURED"
+}

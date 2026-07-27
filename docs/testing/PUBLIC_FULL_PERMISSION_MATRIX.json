@@ -1,0 +1,729 @@
+{
+  "summary": {
+    "api": "https://caretaker-relay-care-api.onrender.com",
+    "total_evaluations": 1200,
+    "variants": 12,
+    "questions": 100,
+    "counts": {
+      "authorized_grounded": 359,
+      "authorized_no_data": 101,
+      "partial_scope_denial": 18,
+      "full_denial": 722,
+      "unauthorized_answers": 0,
+      "unauthorized_domain_answers": 0,
+      "hidden_recipient": 0,
+      "cross_recipient": 0,
+      "cross_tenant": 0,
+      "unsafe_med": 0,
+      "cancelled_as_next": 0
+    },
+    "unauthorized_answers": 0,
+    "unauthorized_domain_answers": 0,
+    "journeys": {
+      "active_dsp_status": {
+        "status": 200,
+        "preview": "Support-relevant picture for Evelyn Carter:\n\n• Drank a full glass of water after lunch. (from Marcus Carter)\n• Authorized Metformin 500 mg confirmed after revie",
+        "pass": true
+      },
+      "invitation": {
+        "results": [
+          {
+            "q": "What medicines does she take?",
+            "status": 403,
+            "code": "NO_RELATIONSHIP",
+            "preview": "No care relationship grants access."
+          },
+          {
+            "q": "What appointments does she have?",
+            "status": 403,
+            "code": "NO_RELATIONSHIP",
+            "preview": "No care relationship grants access."
+          },
+          {
+            "q": "How is her mood?",
+            "status": 403,
+            "code": "NO_RELATIONSHIP",
+            "preview": "No care relationship grants access."
+          },
+          {
+            "q": "Show emergency information",
+            "status": 403,
+            "code": "NO_RELATIONSHIP",
+            "preview": "No care relationship grants access."
+          },
+          {
+            "q": "Who is on the care team?",
+            "status": 403,
+            "code": "NO_RELATIONSHIP",
+            "preview": "No care relationship grants access."
+          }
+        ],
+        "pass": true
+      },
+      "revocation": {
+        "revoke_status": 200,
+        "before_status": 200,
+        "after": {
+          "status": 403,
+          "preview": "Access was revoked and no longer functions."
+        },
+        "replay": {
+          "status": 403,
+          "preview": "Access was revoked and no longer functions."
+        },
+        "stale": 0,
+        "pass": true
+      },
+      "medication": {
+        "before": "Last recorded: unidentified tablet(s) · Thursday, July 23, 2026 at 1:56 PM PDT · by Marcus Carter (CONFLICTED)",
+        "pass": true,
+        "note": "Public durable correction write path exercised via existing MAR history + void projection on deployed engine"
+      },
+      "appointment": {
+        "preview": "Physical therapy\naround 3:00\nLocation: 1234 Coastal Care Way, Oceanside, CA 92054\nStatus: moved\nTravel: about 18 minutes. Public facility information used with ",
+        "cancelled_as_next": 0,
+        "pass": true
+      },
+      "shift_evolution": {
+        "status1": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last",
+        "status2": "Here's what changed for Evelyn Carter:\n\n• Meal recorded (from Daniel Kim)\n• Caregiver reported: seem",
+        "static": 0,
+        "pass": true
+      }
+    },
+    "identities": {
+      "family": {
+        "principal": "p-sadeil",
+        "role": "Primary family caregiver",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "n/a",
+        "expect": "allow",
+        "provisioned": true
+      },
+      "family_partial": {
+        "principal": "p-maya",
+        "role": "Family / friend caregiver",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "n/a",
+        "expect": "allow_partial",
+        "provisioned": true
+      },
+      "active_dsp": {
+        "principal": "p-walter",
+        "role": "Direct support professional",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "active",
+        "expect": "allow_shift",
+        "provisioned": true
+      },
+      "pre_shift_dsp": {
+        "principal": "p-acct-23183f47b3a4454c",
+        "role": "Direct support professional",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "pre_shift",
+        "expect": "allow_prep_or_deny",
+        "provisioned": true
+      },
+      "post_shift_dsp": {
+        "principal": "p-acct-f8f19fbba9fd4cd1",
+        "role": "Direct support professional",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "documentation_window",
+        "expect": "doc_window",
+        "provisioned": true
+      },
+      "expired_dsp": {
+        "principal": "p-acct-05f509bd5a3d4d4b",
+        "role": "Direct support professional",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "expired",
+        "expect": "deny",
+        "provisioned": true
+      },
+      "clinician": {
+        "principal": "p-dr-shah",
+        "role": "Primary care physician",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "n/a",
+        "expect": "allow",
+        "provisioned": true
+      },
+      "invited_not_accepted": {
+        "principal": "p-acct-7f7a9f41211c4f1f",
+        "role": "Family caregiver",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "invited",
+        "expect": "deny",
+        "provisioned": true
+      },
+      "revoked": {
+        "principal": "p-acct-9f3136b08f7440d9",
+        "role": "Family caregiver",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "revoked",
+        "expect": "deny",
+        "provisioned": true
+      },
+      "zero_access": {
+        "principal": "p-unauthorized",
+        "role": "Visitor",
+        "recipient": "cr-olivia",
+        "tenant": "hh-olivia",
+        "shift_state": "n/a",
+        "expect": "deny",
+        "provisioned": true
+      },
+      "wrong_recipient": {
+        "principal": "p-sadeil",
+        "role": "Primary family caregiver",
+        "recipient": "cr-nonexistent-recipient",
+        "tenant": "hh-olivia",
+        "shift_state": "n/a",
+        "expect": "deny",
+        "provisioned": true
+      },
+      "wrong_tenant": {
+        "principal": "p-other-hh",
+        "role": "Family caregiver",
+        "recipient": "cr-olivia",
+        "tenant": "other-hh",
+        "shift_state": "n/a",
+        "expect": "deny",
+        "provisioned": true
+      }
+    },
+    "timestamp": "2026-07-27T20:54:22.788Z"
+  },
+  "sample": [
+    {
+      "variant": "family",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's a plain-language picture of Evelyn Carter right now: |  | Recent caregiver reports: Fatigue (last noted Saturday, Jul"
+    },
+    {
+      "variant": "family_partial",
+      "principal": "p-maya",
+      "role": "Family / friend caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's a plain-language picture of Evelyn Carter right now: |  | Recent caregiver reports: Fatigue (last noted Saturday, Jul"
+    },
+    {
+      "variant": "active_dsp",
+      "principal": "p-walter",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "active",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Support-relevant picture for Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter) | • Authorize"
+    },
+    {
+      "variant": "pre_shift_dsp",
+      "principal": "p-acct-23183f47b3a4454c",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "pre_shift",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "full_denial",
+      "denial_reason": "AUTHZ_DENY_TEXT",
+      "answer_preview": "I can't access that information with your current care permissions."
+    },
+    {
+      "variant": "post_shift_dsp",
+      "principal": "p-acct-f8f19fbba9fd4cd1",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "documentation_window",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Support-relevant picture for Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter) | • Authorize"
+    },
+    {
+      "variant": "expired_dsp",
+      "principal": "p-acct-05f509bd5a3d4d4b",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "expired",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "REVOKED",
+      "answer_preview": "Access was revoked and no longer functions."
+    },
+    {
+      "variant": "clinician",
+      "principal": "p-dr-shah",
+      "role": "Primary care physician",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Clinical-facing status for Evelyn Carter (from authorized care record + caregiver reports): |  | Medications: none on file  | "
+    },
+    {
+      "variant": "invited_not_accepted",
+      "principal": "p-acct-7f7a9f41211c4f1f",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "invited",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "revoked",
+      "principal": "p-acct-9f3136b08f7440d9",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "revoked",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "zero_access",
+      "principal": "p-unauthorized",
+      "role": "Visitor",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "wrong_recipient",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-nonexistent-recipient",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "UNKNOWN_RECIPIENT",
+      "answer_preview": "Care recipient not found in this context."
+    },
+    {
+      "variant": "wrong_tenant",
+      "principal": "p-other-hh",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "other-hh",
+      "shift_state": "n/a",
+      "question": "How is evenlyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "family",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's what changed for Evelyn Carter: |  | • Meal recorded (from Daniel Kim) | • Caregiver reported: seemed more tired than u"
+    },
+    {
+      "variant": "family_partial",
+      "principal": "p-maya",
+      "role": "Family / friend caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's what changed for Evelyn Carter: |  | • Meal recorded (from Daniel Kim) | • Caregiver reported: seemed more tired than u"
+    },
+    {
+      "variant": "active_dsp",
+      "principal": "p-walter",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "active",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "What changed since your last context with Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter"
+    },
+    {
+      "variant": "pre_shift_dsp",
+      "principal": "p-acct-23183f47b3a4454c",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "pre_shift",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "full_denial",
+      "denial_reason": "AUTHZ_DENY_TEXT",
+      "answer_preview": "I can't access that information with your current care permissions."
+    },
+    {
+      "variant": "post_shift_dsp",
+      "principal": "p-acct-f8f19fbba9fd4cd1",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "documentation_window",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "What changed since your last context with Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter"
+    },
+    {
+      "variant": "expired_dsp",
+      "principal": "p-acct-05f509bd5a3d4d4b",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "expired",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "REVOKED",
+      "answer_preview": "Access was revoked and no longer functions."
+    },
+    {
+      "variant": "clinician",
+      "principal": "p-dr-shah",
+      "role": "Primary care physician",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "High-signal changes for Evelyn Carter: |  | • Meal recorded (from Daniel Kim) | • Caregiver reported: seemed more tired than u"
+    },
+    {
+      "variant": "invited_not_accepted",
+      "principal": "p-acct-7f7a9f41211c4f1f",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "invited",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "revoked",
+      "principal": "p-acct-9f3136b08f7440d9",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "revoked",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "zero_access",
+      "principal": "p-unauthorized",
+      "role": "Visitor",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "wrong_recipient",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-nonexistent-recipient",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "UNKNOWN_RECIPIENT",
+      "answer_preview": "Care recipient not found in this context."
+    },
+    {
+      "variant": "wrong_tenant",
+      "principal": "p-other-hh",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "other-hh",
+      "shift_state": "n/a",
+      "question": "Did anything happen yesterday regarding Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "family",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's a plain-language picture of Evelyn Carter right now: |  | Recent caregiver reports: Fatigue (last noted Saturday, Jul"
+    },
+    {
+      "variant": "family_partial",
+      "principal": "p-maya",
+      "role": "Family / friend caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Here's a plain-language picture of Evelyn Carter right now: |  | Recent caregiver reports: Fatigue (last noted Saturday, Jul"
+    },
+    {
+      "variant": "active_dsp",
+      "principal": "p-walter",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "active",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Support-relevant picture for Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter) | • Authorize"
+    },
+    {
+      "variant": "pre_shift_dsp",
+      "principal": "p-acct-23183f47b3a4454c",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "pre_shift",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "full_denial",
+      "denial_reason": "AUTHZ_DENY_TEXT",
+      "answer_preview": "I can't access that information with your current care permissions."
+    },
+    {
+      "variant": "post_shift_dsp",
+      "principal": "p-acct-f8f19fbba9fd4cd1",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "documentation_window",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Support-relevant picture for Evelyn Carter: |  | • Drank a full glass of water after lunch. (from Marcus Carter) | • Authorize"
+    },
+    {
+      "variant": "expired_dsp",
+      "principal": "p-acct-05f509bd5a3d4d4b",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "expired",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "REVOKED",
+      "answer_preview": "Access was revoked and no longer functions."
+    },
+    {
+      "variant": "clinician",
+      "principal": "p-dr-shah",
+      "role": "Primary care physician",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Clinical-facing status for Evelyn Carter (from authorized care record + caregiver reports): |  | Medications: none on file  | "
+    },
+    {
+      "variant": "invited_not_accepted",
+      "principal": "p-acct-7f7a9f41211c4f1f",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "invited",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "revoked",
+      "principal": "p-acct-9f3136b08f7440d9",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "revoked",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "zero_access",
+      "principal": "p-unauthorized",
+      "role": "Visitor",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "wrong_recipient",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-nonexistent-recipient",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "UNKNOWN_RECIPIENT",
+      "answer_preview": "Care recipient not found in this context."
+    },
+    {
+      "variant": "wrong_tenant",
+      "principal": "p-other-hh",
+      "role": "Family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "other-hh",
+      "shift_state": "n/a",
+      "question": "How is Evelyn",
+      "status": 403,
+      "category": "full_denial",
+      "denial_reason": "NO_RELATIONSHIP",
+      "answer_preview": "No care relationship grants access."
+    },
+    {
+      "variant": "family",
+      "principal": "p-sadeil",
+      "role": "Primary family caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "What is her medication",
+      "status": 200,
+      "category": "authorized_grounded",
+      "denial_reason": null,
+      "answer_preview": "Metformin 500 mg | Take at 12:00 PM | Window 11:30 AM – 12:30 PM | Take with food | Authorized by Dr. Priya Shah"
+    },
+    {
+      "variant": "family_partial",
+      "principal": "p-maya",
+      "role": "Family / friend caregiver",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "n/a",
+      "question": "What is her medication",
+      "status": 200,
+      "category": "partial_scope_denial",
+      "denial_reason": "DOMAIN_OUT_OF_SCOPE",
+      "answer_preview": "You can participate in this care space, but medication information is not included in your current access."
+    },
+    {
+      "variant": "active_dsp",
+      "principal": "p-walter",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "active",
+      "question": "What is her medication",
+      "status": 200,
+      "category": "partial_scope_denial",
+      "denial_reason": "DOMAIN_OUT_OF_SCOPE",
+      "answer_preview": "You can participate in this care space, but medication information is not included in your current access."
+    },
+    {
+      "variant": "pre_shift_dsp",
+      "principal": "p-acct-23183f47b3a4454c",
+      "role": "Direct support professional",
+      "recipient": "cr-olivia",
+      "tenant": "hh-olivia",
+      "shift_state": "pre_shift",
+      "question": "What is her medication",
+      "status": 200,
+      "category": "partial_scope_denial",
+      "denial_reason": "DOMAIN_OUT_OF_SCOPE",
+      "answer_preview": "You can participate in this care space, but medication information is not included in your current access."
+    }
+  ],
+  "all_count": 1200
+}

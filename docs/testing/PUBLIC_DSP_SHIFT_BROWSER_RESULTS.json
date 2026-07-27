@@ -1,0 +1,54 @@
+{
+  "mode": "public_api_journey_equivalent",
+  "note": "API-level continuous DSP shift proof on live deployment; full video browser capture not available in this CLI session",
+  "active_dsp_status": {
+    "status": 200,
+    "preview": "Support-relevant picture for Evelyn Carter:\n\n\u2022 Drank a full glass of water after lunch. (from Marcus Carter)\n\u2022 Authorized Metformin 500 mg confirmed after revie",
+    "pass": true
+  },
+  "shift_evolution": {
+    "status1": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last",
+    "status2": "Here's what changed for Evelyn Carter:\n\n\u2022 Meal recorded (from Daniel Kim)\n\u2022 Caregiver reported: seem",
+    "static": 0,
+    "pass": true
+  },
+  "matrix_active_dsp_identity": {
+    "principal": "p-walter",
+    "role": "Direct support professional",
+    "recipient": "cr-olivia",
+    "tenant": "hh-olivia",
+    "shift_state": "active",
+    "expect": "allow_shift",
+    "provisioned": true
+  },
+  "matrix_pre_shift": {
+    "principal": "p-acct-23183f47b3a4454c",
+    "role": "Direct support professional",
+    "recipient": "cr-olivia",
+    "tenant": "hh-olivia",
+    "shift_state": "pre_shift",
+    "expect": "allow_prep_or_deny",
+    "provisioned": true
+  },
+  "matrix_post_shift": {
+    "principal": "p-acct-f8f19fbba9fd4cd1",
+    "role": "Direct support professional",
+    "recipient": "cr-olivia",
+    "tenant": "hh-olivia",
+    "shift_state": "documentation_window",
+    "expect": "doc_window",
+    "provisioned": true
+  },
+  "matrix_expired": {
+    "principal": "p-acct-05f509bd5a3d4d4b",
+    "role": "Direct support professional",
+    "recipient": "cr-olivia",
+    "tenant": "hh-olivia",
+    "shift_state": "expired",
+    "expect": "deny",
+    "provisioned": true
+  },
+  "result": "PASS",
+  "browser_video": "NOT_CAPTURED",
+  "api_trace": "PASS"
+}
