@@ -705,25 +705,37 @@ function answerWithState(
       }
     } else if (personIntent === "APPOINTMENT_CONFIRM_BOOK") {
       const prior = [...priorTurns].reverse().find((t) =>
-        /slot id:|proposed slot|draft confirmation/i.test(t.answerSummary),
+        /slot id:|proposed slot|draft confirmation|available:|appointment request/i.test(
+          t.answerSummary,
+        ),
       );
       const slotMatch = prior?.answerSummary.match(/Slot id:\s*(\S+)/i);
       const labelMatch = prior?.answerSummary.match(
         /Proposed slot:\s*([^\n]+)/i,
       );
-      if (!slotMatch && !labelMatch) {
+      // User may paste an offered slot line directly: "Wednesday, July 29 · 2:00 PM PDT"
+      const userSlotLabel = (() => {
+        const m = req.question.match(
+          /((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)[^\n]{0,40}\d{1,2}:\d{2}\s*(?:am|pm)[^\n]{0,12})/i,
+        );
+        return m?.[1]?.trim() ?? null;
+      })();
+      if (!slotMatch && !labelMatch && !userSlotLabel && !prior) {
         answer =
-          `I don't have a pending appointment draft to confirm. Ask me to schedule a doctor appointment first, pick an available slot, then say “confirm appointment request.”`;
+          `I don't have a pending appointment draft to confirm. Ask me to schedule an appointment first, pick an available slot, then confirm that time.`;
+      } else if (/3:30\s*PM/i.test(req.question) || /1530|3:30 PM/i.test(userSlotLabel ?? "")) {
+        answer =
+          `I can't book that slot — it is marked unavailable (collision) on the lab Schedule/Slot layer.\n` +
+          `Pick an available slot instead.`;
       } else {
-        const slotId = slotMatch?.[1] ?? `slot-req-${Date.now().toString(36)}`;
+        const slotId =
+          slotMatch?.[1] ??
+          `slot-req-${Date.now().toString(36)}`;
         const label =
-          labelMatch?.[1]?.trim() ?? "Requested clinic visit (time pending)";
-        // Collision: refuse unavailable synthetic slot
-        if (/1530|3:30 PM/i.test(slotId + label)) {
-          answer =
-            `I can't book that slot — it is marked unavailable (collision) on the lab Schedule/Slot layer.\n` +
-            `Pick an available slot instead.`;
-        } else {
+          labelMatch?.[1]?.trim() ??
+          userSlotLabel ??
+          "Requested visit (time from your selection)";
+        {
           const aptId = `apt-req-${slotId}`;
           const existing = store
             .getAppointments(req.careRecipientId)
@@ -736,7 +748,7 @@ function answerWithState(
             store.upsertAppointment({
               id: aptId,
               careRecipientId: req.careRecipientId,
-              title: "Doctor / clinic visit (caregiver-requested)",
+              title: "Care appointment (caregiver-requested)",
               startsAt: "2026-07-29T21:00:00.000Z",
               startsAtLabel: label,
               location: "Coastal Family Medicine (synthetic)",

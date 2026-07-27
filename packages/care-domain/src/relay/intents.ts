@@ -259,15 +259,30 @@ export function classifyPersona(roleLabel: string | undefined | null): Caregiver
   return "unknown";
 }
 
+/** Normalize common caregiver typos for recipient names before intent match. */
+export function normalizeCareQuestionText(raw: string): string {
+  let s = raw.trim();
+  // Evelyn / evenlyn / evelin / evelyn's
+  s = s.replace(/\bevenlyn\b/gi, "Evelyn");
+  s = s.replace(/\bevelin\b/gi, "Evelyn");
+  s = s.replace(/\bevelynn\b/gi, "Evelyn");
+  s = s.replace(/\bevelyns\b/gi, "Evelyn's");
+  s = s.replace(/\brobort\b/gi, "Robert");
+  s = s.replace(/\broberts\b/gi, "Robert's");
+  return s;
+}
+
 export function classifyIntent(
   raw: string,
   priorEntities?: ClassifiedTurn["entities"],
 ): ClassifiedTurn {
-  const text = raw.trim();
+  const text = normalizeCareQuestionText(raw);
   const q = text.toLowerCase();
   const isQuestion =
     QUESTION_RE.test(text) ||
-    /tell me|show me|prepare|summarize|what about|anything i need/.test(q);
+    /tell me|show me|prepare|summarize|what about|anything i need|how is|how'?s|how are|who is|what('s| is)|did anything|feeling|mood/.test(
+      q,
+    );
   const isObservationUpdate =
     !isQuestion &&
     /\b(gave|took|seemed|noticed|ate|dizzy|tired|tired|fell|slept|refused)\b/.test(
@@ -279,18 +294,72 @@ export function classifyIntent(
   if (/\bit\b|\bthat (medicine|med|one|dose)\b|\bthat\b/.test(q)) {
     references.push("it");
   }
-  if (/\bshe\b|\bher\b|\bmom\b|\bevelyn\b/.test(q)) references.push("recipient");
-  if (/\byesterday\b/.test(q)) references.push("yesterday");
+  if (/\bshe\b|\bher\b|\bmom\b|\bevelyn\b|\brobert\b/.test(q))
+    references.push("recipient");
+  if (/\byesterday\b|\bprevious shift\b|\blast shift\b/.test(q))
+    references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
 
-  // High-value synthesis: "How is Evelyn doing?"
+  // High-value synthesis: "How is Evelyn / How is she / How is evenlyn"
   if (
-    /how is (evelyn|robert|she|he|mom|they) doing|how('s| is) (she|he|evelyn|robert) (doing|today)|how are they|how is everything|what's (the )?latest (on|with)|how's (evelyn|robert|mom)/i.test(
-      q,
-    )
+    /how('s| is) (evelyn|robert|she|he|mom|they|everything)\b/.test(q) ||
+    /how('s| is) (she|he|evelyn|robert) (doing|today|feeling|now)/.test(q) ||
+    /how are they|how is everything|what's (the )?latest (on|with)/.test(q) ||
+    /how's (evelyn|robert|mom|she|he)/.test(q) ||
+    /^how is\b/.test(q) ||
+    /\bhow is (evelyn|robert|she|he)\b/.test(q)
   ) {
     intents.push("STATUS_SYNTHESIS");
     intents.push("CHANGE_SINCE");
+  }
+
+  // Mood / feeling / previous shift wellbeing
+  if (
+    /\bmood\b|\bfeeling\b|\bfeelings\b|\bhow (is|was) (she|he|evelyn|robert) feel/.test(
+      q,
+    ) ||
+    /previous shift|last shift|during (the )?shift|end of shift/.test(q)
+  ) {
+    intents.push("OBSERVATION_HISTORY");
+    intents.push("STATUS_SYNTHESIS");
+    if (/previous shift|last shift|yesterday|while /.test(q)) {
+      intents.push("HANDOFF_REVIEW");
+      intents.push("RECENT_ACTIVITY");
+    }
+  }
+
+  // Caregiver / caretaker identity (who helps — not who is the recipient)
+  if (
+    /who (is|are) (your |her |his |the )?(caregiver|caretaker|care taker|helper|helpers|care team)/.test(
+      q,
+    ) ||
+    /who (helps|is helping|takes care|cares for)/.test(q) ||
+    /who('s| is) on (the )?care (team|circle)/.test(q)
+  ) {
+    intents.push("CARE_TEAM");
+    intents.push("CARE_COVERAGE");
+  }
+
+  // Temporal: anything happen yesterday / last night
+  if (
+    /did anything happen|what happened|anything (new|happen)|yesterday|last night|this morning|regarding (evelyn|robert|her|him)/.test(
+      q,
+    )
+  ) {
+    if (!intents.includes("CHANGE_SINCE")) intents.push("CHANGE_SINCE");
+    if (!intents.includes("RECENT_ACTIVITY")) intents.push("RECENT_ACTIVITY");
+  }
+
+  // Multi-turn: user selects offered slot e.g. "Wednesday, July 29 · 2:00 PM PDT"
+  if (
+    (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(q) &&
+      /\b\d{1,2}:\d{2}\s*(am|pm)\b/.test(q)) ||
+    /\b(book|confirm|choose|select|pick|use) (that |this |the )?(slot|time|option)\b/.test(
+      q,
+    ) ||
+    (/·/.test(text) && /\b(am|pm)\b/.test(q) && /\b(pd|edt|est|utc|pt)\b/i.test(q))
+  ) {
+    intents.push("APPOINTMENT_CONFIRM_BOOK");
   }
 
   // Safety-critical: redose / permission-to-give — before history inheritance
@@ -427,10 +496,11 @@ export function classifyIntent(
 
   // New booking vs existing appointment vs reschedule / move-it
   if (
-    /schedule (a |an )?(doctor|dr|clinic|provider|pcp|physician)|book (a |an )?(doctor|appointment|visit)|make (a |an )?appointment|set up (a |an )?appointment|i want to schedule|i would like to schedule/.test(
+    /schedule (a |an )?(doctor|dr|clinic|provider|pcp|physician|yoga|pt|therapy|appointment)|book (a |an )?(doctor|appointment|visit|yoga|class|session)|make (a |an )?appointment|set up (a |an )?appointment|i want to schedule|i would like to schedule|can you schedule|schedule .* (tomorrow|today|friday|monday)/.test(
       q,
     ) &&
-    !isAmbiguousScheduleMoveQuestion(q)
+    !isAmbiguousScheduleMoveQuestion(q) &&
+    !intents.includes("APPOINTMENT_CONFIRM_BOOK")
   ) {
     intents.push("APPOINTMENT_REQUEST_NEW");
   } else if (isAmbiguousScheduleMoveQuestion(q)) {
@@ -489,9 +559,13 @@ export function classifyIntent(
     } else intents.push("TASKS_NOW");
   }
 
-  if (/who is helping|care (team|circle)|who should i contact|how do i reach|phone|call maya|call daniel/.test(q)) {
+  if (
+    /who is helping|care (team|circle)|who should i contact|how do i reach|phone|call maya|call daniel|caretaker|caregiver/.test(
+      q,
+    )
+  ) {
     if (/reach|phone|call|contact/.test(q)) intents.push("CONTACT_PERSON");
-    else intents.push("CARE_TEAM");
+    else if (!intents.includes("CARE_TEAM")) intents.push("CARE_TEAM");
   }
 
   if (/usually|routine|around lunch|preferences|respect|baseline/.test(q)) {

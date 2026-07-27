@@ -411,6 +411,17 @@ function composeAnswer(ctx: {
     used.add("NEXT_APPOINTMENT");
     used.add("OPEN_UNCERTAINTIES");
     used.add("ACTIVE_HANDOFF");
+    // Always ground with recent changes first when clusters empty
+    if (
+      persona !== "physician" &&
+      !proj.RECENT_OBSERVATION_CLUSTERS[0] &&
+      proj.RECENT_CHANGES.length
+    ) {
+      parts.push(
+        `Recent reports on file for ${recipientName}:\n` +
+          proj.RECENT_CHANGES.slice(0, 5).map((c) => `• ${c}`).join("\n"),
+      );
+    }
     if (persona === "physician") {
       parts.push(
         `Clinical-facing status for ${recipientName} (from authorized care record + caregiver reports):`,
