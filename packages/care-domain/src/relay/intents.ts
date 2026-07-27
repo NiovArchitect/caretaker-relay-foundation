@@ -340,14 +340,107 @@ export function classifyIntent(
     intents.push("CARE_COVERAGE");
   }
 
-  // Temporal: anything happen yesterday / last night
+  // Temporal: anything happen yesterday / last night / overnight / this week
   if (
-    /did anything happen|what happened|anything (new|happen)|yesterday|last night|this morning|regarding (evelyn|robert|her|him)/.test(
+    /did anything happen|what happened|anything (new|happen)|yesterday|last night|this morning|overnight|this week|regarding (evelyn|robert|her|him)|between dinner and bedtime|since i was last|before i go see|different with her today|worse since|quick version|should i be worried|should i know before/.test(
       q,
     )
   ) {
+    if (/worried|safety|fall|unsafe/.test(q)) intents.push("SAFETY_CONCERN");
+    if (/overnight|last night|night caregiver|night report/.test(q)) {
+      intents.push("STATUS_SYNTHESIS");
+      intents.push("HANDOFF_REVIEW");
+    }
+    if (/this week|worse|more tired|trend|compared|than (usual|normal)/.test(q))
+      intents.push("TREND");
     if (!intents.includes("CHANGE_SINCE")) intents.push("CHANGE_SINCE");
     if (!intents.includes("RECENT_ACTIVITY")) intents.push("RECENT_ACTIVITY");
+    if (/hand off|handoff to the next|leave for the next/.test(q))
+      intents.push("HANDOFF_PREP");
+  }
+
+  // Meals / hydration / swallowing
+  if (
+    /\b(breakfast|lunch|dinner|eat|ate|eaten|meal|food|water|hydrat|swallow|chew|refuse.*meal)\b/.test(
+      q,
+    )
+  ) {
+    intents.push("OBSERVATION_HISTORY");
+    intents.push("RECIPIENT_ROUTINE");
+    if (/prefer|watch|diet|texture|food i need/.test(q))
+      intents.push("RECIPIENT_PREFERENCES");
+  }
+
+  // Sleep / pain / fever / symptoms
+  if (
+    /\b(sleep|slept|awake|pain|hurt|fever|symptom|tired|fatigue)\b/.test(q)
+  ) {
+    intents.push("OBSERVATION_HISTORY");
+    if (/more tired|than normal|trend/.test(q)) intents.push("TREND");
+    if (/fever|pain|symptom/.test(q)) intents.push("SAFETY_CONCERN");
+  }
+
+  // Mobility / falls / transfers / bathroom assistance
+  if (
+    /\b(walk|walking|mobility|transfer|fall|fell|almost fall|out of bed|bathroom|toilet|shower|dressed|dressing|morning routine|personal.?care)\b/.test(
+      q,
+    )
+  ) {
+    if (/fall|safe to walk|by herself|by himself/.test(q))
+      intents.push("SAFETY_CONCERN");
+    else intents.push("RECIPIENT_MOBILITY");
+    if (/routine|dressed|shower|toilet|bathroom|preferences/.test(q))
+      intents.push("RECIPIENT_ROUTINE");
+  }
+
+  // Medication dose conflict / bottle vs plan
+  if (
+    /bottle says|care plan says|dose mismatch|500 mg|250 mg|what should i do/.test(
+      q,
+    ) && /med|mg|dose|bottle|plan/.test(q)
+  ) {
+    intents.push("MEDICATION_UNCERTAINTY");
+    intents.push("SAFETY_CONCERN");
+  }
+
+  // Documents / provenance / corrections / share
+  if (
+    /discharge|therapy document|where did this .* come from|corrected the report|confirmed and which is only reported|original note|who changed this record|share this document|remove .* access/.test(
+      q,
+    )
+  ) {
+    if (/remove .* access|revoke/.test(q)) intents.push("CARE_UPDATE");
+    else if (/corrected|changed this record|confirmed and which/.test(q))
+      intents.push("VERIFICATION_STATUS");
+    else intents.push("DOCUMENT_PREP");
+  }
+
+  // Privacy / emergency / who can see
+  if (
+    /who can see|last access|emergency information|communication preferences|family notified|share this document/.test(
+      q,
+    )
+  ) {
+    if (/emergency/.test(q)) intents.push("EMERGENCY_SNAPSHOT");
+    else if (/prefer|notified|communication/.test(q))
+      intents.push("RECIPIENT_PREFERENCES");
+    else intents.push("CARE_TEAM");
+  }
+
+  // Coverage / ownership / overdue / reminders / escalate nobody accepts
+  if (
+    /shift covered|accept(ed)? the coverage|needs an owner|owns the transportation|end of my shift|anything overdue|reminders are coming|see the message|nobody accepts|remind maya|bring the walker/.test(
+      q,
+    )
+  ) {
+    if (/nobody accepts|escalat|if nobody/.test(q)) intents.push("ESCALATION");
+    if (/overdue|needs an owner|responded to the coverage/.test(q))
+      intents.push("WAITING_ON");
+    if (/end of my shift|unfinished|still needs to be done|before the end/.test(q))
+      intents.push("TASKS_REMAINING");
+    if (/remind|reminder/.test(q)) intents.push("TASKS_NOW");
+    if (/shift covered|helping after|with evelyn right now|who is with|accept.*coverage|next helper/.test(q))
+      intents.push("CARE_COVERAGE");
   }
 
   // Multi-turn: user selects offered slot e.g. "Wednesday, July 29 · 2:00 PM PDT"

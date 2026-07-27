@@ -97,6 +97,7 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
     proj,
     recipientName: input.recipientName,
     principalName: input.principalName,
+    question: input.question,
   });
 
   return {
@@ -119,9 +120,11 @@ function composeAnswer(ctx: {
   proj: CareProjections;
   recipientName: string;
   principalName: string;
+  question?: string;
 }): { answer: string; sourceRefs: string[]; projectionsUsed: string[] } {
   const { classified, persona, proj, recipientName } = ctx;
   const intents = classified.intents;
+  const question = ctx.question ?? "";
   const used = new Set<string>();
   const refs: string[] = [];
   const parts: string[] = [];
@@ -899,25 +902,45 @@ function composeAnswer(ctx: {
   }
 
   if (!parts.length) {
-    // Unknown — answer the gap only. Do NOT append unrelated attention alerts.
+    // Domain-specific no-data (never generic wall when we can name the gap)
     used.add("UNKNOWN_CLEAN");
-    if (persona === "family") {
+    const q = question.toLowerCase();
+    const domainHint = (() => {
+      if (/\b(breakfast|lunch|dinner|eat|meal|water|hydrat|swallow)\b/.test(q))
+        return `No meal or hydration observation is recorded for the period you asked about for ${recipientName}. The latest care events on file may still help — ask what changed, or add a meal note in Relay.`;
+      if (/\b(sleep|slept|awake|overnight|last night)\b/.test(q))
+        return `No overnight sleep observation is recorded for ${recipientName} in the window you asked about. Check the last handoff or add a sleep note if you observed rest.`;
+      if (/\b(pain|hurt|fever|symptom)\b/.test(q))
+        return `No pain/fever/symptom report matching that question is on file for ${recipientName}. I will not invent symptoms — if you observed something, record it with time and who reported it.`;
+      if (/\b(fall|walk|mobility|transfer|out of bed)\b/.test(q))
+        return `No mobility/fall observation matching that question is on file for ${recipientName}. I cannot certify independent walking safety from missing data — use authorized mobility notes and escalate if unsure.`;
+      if (/\b(mood|anxious|upset|confused|repeating|resist|calm)\b/.test(q))
+        return `No mood/behavior observation for that period is on file for ${recipientName}. I will not invent how she felt — ask for the last handoff or record what you observed.`;
+      if (/\b(shower|dressed|toilet|bathroom|routine)\b/.test(q))
+        return `No personal-care completion note for that item is on file for ${recipientName}. Preferences and dignity rules still apply; open Care for preferences if authorized.`;
+      if (/\b(document|discharge|original note|corrected|who changed)\b/.test(q))
+        return `I don't have a linked document extraction for that ask on file. Open Documents to review authorized summaries, or upload text for proposed actions (human confirm required).`;
+      if (/\b(remind|overdue|coverage|shift covered|message)\b/.test(q))
+        return `No matching reminder/coverage/message acknowledgment is on file for that ask. Check People for coverage and Today for open work that needs an owner.`;
+      return null;
+    })();
+    if (domainHint) {
+      parts.push(domainHint);
+    } else if (persona === "family") {
       parts.push(
-        `I don't have enough on file to answer that specifically for ${recipientName}.`,
+        `I don't have a matching record for that specific ask about ${recipientName}.`,
       );
       parts.push(
-        `I can help with who ${recipientName} is (age, conditions on file), medications, appointments, what changed, the care team, handoffs, and what is waiting — when those are authorized.`,
+        `I can help with status, medications, appointments, what changed, the care team, handoffs, meals/mobility when noted, and what is waiting — when those are authorized.`,
       );
-      parts.push(
-        `What would you like to know, or what would you like to update?`,
-      );
+      parts.push(`What domain should we check next, or what would you like to update?`);
     } else if (persona === "professional_dsp") {
       parts.push(
-        `I don't have a specific answer for that yet for ${recipientName}. Ask what changed, what to complete, medication authorization, documentation, or escalation.`,
+        `No matching shift documentation answers that ask yet for ${recipientName}. Ask what changed, tasks remaining, medication authorization, or handoff.`,
       );
     } else {
       parts.push(
-        `I don't have a specific answer for that yet. Ask for changes since last encounter, uncertain administrations, or a concise caregiver-reported timeline for ${recipientName}.`,
+        `No matching record for that ask yet. Request changes since last encounter, uncertain administrations, or a caregiver-reported timeline for ${recipientName}.`,
       );
     }
   }
