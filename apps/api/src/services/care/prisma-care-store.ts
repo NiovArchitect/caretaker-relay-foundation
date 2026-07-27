@@ -57,6 +57,8 @@ export class PrismaCareStore implements CareStore {
   private memory = new MemoryCareStore();
   private idempotency = new Map<string, { body: unknown; at: string }>();
   private dirty = false;
+  /** Audit-only mutations (login, views) — do not force full care-graph flush. */
+  private auditDirty = false;
   /** Avoid re-upserting immutable audit rows on every flush (O(n) → O(delta)). */
   private knownAuditIds = new Set<string>();
   private knownIdempotencyKeys = new Set<string>();
@@ -383,7 +385,49 @@ export class PrismaCareStore implements CareStore {
     return this.flushInFlight;
   }
 
+  private async flushAuditsOnly(): Promise<void> {
+    const snap = dumpMemory(this.memory);
+    for (const a of snap.audit) {
+      if (this.knownAuditIds.has(a.id)) continue;
+      try {
+        await prisma.careAuditRow.create({
+          data: {
+            id: a.id,
+            at: a.at,
+            actor_person_id: a.actorPersonId,
+            action: a.action,
+            care_recipient_id: a.careRecipientId ?? null,
+            household_id: a.householdId ?? null,
+            details: (a.details ?? {}) as object,
+            product_id: PRODUCT_ID,
+          },
+        });
+        this.knownAuditIds.add(a.id);
+      } catch (err: unknown) {
+        const code =
+          err && typeof err === "object" && "code" in err
+            ? String((err as { code?: string }).code)
+            : "";
+        if (code === "P2002") {
+          this.knownAuditIds.add(a.id);
+          continue;
+        }
+        throw err;
+      }
+    }
+    this.auditDirty = false;
+  }
+
   private async flushUnlocked(): Promise<void> {
+    // Login/view paths write audits only — never re-upsert the entire care graph.
+    if (!this.dirty && this.auditDirty) {
+      await this.flushAuditsOnly();
+      return;
+    }
+    if (!this.dirty && !this.auditDirty) {
+      return;
+    }
+
     const snap = dumpMemory(this.memory);
 
     // Ensure households exist for recipients
@@ -825,6 +869,7 @@ export class PrismaCareStore implements CareStore {
       this.knownIdempotencyKeys.add(key);
     }
     this.dirty = false;
+    this.auditDirty = false;
   }
 
   markDirty(): void {
@@ -1077,7 +1122,8 @@ export class PrismaCareStore implements CareStore {
     entry: Omit<AuditEntry, "id" | "productId"> & { id?: string },
   ): AuditEntry {
     const r = this.memory.writeAudit(entry);
-    this.dirty = true;
+    // Audits are append-only deltas — do not mark structural dirty.
+    this.auditDirty = true;
     return r;
   }
   listAudit(filter?: { careRecipientId?: string; householdId?: string }) {

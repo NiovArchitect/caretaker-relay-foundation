@@ -233,6 +233,7 @@ export class CareRuntimeService {
   async foundationLogin(
     email: string,
     password: string,
+    opts?: { skipCareFlush?: boolean },
   ): Promise<
     | {
         ok: true;
@@ -283,7 +284,10 @@ export class CareRuntimeService {
         auth_mode: "foundation_auth_service",
       },
     });
-    await this.flush();
+    // PERFORMANCE: never full-graph flush on login. Audit-only flush is O(delta).
+    if (!opts?.skipCareFlush) {
+      await this.flush();
+    }
     return {
       ok: true,
       token: result.token,
@@ -617,8 +621,12 @@ export class CareRuntimeService {
           channel: "email",
           contact: email,
         });
+        // One structural flush for new principal only (not a full re-login flush).
         await this.flush();
-        const login = await this.foundationLogin(email, password);
+        // Login without re-flushing the entire care graph (audit-only if needed).
+        const login = await this.foundationLogin(email, password, {
+          skipCareFlush: true,
+        });
         if (!login.ok) {
           return {
             ok: false,
