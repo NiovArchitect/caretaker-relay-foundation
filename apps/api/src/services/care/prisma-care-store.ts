@@ -59,6 +59,22 @@ export class PrismaCareStore implements CareStore {
   private dirty = false;
   /** Audit-only mutations (login, views) — do not force full care-graph flush. */
   private auditDirty = false;
+  /** Structural ids touched since last flush (delta flush). */
+  private dirtyPeople = new Set<string>();
+  private dirtyRecipients = new Set<string>();
+  private dirtyRelationships = new Set<string>(); // key careRecipientId|personId
+  private dirtyConsents = new Set<string>();
+  private dirtyEvents = new Set<string>();
+  private dirtyObservations = new Set<string>();
+  private dirtyAppointments = new Set<string>();
+  private dirtyTasks = new Set<string>();
+  private dirtyMedSchedules = new Set<string>();
+  private dirtyMedRecords = new Set<string>();
+  private dirtyHandoffs = new Set<string>();
+  private dirtyUpdates = new Set<string>();
+  private dirtyCorrections = new Set<string>();
+  private dirtySafety = new Set<string>();
+  private dirtyPrefs = new Set<string>();
   /** Avoid re-upserting immutable audit rows on every flush (O(n) → O(delta)). */
   private knownAuditIds = new Set<string>();
   private knownIdempotencyKeys = new Set<string>();
@@ -429,9 +445,31 @@ export class PrismaCareStore implements CareStore {
     }
 
     const snap = dumpMemory(this.memory);
+    const deltaOnly =
+      this.dirtyPeople.size +
+        this.dirtyRecipients.size +
+        this.dirtyRelationships.size +
+        this.dirtyEvents.size +
+        this.dirtyAppointments.size +
+        this.dirtyUpdates.size +
+        this.dirtyTasks.size +
+        this.dirtyHandoffs.size +
+        this.dirtyObservations.size +
+        this.dirtyMedRecords.size +
+        this.dirtyMedSchedules.size +
+        this.dirtyCorrections.size +
+        this.dirtySafety.size +
+        this.dirtyConsents.size +
+        this.dirtyPrefs.size >
+      0;
 
-    // Ensure households exist for recipients
-    const householdIds = new Set(snap.recipients.map((r) => r.householdId));
+    // Ensure households exist for recipients (dirty only when possible)
+    const householdIds = new Set(
+      (deltaOnly
+        ? snap.recipients.filter((r) => this.dirtyRecipients.has(r.id))
+        : snap.recipients
+      ).map((r) => r.householdId),
+    );
     for (const hid of householdIds) {
       await prisma.careHousehold.upsert({
         where: { id: hid },
@@ -445,6 +483,7 @@ export class PrismaCareStore implements CareStore {
     }
 
     for (const p of snap.people) {
+      if (deltaOnly && !this.dirtyPeople.has(p.id)) continue;
       await prisma.carePersonRow.upsert({
         where: { id: p.id },
         create: {
@@ -457,6 +496,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const r of snap.recipients) {
+      if (deltaOnly && !this.dirtyRecipients.has(r.id)) continue;
       await prisma.careRecipientRow.upsert({
         where: { id: r.id },
         create: {
@@ -478,6 +518,9 @@ export class PrismaCareStore implements CareStore {
     // `rel-p-maya` while seed/DB still has `rel-maya`) — Prisma then tries
     // INSERT and hits @@unique([care_recipient_id, person_id]).
     for (const r of snap.relationships) {
+      const relKey = `${r.careRecipientId}|${r.personId}`;
+      if (deltaOnly && !this.dirtyRelationships.has(relKey) && !this.dirtyRelationships.has(r.id))
+        continue;
       await prisma.careRelationshipRow.upsert({
         where: {
           care_recipient_id_person_id: {
@@ -513,6 +556,8 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const c of snap.consents) {
+      const ck = `${c.careRecipientId}|${c.granteePersonId}`;
+      if (deltaOnly && !this.dirtyConsents.has(ck) && !this.dirtyConsents.has(c.id)) continue;
       await prisma.careConsentRow.upsert({
         where: {
           care_recipient_id_grantee_person_id: {
@@ -541,6 +586,7 @@ export class PrismaCareStore implements CareStore {
 
     // Events: upsert each (ETL provenance packed into source._careEtl — no schema migration)
     for (const e of snap.events) {
+      if (deltaOnly && !this.dirtyEvents.has(e.id)) continue;
       const sourceWithEtl = {
         ...(e.source as object),
         _careEtl: {
@@ -599,6 +645,7 @@ export class PrismaCareStore implements CareStore {
     // Also supersede events that are only in DB via memory getEvents doesn't include SUPERSEDED filtered - we dump all events from private map
     for (const e of allEventsIncludingSuperseded(this.memory)) {
       if (snap.events.find((x) => x.id === e.id)) continue;
+      if (deltaOnly && !this.dirtyEvents.has(e.id)) continue;
       await prisma.careEventRow.upsert({
         where: { id: e.id },
         create: {
@@ -627,6 +674,7 @@ export class PrismaCareStore implements CareStore {
     }
 
     for (const o of snap.observations) {
+      if (deltaOnly && !this.dirtyObservations.has(o.id)) continue;
       await prisma.careObservationRow.upsert({
         where: { id: o.id },
         create: {
@@ -643,6 +691,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const a of snap.appointments) {
+      if (deltaOnly && !this.dirtyAppointments.has(a.id)) continue;
       await prisma.careAppointmentRow.upsert({
         where: { id: a.id },
         create: {
@@ -667,6 +716,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const t of snap.tasks) {
+      if (deltaOnly && !this.dirtyTasks.has(t.id)) continue;
       await prisma.careTaskRow.upsert({
         where: { id: t.id },
         create: {
@@ -685,6 +735,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const s of snap.medSchedules) {
+      if (deltaOnly && !this.dirtyMedSchedules.has(s.id)) continue;
       await prisma.careMedScheduleRow.upsert({
         where: { id: s.id },
         create: {
@@ -702,6 +753,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const m of snap.medRecords) {
+      if (deltaOnly && !this.dirtyMedRecords.has(m.id)) continue;
       const content_hash = medContentHash(m);
       await prisma.careMedAdminRow.upsert({
         where: { id: m.id },
@@ -724,6 +776,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const h of snap.handoffs) {
+      if (deltaOnly && !this.dirtyHandoffs.has(h.id)) continue;
       const content_hash = handoffHash({
         careRecipientId: h.careRecipientId,
         fromPersonId: h.fromPersonId,
@@ -753,6 +806,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const u of snap.updates) {
+      if (deltaOnly && !this.dirtyUpdates.has(u.id)) continue;
       const content_hash = communicationHash({
         careRecipientId: u.careRecipientId,
         toPersonId: u.toPersonId,
@@ -775,6 +829,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const c of snap.corrections) {
+      if (deltaOnly && !this.dirtyCorrections.has(c.id)) continue;
       await prisma.careCorrectionRow.upsert({
         where: { id: c.id },
         create: {
@@ -793,6 +848,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const s of snap.safety) {
+      if (deltaOnly && !this.dirtySafety.has(s.id)) continue;
       await prisma.careSafetyReviewRow.upsert({
         where: { id: s.id },
         create: {
@@ -809,6 +865,7 @@ export class PrismaCareStore implements CareStore {
       });
     }
     for (const p of snap.prefs) {
+      if (deltaOnly && !this.dirtyPrefs.has(p.personId)) continue;
       await prisma.carePreferenceRow.upsert({
         where: { person_id: p.personId },
         create: {
@@ -870,6 +927,21 @@ export class PrismaCareStore implements CareStore {
     }
     this.dirty = false;
     this.auditDirty = false;
+    this.dirtyPeople.clear();
+    this.dirtyRecipients.clear();
+    this.dirtyRelationships.clear();
+    this.dirtyConsents.clear();
+    this.dirtyEvents.clear();
+    this.dirtyObservations.clear();
+    this.dirtyAppointments.clear();
+    this.dirtyTasks.clear();
+    this.dirtyMedSchedules.clear();
+    this.dirtyMedRecords.clear();
+    this.dirtyHandoffs.clear();
+    this.dirtyUpdates.clear();
+    this.dirtyCorrections.clear();
+    this.dirtySafety.clear();
+    this.dirtyPrefs.clear();
   }
 
   markDirty(): void {
@@ -908,6 +980,7 @@ export class PrismaCareStore implements CareStore {
   upsertPerson(p: Person): void {
     this.memory.upsertPerson(p);
     this.dirty = true;
+    this.dirtyPeople.add(p.id);
   }
   getPerson(id: string) {
     return this.memory.getPerson(id);
@@ -915,6 +988,7 @@ export class PrismaCareStore implements CareStore {
   upsertRecipient(r: CareRecipient): void {
     this.memory.upsertRecipient(r);
     this.dirty = true;
+    this.dirtyRecipients.add(r.id);
   }
   getRecipient(id: string) {
     return this.memory.getRecipient(id);
@@ -922,6 +996,8 @@ export class PrismaCareStore implements CareStore {
   upsertRelationship(r: CareRelationship): void {
     this.memory.upsertRelationship(r);
     this.dirty = true;
+    this.dirtyRelationships.add(r.id);
+    this.dirtyRelationships.add(`${r.careRecipientId}|${r.personId}`);
   }
   getRelationships(careRecipientId: string) {
     return this.memory.getRelationships(careRecipientId);
@@ -938,10 +1014,13 @@ export class PrismaCareStore implements CareStore {
   revokeAccess(careRecipientId: string, personId: string, at: string): void {
     this.memory.revokeAccess(careRecipientId, personId, at);
     this.dirty = true;
+    this.dirtyRelationships.add(`${careRecipientId}|${personId}`);
   }
   upsertConsent(c: ConsentRecord): void {
     this.memory.upsertConsent(c);
     this.dirty = true;
+    this.dirtyConsents.add(c.id);
+    this.dirtyConsents.add(`${c.careRecipientId}|${c.granteePersonId}`);
   }
   getConsent(careRecipientId: string, granteePersonId: string) {
     return this.memory.getConsent(careRecipientId, granteePersonId);
@@ -949,6 +1028,7 @@ export class PrismaCareStore implements CareStore {
   addEvent(e: CareEvent): CareEvent {
     const r = this.memory.addEvent(e);
     this.dirty = true;
+    this.dirtyEvents.add(e.id);
     return r;
   }
   getEvents(careRecipientId: string) {
@@ -960,10 +1040,13 @@ export class PrismaCareStore implements CareStore {
   supersedeEvent(eventId: string, supersededById: string): void {
     this.memory.supersedeEvent(eventId, supersededById);
     this.dirty = true;
+    this.dirtyEvents.add(eventId);
+    this.dirtyEvents.add(supersededById);
   }
   addObservation(o: Observation): Observation {
     const r = this.memory.addObservation(o);
     this.dirty = true;
+    this.dirtyObservations.add(o.id);
     return r;
   }
   getObservations(careRecipientId: string) {
@@ -972,6 +1055,7 @@ export class PrismaCareStore implements CareStore {
   upsertAppointment(a: Appointment): Appointment {
     const r = this.memory.upsertAppointment(a);
     this.dirty = true;
+    this.dirtyAppointments.add(a.id);
     return r;
   }
   getAppointments(careRecipientId: string) {
@@ -980,6 +1064,7 @@ export class PrismaCareStore implements CareStore {
   upsertTask(t: CareTask): CareTask {
     const r = this.memory.upsertTask(t);
     this.dirty = true;
+    this.dirtyTasks.add(t.id);
     return r;
   }
   getTasks(careRecipientId: string) {
@@ -988,6 +1073,7 @@ export class PrismaCareStore implements CareStore {
   upsertMedSchedule(s: MedicationSchedule): void {
     this.memory.upsertMedSchedule(s);
     this.dirty = true;
+    this.dirtyMedSchedules.add(s.id);
   }
   getMedSchedules(careRecipientId: string) {
     return this.memory.getMedSchedules(careRecipientId);
@@ -1006,6 +1092,7 @@ export class PrismaCareStore implements CareStore {
     }
     const out = this.memory.addMedRecord(r);
     this.dirty = true;
+    this.dirtyMedRecords.add(r.id);
     return out;
   }
 
@@ -1014,7 +1101,7 @@ export class PrismaCareStore implements CareStore {
     hash: string,
     existingId: string,
   ): void {
-    this.memory.writeAudit({
+    this.writeAudit({
       at: new Date().toISOString(),
       actorPersonId: "system",
       action: "IDEMPOTENT_MED_DEDUPED",
@@ -1025,7 +1112,6 @@ export class PrismaCareStore implements CareStore {
         policy: "medAdminHash/semanticContentHash",
       },
     });
-    this.dirty = true;
   }
   getMedRecords(careRecipientId: string) {
     return this.memory.getMedRecords(careRecipientId);
@@ -1051,6 +1137,7 @@ export class PrismaCareStore implements CareStore {
     if (dup) return dup;
     const r = this.memory.addHandoff(h);
     this.dirty = true;
+    this.dirtyHandoffs.add(h.id);
     return r;
   }
   getHandoffs(careRecipientId: string) {
@@ -1064,6 +1151,7 @@ export class PrismaCareStore implements CareStore {
     if (sameId) {
       const r = this.memory.addUpdate(u);
       this.dirty = true;
+      this.dirtyUpdates.add(u.id);
       return r;
     }
     // Structured durable rows (notifs, orch, rem, docs, candidates) must not be
@@ -1092,6 +1180,7 @@ export class PrismaCareStore implements CareStore {
     }
     const r = this.memory.addUpdate(u);
     this.dirty = true;
+    this.dirtyUpdates.add(u.id);
     return r;
   }
   getUpdates(careRecipientId: string) {
@@ -1100,6 +1189,7 @@ export class PrismaCareStore implements CareStore {
   addCorrection(c: Correction): Correction {
     const r = this.memory.addCorrection(c);
     this.dirty = true;
+    this.dirtyCorrections.add(c.id);
     return r;
   }
   getCorrections(careRecipientId: string) {
@@ -1108,6 +1198,7 @@ export class PrismaCareStore implements CareStore {
   addSafetyReview(s: SafetyReview): SafetyReview {
     const r = this.memory.addSafetyReview(s);
     this.dirty = true;
+    this.dirtySafety.add(s.id);
     return r;
   }
   getSafetyReviews(careRecipientId: string) {
@@ -1132,6 +1223,7 @@ export class PrismaCareStore implements CareStore {
   setPreferences(p: CarePreferences): void {
     this.memory.setPreferences(p);
     this.dirty = true;
+    this.dirtyPrefs.add(p.personId);
   }
   getPreferences(personId: string) {
     return this.memory.getPreferences(personId);
