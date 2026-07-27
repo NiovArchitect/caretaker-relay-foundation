@@ -41,6 +41,11 @@ import {
   seedDefaultCoverage,
 } from "./care-coverage.js";
 import { roleAwareRelayState } from "./role-projection.js";
+import {
+  authorizeRelayQuestion,
+  filterStateByDomains,
+  auditRelayAccess,
+} from "./relay-authorization.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -52,6 +57,8 @@ export type RelayAnswerRequest = {
   store: CareStore;
   /** Optional override state bag (tests) */
   stateOverride?: CareStateBag;
+  /** Tests only — skip auth when true (never set in production routes) */
+  skipAuthorization?: boolean;
 };
 
 export type RelayAnswerResponse = AnswerEngineResult & {
@@ -60,6 +67,8 @@ export type RelayAnswerResponse = AnswerEngineResult & {
   conversationId: string;
   canDeterministic: boolean;
   evidenceBound: boolean;
+  authorizationOutcome?: "answered" | "denied";
+  authorizationCode?: string;
 };
 
 function careTeamFromStore(
@@ -335,7 +344,106 @@ export function answerRelayQuestion(
   req: RelayAnswerRequest,
 ): RelayAnswerResponse {
   const store = req.store;
-  // Role-aware retrieval: project before answer engine — never full dump + hide in LLM.
+  const conversationId = conversationIdFor(
+    req.principalId,
+    req.careRecipientId,
+  );
+
+  // ── Authorization before retrieval (mandatory) ─────────────────────────
+  if (!req.skipAuthorization) {
+    const authz = authorizeRelayQuestion(store, {
+      principalId: req.principalId,
+      careRecipientId: req.careRecipientId,
+      roleLabel: req.roleLabel,
+      question: req.question,
+    });
+    if (authz.kind === "denied") {
+      auditRelayAccess(store, {
+        principalId: req.principalId,
+        careRecipientId: req.careRecipientId,
+        question: req.question,
+        outcome: "denied",
+        code: authz.code,
+      });
+      const turn = persistTurn(store, {
+        principalId: req.principalId,
+        principalDisplayName: req.principalDisplayName,
+        careRecipientId: req.careRecipientId,
+        roleLabel: req.roleLabel,
+        userMessage: req.question,
+        classified: {
+          intents: ["UNKNOWN_QUESTION"],
+          primary: "UNKNOWN_QUESTION",
+          decisionContext: "information",
+          entities: { references: [] },
+          isQuestion: true,
+          isObservationUpdate: false,
+          needsClarification: false,
+        },
+        answer: authz.answer,
+        sourceRefs: [`authz:${authz.code}`],
+        modelPath: "deterministic",
+      });
+      return {
+        answer: authz.answer,
+        intent: "UNKNOWN_QUESTION",
+        intents: ["UNKNOWN_QUESTION"],
+        persona: "unknown",
+        sourceRefs: [`authz:${authz.code}`],
+        needsClarification: false,
+        projectionsUsed: [],
+        conversationId,
+        modelPath: "deterministic",
+        classified: {
+          intents: ["UNKNOWN_QUESTION"],
+          primary: "UNKNOWN_QUESTION",
+          decisionContext: "information",
+          entities: { references: [] },
+          isQuestion: true,
+          isObservationUpdate: false,
+          needsClarification: false,
+        },
+        durable: true,
+        turnId: turn.turnId,
+        canDeterministic: true,
+        evidenceBound: true,
+        authorizationOutcome: "denied",
+        authorizationCode: authz.code,
+      };
+    }
+
+    // Role-aware retrieval: project before answer engine — never full dump + hide in LLM.
+    const roleState = req.stateOverride
+      ? undefined
+      : roleAwareRelayState(store, req.principalId, req.careRecipientId);
+    let state =
+      req.stateOverride ??
+      stateToBag(
+        roleState ?? store.getCurrentState(req.careRecipientId),
+        req.careRecipientId,
+      );
+    // Filter retrieved bag to permitted domains (server-side)
+    state = filterStateByDomains(
+      state,
+      authz.domains,
+      authz.capabilities.controlling,
+    );
+    const result = answerWithState(req, state);
+    auditRelayAccess(store, {
+      principalId: req.principalId,
+      careRecipientId: req.careRecipientId,
+      question: req.question,
+      outcome: "answered",
+      domains: authz.domains,
+      intent: result.intent,
+    });
+    return {
+      ...result,
+      authorizationOutcome: "answered",
+    };
+  }
+
+  // Test-only path
   const roleState = req.stateOverride
     ? undefined
     : roleAwareRelayState(store, req.principalId, req.careRecipientId);
@@ -345,48 +453,6 @@ export function answerRelayQuestion(
       roleState ?? store.getCurrentState(req.careRecipientId),
       req.careRecipientId,
     );
-
-  // Lightweight second recipient safety: never serve Evelyn meds for Robert
-  if (req.careRecipientId === "cr-robert" && !req.stateOverride) {
-    const robertState: CareStateBag = {
-      careRecipientId: "cr-robert",
-      medicationSchedules: [
-        {
-          id: "med-robert-am",
-          name: "Lisinopril",
-          dose: "10 mg",
-          scheduleLabel: "Morning",
-          scheduleTime: "8:00 AM",
-          authorizedBy: "Dr. Amara Cole",
-          mealRelation: "With or without food",
-        },
-      ],
-      medicationRecords: [],
-      appointments: [
-        {
-          id: "apt-robert-pcp",
-          title: "Primary care follow-up",
-          startsAt: "2026-07-28T17:00:00Z",
-          startsAtLabel: "Monday, July 28 · 10:00 AM PDT",
-          location: "Coastal Family Medicine (synthetic evaluation location)",
-          status: "scheduled",
-        },
-      ],
-      observations: [],
-      events: [
-        {
-          id: "ev-robert-1",
-          statement: "Robert reported feeling steady on his morning walk.",
-          occurredAt: "2026-07-22T16:00:00Z",
-          source: { actorName: "Marcus Carter" },
-        },
-      ],
-      openSafetyReviews: [],
-      tasks: [],
-    };
-    return answerWithState(req, robertState);
-  }
-
   return answerWithState(req, state);
 }
 

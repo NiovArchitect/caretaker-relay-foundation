@@ -45,6 +45,7 @@ export * from "./relay/projections.js";
 export * from "./relay/conversation-memory.js";
 export * from "./relay/answer-engine.js";
 export * from "./services/relay-answer.js";
+export * from "./services/relay-authorization.js";
 export * from "./services/notifications.js";
 export * from "./services/orchestration.js";
 export * from "./services/care-team.js";
