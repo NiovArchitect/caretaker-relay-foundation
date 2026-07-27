@@ -1,0 +1,15 @@
+{
+  "date": "2026-07-27",
+  "api_sha": "ca939fdc69bc18f34c054c6dacdf83d7dbe517fb",
+  "durable": true,
+  "store_backend_live": "prisma",
+  "false_saves": 0,
+  "lost_events_observed": 0,
+  "duplicate_side_effects_observed": 0,
+  "notes": [
+    "answerRelayQuestion persists private turns for principal×recipient.",
+    "Care events/observations are store-backed; live health reports durable:true prisma.",
+    "Dedicated crash/recovery chaos suite not re-run in this addendum pass."
+  ],
+  "result": "PASS"
+}

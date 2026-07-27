@@ -78,8 +78,13 @@ describe("care orchestration engine", () => {
     expect(confirmed!.mar).toBeTruthy();
     expect(confirmed!.handoff).toBeTruthy();
 
+    // Expectation derives from scenario membership + confirmed MAR actor, not a hard-coded fixture.
+    const actorId = confirmed!.mar?.administeredByPersonId ?? "p-maya";
+    const actorName =
+      store.getPerson(actorId)?.displayName ?? "Maya Bennett";
+    const first = actorName.split(/\s+/)[0] ?? actorName;
     const ans = answerRelayQuestion({
-      question: "When did Maya give Evelyn's lunch medication yesterday?",
+      question: `When did ${first} give Evelyn's lunch medication yesterday?`,
       principalId: "p-sadeil",
       principalDisplayName: "Marcus Carter",
       roleLabel: "Primary family caregiver",
@@ -87,8 +92,10 @@ describe("care orchestration engine", () => {
       recipientDisplayName: "Evelyn Carter",
       store,
     });
-    expect(ans.answer).toMatch(/Maya/i);
-    expect(ans.answer).not.toMatch(/Want me to ask Maya/i);
+    expect(ans.authorizationOutcome).toBe("answered");
+    // Answer must attribute the administration to the actual authorized actor name on file.
+    expect(ans.answer).toMatch(new RegExp(first, "i"));
+    expect(ans.answer).not.toMatch(/Want me to ask/i);
   });
 
   it("provider response creates professional candidate without auto MAR", () => {

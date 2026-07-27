@@ -1,0 +1,129 @@
+{
+  "when": "2026-07-27T14:46:10.957Z",
+  "api": "https://caretaker-relay-care-api.onrender.com",
+  "ms": 446371,
+  "passed": 24,
+  "failed": 0,
+  "results": [
+    {
+      "name": "family_zero_access_register",
+      "pass": true,
+      "detail": "auth=0"
+    },
+    {
+      "name": "family_zero_access_privacy_denied",
+      "pass": true,
+      "detail": "NO_RELATIONSHIP"
+    },
+    {
+      "name": "invite_preauth_zero_phi",
+      "pass": true,
+      "detail": "phi_disclosed=false"
+    },
+    {
+      "name": "family_login",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "family_projection",
+      "pass": true,
+      "detail": "family_friend"
+    },
+    {
+      "name": "family_privacy_center",
+      "pass": true,
+      "detail": "people=4"
+    },
+    {
+      "name": "family_ingest",
+      "pass": "2026-07-27T16:10:00Z",
+      "detail": "evt-t4yat8gj-ms3c31re"
+    },
+    {
+      "name": "family_schedule",
+      "pass": true,
+      "detail": "apt-ckkw34to-ms3c3ko9"
+    },
+    {
+      "name": "family_action_confirm_required",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "family_action_executed",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "judge3_med_conflict_open",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "clinician_login",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "clinician_summary",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "judge3_med_conflict_resolved",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "dsp_shift_created",
+      "pass": true,
+      "detail": "shift-mx0la0cw-ms3c755b"
+    },
+    {
+      "name": "dsp_login",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "dsp_decline",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "dsp_coverage",
+      "pass": true,
+      "detail": "shift-da6q0aly-ms3c8tcn"
+    },
+    {
+      "name": "dsp_shifts_listed",
+      "pass": true,
+      "detail": "n=2"
+    },
+    {
+      "name": "etl_reliability",
+      "pass": true,
+      "detail": "{\"processed\":1,\"succeeded\":1,\"failed\":0,\"deadLetter\":0}"
+    },
+    {
+      "name": "etl_health",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "calendar_oauth_honest",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "booking_external_denied",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "judge1_reschedule",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "date": "2026-07-27",
+  "api_sha": "ca939fdc69bc18f34c054c6dacdf83d7dbe517fb",
+  "suite": "tests/unit/care/relay-answer-evolution.test.ts",
+  "tests_passed": 2,
+  "tests_failed": 0,
+  "stages_covered": {
+    "mood_observation_then_status": "PASS",
+    "handoff_surface_after_seed": "PASS",
+    "medication_correction_stages": "NOT_FULLY_TESTED",
+    "appointment_cancel_replace": "NOT_FULLY_TESTED",
+    "shift_lifecycle_stages": "NOT_FULLY_TESTED"
+  },
+  "dynamic_data_stage_evaluations": 2
+}

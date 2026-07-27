@@ -59,6 +59,8 @@ export type RelayAnswerRequest = {
   stateOverride?: CareStateBag;
   /** Tests only — skip auth when true (never set in production routes) */
   skipAuthorization?: boolean;
+  /** Optional clock for shift-window authorization tests */
+  nowMs?: number;
 };
 
 export type RelayAnswerResponse = AnswerEngineResult & {
@@ -89,11 +91,19 @@ function careTeamFromStore(
 
 function personNameMapFromStore(store: CareStore): Record<string, string> {
   const map: Record<string, string> = { system: "System" };
+  // Prefer full person directory so MAR actors resolve even mid-orchestration.
+  if (typeof store.listPeople === "function") {
+    for (const p of store.listPeople()) {
+      if (p?.id && p.displayName) map[p.id] = p.displayName;
+    }
+  }
   for (const recipient of store.listRecipients()) {
     for (const rel of store.getRelationships(recipient.id)) {
       const p = store.getPerson(rel.personId);
       if (p) map[p.id] = p.displayName;
     }
+    const r = store.getRecipient(recipient.id);
+    if (r) map[r.id] = r.displayName;
   }
   return map;
 }
@@ -356,6 +366,7 @@ export function answerRelayQuestion(
       careRecipientId: req.careRecipientId,
       roleLabel: req.roleLabel,
       question: req.question,
+      nowMs: req.nowMs,
     });
     if (authz.kind === "denied") {
       auditRelayAccess(store, {

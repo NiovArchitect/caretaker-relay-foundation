@@ -64,6 +64,7 @@ export * from "./services/schedule-engine.js";
 export * from "./services/care-actions.js";
 export * from "./services/privacy-center.js";
 export * from "./services/dsp-assignment.js";
+export * from "./services/shift-relay-access.js";
 export * from "./services/clinical-summary.js";
 export * from "./services/conflict-center.js";
 export * from "./services/invitation-preview.js";

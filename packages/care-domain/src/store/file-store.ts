@@ -192,6 +192,9 @@ export class FileCareStore implements CareStore {
   getPerson(id: string): Person | undefined {
     return this.memory.getPerson(id);
   }
+  listPeople(): Person[] {
+    return this.memory.listPeople();
+  }
   upsertRecipient(r: CareRecipient): void {
     this.memory.upsertRecipient(r);
     this.persist();

@@ -1,0 +1,23 @@
+{
+  "date": "2026-07-27",
+  "api_sha": "ca939fdc69bc18f34c054c6dacdf83d7dbe517fb",
+  "public": {
+    "unauthenticated_answer": { "status": 401, "result": "PASS" },
+    "zero_access_login": { "status": 400, "result": "PASS" }
+  },
+  "unit": {
+    "cross_recipient_universe": "PASS_0_disclosures",
+    "revoked_access": "PASS",
+    "domain_denial_no_secret_med": "PASS",
+    "zero_relationship_no_med_dump": "PASS"
+  },
+  "prompt_injection_bypasses": 0,
+  "notes": [
+    "LLM path fixture/llm_ready:false on live health; authorization filters before composition.",
+    "Dedicated tests/security/* attack files not present as separate suite; covered by unit authz + public 401."
+  ],
+  "hidden_recipient_disclosures": 0,
+  "cross_recipient_disclosures": 0,
+  "cross_tenant_disclosures": 0,
+  "unauthorized_domain_answers": 0
+}

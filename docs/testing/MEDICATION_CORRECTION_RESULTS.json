@@ -1,0 +1,20 @@
+{
+  "result": "PASS",
+  "suite": "relay-medication-correction-matrix",
+  "tests": 1,
+  "bank_summary": {
+    "total_evaluations": 1100,
+    "variants": 11,
+    "questions": 100,
+    "authorized_grounded": 401,
+    "authorized_no_data": 79,
+    "partial_scope_denials": 120,
+    "full_denials": 500,
+    "unauthorized_answers": 0,
+    "unauthorized_domain_answers": 0,
+    "cross_recipient_disclosures": 0,
+    "hidden_recipient_disclosures": 0,
+    "cross_tenant_disclosures": 0,
+    "timestamp": "2026-07-27T20:28:50.641Z"
+  }
+}

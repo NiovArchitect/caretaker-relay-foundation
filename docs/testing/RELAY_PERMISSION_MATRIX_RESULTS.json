@@ -1,0 +1,32 @@
+{
+  "date": "2026-07-27",
+  "api_sha": "ca939fdc69bc18f34c054c6dacdf83d7dbe517fb",
+  "suite": "tests/unit/care/relay-authorization-before-retrieval.test.ts",
+  "tests_passed": 7,
+  "tests_failed": 0,
+  "scenarios": {
+    "authorized_family": "PASS",
+    "zero_relationship": "PASS",
+    "revoked_membership": "PASS",
+    "partial_domain_transport_no_meds": "PASS",
+    "cross_recipient_cross_universe": "PASS",
+    "audit_deny_and_access": "PASS",
+    "authorize_helper_no_relationship": "PASS",
+    "expired_assignment": "PARTIAL_code_path_no_dedicated_test",
+    "invited_not_accepted": "PARTIAL_denial_copy_only",
+    "dsp_before_after_shift": "NOT_FULLY_TESTED"
+  },
+  "disclosures": {
+    "hidden_recipient": 0,
+    "cross_recipient": 0,
+    "cross_tenant": 0,
+    "unauthorized_domain_answers": 0
+  },
+  "public_smoke": {
+    "unauth_answer": "401",
+    "auth_sadeil_evelyn_status": "200 grounded",
+    "auth_sadeil_evelyn_meds": "200 grounded",
+    "auth_maya_evelyn_status": "200 grounded",
+    "stranger_login": "400"
+  }
+}

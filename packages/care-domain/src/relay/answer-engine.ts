@@ -106,6 +106,7 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
     recipientName: input.recipientName,
     principalName: input.principalName,
     question: input.question,
+    personNameMap: input.personNameMap,
   });
 
   return {
@@ -129,8 +130,10 @@ function composeAnswer(ctx: {
   recipientName: string;
   principalName: string;
   question?: string;
+  personNameMap?: Record<string, string>;
 }): { answer: string; sourceRefs: string[]; projectionsUsed: string[] } {
   const { classified, persona, proj, recipientName } = ctx;
+  const personNameMap = ctx.personNameMap;
   const intents = classified.intents;
   const question = ctx.question ?? "";
   const used = new Set<string>();
@@ -173,17 +176,38 @@ function composeAnswer(ctx: {
     const when = formatCareDateTime(
       str(rec.administeredAt ?? rec.occurredAt ?? rec.recordedAt),
     );
+    const sourceActor =
+      rec.source && typeof rec.source === "object"
+        ? str((rec.source as { actorName?: string }).actorName)
+        : "";
     const by = resolvePersonName(
       str(rec.administeredByPersonId) || undefined,
-      str(rec.lastAdministeredByName) || undefined,
+      str(rec.lastAdministeredByName) || sourceActor || undefined,
+      personNameMap,
     );
     const dose = str(rec.doseRecorded ?? rec.recordedDose ?? rec.dose ?? "");
-    return `${dose || "dose recorded"} · ${when || "time on file"} · by ${by}`;
+    const status = str(rec.status);
+    const truth = str(rec.epistemicStatus);
+    const statusNote =
+      status === "voided"
+        ? " (voided / corrected — not current truth)"
+        : truth
+          ? ` (${truth})`
+          : "";
+    return `${dose || "dose recorded"} · ${when || "time on file"} · by ${by}${statusNote}`;
   }
 
   function lastAdminLine(): string {
-    const last = adminRecords().slice(-1)[0];
+    // Prefer non-voided current administration for "was it given?"
+    const rows = adminRecords();
+    const current = [...rows]
+      .reverse()
+      .find((r) => str(r.status) !== "voided");
+    const last = current ?? rows.slice(-1)[0];
     if (!last) return "No administration is recorded yet.";
+    if (str(last.status) === "voided") {
+      return `Last recorded administration was corrected/voided: ${describeAdmin(last)}. Current truth: not administered (unresolved unless re-confirmed).`;
+    }
     return `Last recorded: ${describeAdmin(last)}`;
   }
 
@@ -196,6 +220,7 @@ function composeAnswer(ctx: {
       const by = resolvePersonName(
         str(r.administeredByPersonId) || undefined,
         str(r.lastAdministeredByName) || undefined,
+        personNameMap,
       ).toLowerCase();
       if (by.includes(key.split(" ")[0]!) || key.includes(by.split(" ")[0]!)) {
         return r;

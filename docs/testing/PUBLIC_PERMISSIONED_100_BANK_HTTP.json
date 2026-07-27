@@ -1,0 +1,87 @@
+{
+  "public_http": {
+    "api": "https://caretaker-relay-care-api.onrender.com",
+    "unauth_status": 401,
+    "public_questions": 100,
+    "public_answered": 100,
+    "public_failed": 0,
+    "samples": [
+      {
+        "status": 200,
+        "preview": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last"
+      },
+      {
+        "status": 200,
+        "preview": "Here's what changed for Evelyn Carter:\n\n• Caregiver reported: seemed more tired than usual (from Mar"
+      },
+      {
+        "status": 200,
+        "preview": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last"
+      },
+      {
+        "status": 200,
+        "preview": "Metformin 500 mg\nTake at 12:00 PM\nWindow 11:30 AM – 12:30 PM\nTake with food\nAuthorized by Dr. Priya "
+      },
+      {
+        "status": 200,
+        "preview": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last"
+      },
+      {
+        "status": 200,
+        "preview": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last"
+      },
+      {
+        "status": 200,
+        "preview": "Helping now: Marcus Carter · Primary family caregiver\nUntil about 4:00 PM\n\nNext: Maya Bennett\nExpect"
+      },
+      {
+        "status": 200,
+        "preview": "I can help prepare a doctor appointment request for Evelyn Carter, but I will not pretend an externa"
+      },
+      {
+        "status": 200,
+        "preview": "Saved appointment **request** for Evelyn Carter:\n• Wednesday, July 29 · 2:00 PM PDT\n• Slot: slot-req"
+      },
+      {
+        "status": 200,
+        "preview": "Here's a plain-language picture of Evelyn Carter right now:\n\nRecent caregiver reports: Fatigue (last"
+      },
+      {
+        "status": 200,
+        "preview": "Here's what changed for Evelyn Carter:\n\n• Caregiver reported: seemed more tired than usual (from Mar"
+      },
+      {
+        "status": 200,
+        "preview": "Here's what changed for Evelyn Carter:\n\n• Caregiver reported: seemed more tired than usual (from Mar"
+      },
+      {
+        "status": 200,
+        "preview": "Here's what changed for Evelyn Carter:\n\n• Caregiver reported: seemed more tired than usual (from Mar"
+      },
+      {
+        "status": 200,
+        "preview": "I don't have a matching record for that specific ask about Evelyn Carter.\n\nI can help with status, m"
+      },
+      {
+        "status": 200,
+        "preview": "Here's what changed for Evelyn Carter:\n\n• Caregiver reported: seemed more tired than usual (from Mar"
+      }
+    ],
+    "timestamp": "2026-07-27T20:29:32.822Z"
+  },
+  "local_matrix": {
+    "total_evaluations": 1100,
+    "variants": 11,
+    "questions": 100,
+    "authorized_grounded": 401,
+    "authorized_no_data": 79,
+    "partial_scope_denials": 120,
+    "full_denials": 500,
+    "unauthorized_answers": 0,
+    "unauthorized_domain_answers": 0,
+    "cross_recipient_disclosures": 0,
+    "hidden_recipient_disclosures": 0,
+    "cross_tenant_disclosures": 0,
+    "timestamp": "2026-07-27T20:28:50.641Z"
+  }
+}

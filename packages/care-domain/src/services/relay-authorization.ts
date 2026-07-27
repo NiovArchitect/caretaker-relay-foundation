@@ -12,6 +12,12 @@ import {
 } from "./minimum-necessary.js";
 import { classifyIntent, type RelayIntent } from "../relay/intents.js";
 import type { CareStateBag } from "../relay/projections.js";
+import {
+  resolveShiftRelayAccess,
+  isDocumentationIntent,
+  SHIFT_DOMAIN_PRESETS,
+} from "./shift-relay-access.js";
+import { listInvitations } from "./invitation.js";
 
 export type RelayAuthOutcome =
   | {
@@ -112,6 +118,8 @@ export function authorizeRelayQuestion(
     careRecipientId: string;
     roleLabel: string;
     question: string;
+    /** Optional clock for shift-window tests */
+    nowMs?: number;
   },
 ): RelayAuthOutcome {
   if (
@@ -124,6 +132,44 @@ export function authorizeRelayQuestion(
       code: "UNAUTHENTICATED",
       answer:
         "You need to sign in before I can answer care questions. Sign-in alone does not open any care profile.",
+    };
+  }
+
+  // Invited-not-accepted: invitation exists but no active membership.
+  // Check before generic NO_RELATIONSHIP so denial is precise.
+  {
+    const rel = store.getRelationship(
+      input.careRecipientId,
+      input.principalId,
+    );
+    if (!rel || rel.status !== "active") {
+      const pendingInvite = listInvitations(store, input.careRecipientId).find(
+        (i) =>
+          i.inviteePersonId === input.principalId && i.status === "pending",
+      );
+      if (pendingInvite) {
+        return {
+          kind: "denied",
+          code: "INVITED_NOT_ACCEPTED",
+          answer:
+            "Your invitation has not been accepted yet. Accept the invitation to join this care profile before I can answer care questions.",
+        };
+      }
+    }
+  }
+
+  // Shift-scoped path (DSP / paid caregiver assignment window)
+  const shift = resolveShiftRelayAccess(store, {
+    principalId: input.principalId,
+    careRecipientId: input.careRecipientId,
+    roleLabel: input.roleLabel,
+    nowMs: input.nowMs,
+  });
+  if (shift.kind === "denied") {
+    return {
+      kind: "denied",
+      code: shift.code,
+      answer: shift.answer,
     };
   }
 
@@ -171,11 +217,31 @@ export function authorizeRelayQuestion(
         "I can't access that information with your current care permissions.",
     };
   }
-  const caps = capsRaw as DomainCapabilities;
+  let caps = capsRaw as DomainCapabilities;
   const classified = classifyIntent(input.question, undefined, {
     recipientFirstNames: [],
   });
   const needed = domainsForIntents(classified.intents);
+
+  // Intersect with shift window domains when applicable
+  if (shift.kind === "authorized") {
+    if (shift.documentationOnly && !isDocumentationIntent(classified.intents)) {
+      return {
+        kind: "denied",
+        code: "DOCUMENTATION_WINDOW_ONLY",
+        answer: SHIFT_DOMAIN_PRESETS.DENY_DOC_ONLY,
+      };
+    }
+    const shiftSet = new Set(shift.domains);
+    const intersected = caps.domains.filter((d) => shiftSet.has(d));
+    // pre_shift / active: domains must come from shift intersection (not full family scope)
+    caps = {
+      ...caps,
+      controlling: false,
+      domains: intersected.length ? intersected : shift.domains,
+    };
+  }
+
   const permitted = new Set(caps.domains);
   const allowedNeeded = needed.filter((d) => permitted.has(d));
 
@@ -219,7 +285,10 @@ export function authorizeRelayQuestion(
         ? allowedNeeded
         : caps.domains,
     capabilities: caps,
-    accessReason: access.reason,
+    accessReason:
+      shift.kind === "authorized"
+        ? `shift:${shift.phase}:${access.reason}`
+        : access.reason,
   };
 }
 

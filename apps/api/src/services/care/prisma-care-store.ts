@@ -985,6 +985,9 @@ export class PrismaCareStore implements CareStore {
   getPerson(id: string) {
     return this.memory.getPerson(id);
   }
+  listPeople() {
+    return this.memory.listPeople();
+  }
   upsertRecipient(r: CareRecipient): void {
     this.memory.upsertRecipient(r);
     this.dirty = true;

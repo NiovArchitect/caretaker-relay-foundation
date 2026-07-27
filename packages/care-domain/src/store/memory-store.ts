@@ -39,6 +39,8 @@ function id(prefix: string): string {
 export interface CareStore {
   upsertPerson(p: Person): void;
   getPerson(id: string): Person | undefined;
+  /** All known people in the store (for name resolution). */
+  listPeople(): Person[];
   upsertRecipient(r: CareRecipient): void;
   getRecipient(id: string): CareRecipient | undefined;
   upsertRelationship(r: CareRelationship): void;
@@ -140,6 +142,9 @@ export class MemoryCareStore implements CareStore {
   }
   getPerson(pid: string): Person | undefined {
     return this.people.get(pid);
+  }
+  listPeople(): Person[] {
+    return [...this.people.values()];
   }
   upsertRecipient(r: CareRecipient): void {
     this.recipients.set(r.id, r);

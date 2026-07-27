@@ -187,11 +187,33 @@ export function buildProjections(input: {
 
   let NEXT_APPOINTMENT: Record<string, unknown> | null = null;
   if (apts.length) {
-    const sorted = [...apts].sort((a, b) =>
+    // Active next only — never cancelled / superseded / completed / missed as "next".
+    const inactive = new Set([
+      "cancelled",
+      "completed",
+      "missed",
+      "rescheduled",
+      "superseded",
+    ]);
+    const active = apts.filter((a) => {
+      const st = str(a.status).toLowerCase();
+      const life = str(a.scheduleState).toLowerCase();
+      if (inactive.has(st) || inactive.has(life)) return false;
+      if (life === "cancelled" || life === "completed" || life === "missed") {
+        return false;
+      }
+      return true;
+    });
+    const sorted = [...active].sort((a, b) =>
       str(a.startsAt).localeCompare(str(b.startsAt)),
     );
     NEXT_APPOINTMENT = sorted[0] ?? null;
   }
+
+  // Prefer non-voided medication administrations for current-truth projection
+  const activeRecords = records.filter(
+    (r) => str(r.status).toLowerCase() !== "voided",
+  );
 
   const REMINDERS: CareProjections["REMINDERS"] = [];
   for (const m of meds) {
@@ -209,6 +231,19 @@ export function buildProjections(input: {
     });
   }
   for (const a of apts) {
+    const st = str(a.status).toLowerCase();
+    const life = str(a.scheduleState).toLowerCase();
+    if (
+      st === "cancelled" ||
+      st === "completed" ||
+      st === "missed" ||
+      life === "cancelled" ||
+      life === "completed" ||
+      life === "missed" ||
+      life === "rescheduled"
+    ) {
+      continue; // never surface cancelled/superseded in reminders
+    }
     const title = str(a.title) || "Appointment";
     const when = str(a.startsAtLabel ?? a.startsAt);
     const isPt = /physical therapy|pt/i.test(title);
@@ -256,7 +291,10 @@ export function buildProjections(input: {
     LATEST_PROVIDER_INSTRUCTIONS,
     RECENT_CHANGES,
     CARE_TEAM_NOW: (input.careTeam ?? []).slice(0, 8),
-    LAST_MEDICATION_ADMINISTRATIONS: records.slice(-5),
+    LAST_MEDICATION_ADMINISTRATIONS: (activeRecords.length
+      ? activeRecords
+      : records
+    ).slice(-5),
     RECENT_OBSERVATION_CLUSTERS: clusters,
     ACTIVE_HANDOFF: input.handoff
       ? {
