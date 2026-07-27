@@ -4,7 +4,7 @@
  */
 
 import type { CareStore } from "../store/memory-store.js";
-import type { CareRelationship, SourceRef } from "../types.js";
+import type { CareRelationship } from "../types.js";
 import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
 import { ingestCareEvent } from "./care-event-etl.js";
