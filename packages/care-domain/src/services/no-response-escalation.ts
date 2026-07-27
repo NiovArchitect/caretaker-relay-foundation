@@ -47,6 +47,7 @@ export function escalateNoResponseForRecipient(
   const windowMs = input.windowMs ?? 30 * 60 * 1000;
   const now = Date.now();
   const results: EscalationResult[] = [];
+  const MAX = 10; // hard cap — never fan-out unbounded against large inboxes
 
   // Scan circle principals for stale notifications on this recipient
   const principals = new Set<string>([
@@ -57,22 +58,26 @@ export function escalateNoResponseForRecipient(
     if (rel.status === "active") principals.add(rel.personId);
   }
 
-  for (const principalId of principals) {
-    for (const n of listNotificationsForPrincipal(
+  outer: for (const principalId of principals) {
+    const list = listNotificationsForPrincipal(
       store,
       principalId,
       input.careRecipientId,
-    )) {
+    ).slice(0, 40);
+    for (const n of list) {
+      if (results.length >= MAX) break outer;
       if (n.resolvedAt || n.acknowledgedAt) continue;
+      if (n.sourceType === "notification_escalation") continue;
+      if (n.title.startsWith("No response:")) continue;
       const age = now - Date.parse(n.createdAt);
-      if (age < windowMs) continue;
+      if (Number.isNaN(age) || age < windowMs) continue;
       if (n.priority === "info") continue;
 
       const work = createWorkItem(store, {
         careRecipientId: input.careRecipientId,
         actorPersonId: input.actorPersonId,
         actorDisplayName: input.actorDisplayName,
-        action: `Follow up: ${n.title}`,
+        action: `Follow up: ${n.title}`.slice(0, 120),
         reason: `No response to in-app notification since ${n.createdAt}`,
         ownerPersonId: input.alternatePersonId,
         ownerDisplayName: input.alternateDisplayName ?? input.alternatePersonId,
@@ -87,7 +92,7 @@ export function escalateNoResponseForRecipient(
         careRecipientId: input.careRecipientId,
         type: "CARE_UPDATE",
         priority: "urgent",
-        title: `No response: ${n.title}`,
+        title: `No response: ${n.title}`.slice(0, 100),
         body: `${principalId} has not acknowledged. You are the alternate owner.`,
         sourceType: "notification_escalation",
         sourceId: n.id,
