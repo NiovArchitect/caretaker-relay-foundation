@@ -616,15 +616,17 @@ function answerWithState(
     const openReviews = (state.openSafetyReviews ?? []).map((r) =>
       String(r.reason ?? r.message ?? "open safety review"),
     );
-    const lines: string[] = [...loops.lines];
-    for (const r of openReviews) {
-      if (r) lines.push(`Needs checking: ${r}`);
-    }
-    // Surface handoff still-needs if present
+    // Prefer latest handoff unfinished work first so shift-to-shift answers
+    // advance instead of being drowned by long-lived review queues.
+    const lines: string[] = [];
     if (latest?.stillNeedsAttention?.length) {
       for (const n of latest.stillNeedsAttention.slice(0, 4)) {
         lines.push(`Handoff still needs attention: ${n}`);
       }
+    }
+    for (const l of loops.lines) lines.push(l);
+    for (const r of openReviews) {
+      if (r) lines.push(`Needs checking: ${r}`);
     }
     let answer: string;
     if (lines.length === 0) {
