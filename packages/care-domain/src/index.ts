@@ -70,6 +70,7 @@ export * from "./services/conflict-center.js";
 export * from "./services/invitation-preview.js";
 export * from "./services/etl-outbox.js";
 export * from "./services/care-work-items.js";
+export * from "./services/schedule-proposals.js";
 export * from "./services/harmonized-ops.js";
 export * from "./services/handoff-lifecycle.js";
 export * from "./services/no-response-escalation.js";

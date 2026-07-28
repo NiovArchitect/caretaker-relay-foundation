@@ -238,9 +238,15 @@ export function buildSharedHandoffPacket(
     unfinishedWork: work
       .filter((w) => w.status !== "completed" && w.status !== "cancelled")
       .map((w) => ({
+        id: w.id,
         action: w.action,
         owner: w.ownerDisplayName ?? "Unassigned",
+        ownerPersonId: w.ownerPersonId ?? null,
         status: w.status,
+        dueAt: w.dueAt ?? null,
+        handoffId: w.handoffId ?? null,
+        declineReason: w.declineReason ?? null,
+        acceptedAt: w.acceptedAt ?? null,
       })),
     conflicts: conflicts.map((c) => c.title),
     corrections: store

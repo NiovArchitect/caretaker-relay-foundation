@@ -81,10 +81,14 @@ import {
   proveEtlReliability,
   createWorkItem,
   claimWorkItem,
+  declineWorkItem,
   transitionWorkItem,
   listWorkItems,
   listNeedsOwner,
   escalateOverdueWork,
+  listScheduleProposals,
+  confirmScheduleProposal,
+  rejectScheduleProposal,
   buildSinceLastVisit,
   projectHandoffForRole,
   buildEmergencyCard,
@@ -4558,6 +4562,87 @@ export async function registerCareRoutes(
       });
       if (!result.ok) {
         return reply
+          .code(
+            result.code === "NOT_FOUND"
+              ? 404
+              : result.code === "ALREADY_OWNED"
+                ? 409
+                : 400,
+          )
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        work_item: result.item,
+        message: "You accepted this task. It is not marked complete.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  // Alias: accept responsibility (same as claim; status becomes accepted)
+  app.post(
+    "/api/v1/care/recipients/:id/work-items/:workId/accept",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, workId } = request.params as { id: string; workId: string };
+      const result = claimWorkItem(runtime.store, {
+        careRecipientId: id,
+        workItemId: workId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+      });
+      if (!result.ok) {
+        return reply
+          .code(
+            result.code === "NOT_FOUND"
+              ? 404
+              : result.code === "ALREADY_OWNED"
+                ? 409
+                : 400,
+          )
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        work_item: result.item,
+        message: "You accepted this task. It is not marked complete.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { reason?: string };
+  }>(
+    "/api/v1/care/recipients/:id/work-items/:workId/decline",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, workId } = request.params as { id: string; workId: string };
+      const body = request.body ?? {};
+      const result = declineWorkItem(runtime.store, {
+        careRecipientId: id,
+        workItemId: workId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      if (!result.ok) {
+        return reply
           .code(result.code === "NOT_FOUND" ? 404 : 400)
           .send({
             ok: false,
@@ -4570,6 +4655,122 @@ export async function registerCareRoutes(
       return reply.code(200).send({
         ok: true,
         work_item: result.item,
+        message:
+          "Declined responsibility. The task remains open — not cancelled.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  // ── Schedule proposals (governed; never silent from handoff text) ─────
+  app.get(
+    "/api/v1/care/recipients/:id/schedule-proposals",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      return reply.code(200).send({
+        ok: true,
+        proposals: listScheduleProposals(runtime.store, id, {
+          includeTerminal: true,
+        }),
+        open: listScheduleProposals(runtime.store, id),
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      confirmed_starts_at?: string;
+      confirmed_starts_at_label?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/schedule-proposals/:proposalId/confirm",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, proposalId } = request.params as {
+        id: string;
+        proposalId: string;
+      };
+      const body = request.body ?? {};
+      const result = confirmScheduleProposal(runtime.store, {
+        careRecipientId: id,
+        proposalId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        confirmedStartsAt:
+          typeof body.confirmed_starts_at === "string"
+            ? body.confirmed_starts_at
+            : undefined,
+        confirmedStartsAtLabel:
+          typeof body.confirmed_starts_at_label === "string"
+            ? body.confirmed_starts_at_label
+            : undefined,
+      });
+      if (!result.ok) {
+        return reply
+          .code(result.code === "NOT_FOUND" ? 404 : 400)
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        proposal: result.proposal,
+        appointment_id: result.appointmentId,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: { reason?: string };
+  }>(
+    "/api/v1/care/recipients/:id/schedule-proposals/:proposalId/reject",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, proposalId } = request.params as {
+        id: string;
+        proposalId: string;
+      };
+      const body = request.body ?? {};
+      const result = rejectScheduleProposal(runtime.store, {
+        careRecipientId: id,
+        proposalId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      if (!result.ok) {
+        return reply
+          .code(result.code === "NOT_FOUND" ? 404 : 400)
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        proposal: result.proposal,
         correlation_id: correlationId(request),
       });
     },

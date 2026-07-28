@@ -33,6 +33,10 @@ export type CareWorkItem = {
   reason: string;
   ownerPersonId?: string | null;
   ownerDisplayName?: string | null;
+  previousOwnerPersonId?: string | null;
+  previousOwnerDisplayName?: string | null;
+  proposedOwnerPersonId?: string | null;
+  proposedOwnerDisplayName?: string | null;
   backupOwnerPersonId?: string | null;
   createdByPersonId: string;
   createdByDisplayName: string;
@@ -43,8 +47,14 @@ export type CareWorkItem = {
   escalationRule?: string | null;
   escalatedAt?: string | null;
   sourceEventId?: string | null;
+  handoffId?: string | null;
   completionEvidence?: string | null;
   claimExpiresAt?: string | null;
+  acceptedAt?: string | null;
+  declinedAt?: string | null;
+  declineReason?: string | null;
+  declinedByPersonId?: string | null;
+  clarificationNote?: string | null;
   correlationId: string;
   createdAt: string;
   updatedAt: string;
@@ -110,15 +120,11 @@ export function listWorkItems(
   }
   let rows = [...byId.values()];
   if (!opts?.includeTerminal) {
+    // "declined" is NOT terminal — decline only refuses ownership; work stays open
+    // as available_to_claim (see declineWorkItem). Filter only true terminals.
     rows = rows.filter(
       (w) =>
-        ![
-          "completed",
-          "cancelled",
-          "declined",
-          "expired",
-          "missed",
-        ].includes(w.status),
+        !["completed", "cancelled", "expired", "missed"].includes(w.status),
     );
   }
   return rows.sort((a, b) => {
@@ -289,9 +295,12 @@ export function claimWorkItem(
   const now = new Date().toISOString();
   const claimed: CareWorkItem = {
     ...item,
+    previousOwnerPersonId: item.ownerPersonId ?? null,
+    previousOwnerDisplayName: item.ownerDisplayName ?? null,
     ownerPersonId: input.actorPersonId,
     ownerDisplayName: input.actorDisplayName,
-    status: "claimed",
+    status: "accepted",
+    acceptedAt: now,
     claimExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
     updatedAt: now,
   };
@@ -299,11 +308,155 @@ export function claimWorkItem(
   store.writeAudit({
     at: now,
     actorPersonId: input.actorPersonId,
-    action: "WORK_ITEM_CLAIMED",
+    action: "WORK_ITEM_ACCEPTED",
     careRecipientId: input.careRecipientId,
-    details: { workItemId: item.id },
+    details: {
+      workItemId: item.id,
+      previousOwnerPersonId: item.ownerPersonId,
+      note: "Accept responsibility — not completion",
+    },
   });
   return { ok: true, item: claimed };
+}
+
+/**
+ * Decline responsibility: task remains OPEN (available_to_claim).
+ * Decline is NOT cancel. Handoff acknowledgment is unaffected.
+ */
+export function declineWorkItem(
+  store: CareStore,
+  input: {
+    careRecipientId: string;
+    workItemId: string;
+    actorPersonId: string;
+    actorDisplayName: string;
+    reason?: string;
+  },
+):
+  | { ok: true; item: CareWorkItem }
+  | { ok: false; code: string; message: string } {
+  const access = evaluateAccess(
+    store,
+    input.actorPersonId,
+    input.careRecipientId,
+  );
+  if (!access.allowed) {
+    return { ok: false, code: access.code, message: access.reason };
+  }
+  const item = listWorkItems(store, input.careRecipientId, {
+    includeTerminal: true,
+  }).find((w) => w.id === input.workItemId);
+  if (!item) {
+    return { ok: false, code: "NOT_FOUND", message: "Work item not found" };
+  }
+  if (["completed", "cancelled"].includes(item.status)) {
+    return {
+      ok: false,
+      code: "TERMINAL",
+      message: "Completed or cancelled work cannot be declined",
+    };
+  }
+  const now = new Date().toISOString();
+  const next: CareWorkItem = {
+    ...item,
+    previousOwnerPersonId: item.ownerPersonId ?? null,
+    previousOwnerDisplayName: item.ownerDisplayName ?? null,
+    ownerPersonId: null,
+    ownerDisplayName: null,
+    status: "available_to_claim",
+    declinedAt: now,
+    declinedByPersonId: input.actorPersonId,
+    declineReason: input.reason?.trim() || "Declined without reason",
+    updatedAt: now,
+  };
+  save(store, next);
+  store.writeAudit({
+    at: now,
+    actorPersonId: input.actorPersonId,
+    action: "WORK_ITEM_DECLINED",
+    careRecipientId: input.careRecipientId,
+    details: {
+      workItemId: item.id,
+      reason: next.declineReason,
+      note: "Decline is not cancel — work remains open",
+    },
+  });
+  // Coordinator / circle awareness
+  for (const rel of store.getRelationships(input.careRecipientId)) {
+    if (rel.status !== "active") continue;
+    if (rel.personId === input.actorPersonId) continue;
+    createNotificationIfNew(store, {
+      principalId: rel.personId,
+      careRecipientId: input.careRecipientId,
+      type: "CARE_UPDATE",
+      priority: "attention",
+      title: `Declined: ${item.action}`,
+      body: `${input.actorDisplayName} declined responsibility. Task is still open. ${next.escalationRule ?? ""}`,
+      sourceType: "work_item",
+      sourceId: item.id,
+      actorPersonId: input.actorPersonId,
+      actorDisplayName: input.actorDisplayName,
+      actionType: "claim_work",
+      actionTarget: item.id,
+      dedupeKey: `work-decline:${item.id}:${rel.personId}:${now.slice(0, 16)}`,
+    });
+  }
+  return { ok: true, item: next };
+}
+
+/** Seed unassigned work items from a handoff stillNeedsAttention list. */
+export function seedWorkItemsFromHandoff(
+  store: CareStore,
+  input: {
+    careRecipientId: string;
+    handoffId: string;
+    actorPersonId: string;
+    actorDisplayName: string;
+    stillNeedsAttention: string[];
+    backupOwnerPersonId?: string | null;
+  },
+): CareWorkItem[] {
+  const created: CareWorkItem[] = [];
+  const existing = listWorkItems(store, input.careRecipientId, {
+    includeTerminal: true,
+  });
+  for (const line of input.stillNeedsAttention) {
+    const action = line.trim();
+    if (!action) continue;
+    // Skip if an open item already matches this action for this handoff
+    const dup = existing.find(
+      (w) =>
+        w.action === action &&
+        w.handoffId === input.handoffId &&
+        !["completed", "cancelled"].includes(w.status),
+    );
+    if (dup) continue;
+    const r = createWorkItem(store, {
+      careRecipientId: input.careRecipientId,
+      actorPersonId: input.actorPersonId,
+      actorDisplayName: input.actorDisplayName,
+      action,
+      reason: `From handoff ${input.handoffId} — still needs attention. Handoff acknowledgment does not accept this task.`,
+      ownerPersonId: null,
+      ownerDisplayName: null,
+      backupOwnerPersonId: input.backupOwnerPersonId ?? null,
+      sourceEventId: input.handoffId,
+      status: "available_to_claim",
+      priority: /transport|med|medication|safety|mobility/i.test(action)
+        ? "high"
+        : "normal",
+      evidenceKind: "operational",
+    });
+    if (r.ok) {
+      const withHandoff: CareWorkItem = {
+        ...r.item,
+        handoffId: input.handoffId,
+      };
+      save(store, withHandoff);
+      created.push(withHandoff);
+    }
+  }
+  return created;
 }
 
 export function transitionWorkItem(

@@ -12,6 +12,8 @@ import {
   ensureHandoffLifecycle,
   transitionHandoffLifecycle,
 } from "./handoff-lifecycle.js";
+import { seedWorkItemsFromHandoff } from "./care-work-items.js";
+import { extractScheduleProposalsFromHandoff } from "./schedule-proposals.js";
 
 export type ShiftAssignmentStatus =
   | "proposed"
@@ -517,6 +519,24 @@ export function completeShiftHandoff(
     actorPersonId: input.actorPersonId,
     actorDisplayName: input.actorDisplayName,
     status: "sent",
+  });
+  // Open work: stillNeedsAttention → unassigned work items (ack ≠ accept)
+  seedWorkItemsFromHandoff(store, {
+    careRecipientId: input.careRecipientId,
+    handoffId: handoff.id,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    stillNeedsAttention: input.stillNeedsAttention,
+    backupOwnerPersonId: input.toPersonId ?? null,
+  });
+  // Schedule language → proposals only (never silent appointment mutation)
+  extractScheduleProposalsFromHandoff(store, {
+    careRecipientId: input.careRecipientId,
+    handoffId: handoff.id,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    whatChanged: input.whatChanged,
+    stillNeedsAttention: input.stillNeedsAttention,
   });
   const completed: ShiftAssignment = {
     ...a,
