@@ -92,7 +92,6 @@ import {
   confirmScheduleProposal,
   rejectScheduleProposal,
   createCareSpace,
-  listCareReminders,
   buildSinceLastVisit,
   projectHandoffForRole,
   buildEmergencyCard,
@@ -4815,31 +4814,7 @@ export async function registerCareRoutes(
     });
   });
 
-  app.get(
-    "/api/v1/care/recipients/:id/reminders",
-    async (request, reply) => {
-      const principal = await requireCareAuth(runtime, request, reply);
-      if (!principal) return;
-      const { id } = request.params as { id: string };
-      const access = runtime.access(principal.carePersonId, id);
-      if (!access.allowed) {
-        return reply.code(403).send({
-          ok: false,
-          code: access.code,
-          message: access.reason,
-          correlation_id: correlationId(request),
-        });
-      }
-      const reminders = listCareReminders(runtime.store, id);
-      return reply.code(200).send({
-        ok: true,
-        reminders,
-        active: reminders.filter((r) => r.status === "active"),
-        superseded: reminders.filter((r) => r.status === "superseded"),
-        correlation_id: correlationId(request),
-      });
-    },
-  );
+
 
   // ── Schedule proposals (governed; never silent from handoff text) ─────
   app.get(
