@@ -8,6 +8,10 @@ import type { CareRelationship } from "../types.js";
 import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
 import { ingestCareEvent } from "./care-event-etl.js";
+import {
+  ensureHandoffLifecycle,
+  transitionHandoffLifecycle,
+} from "./handoff-lifecycle.js";
 
 export type ShiftAssignmentStatus =
   | "proposed"
@@ -462,6 +466,8 @@ export function completeShiftHandoff(
     actorDisplayName: string;
     whatChanged: string[];
     stillNeedsAttention: string[];
+    /** Incoming caregiver who should acknowledge */
+    toPersonId?: string;
   },
 ):
   | { ok: true; assignment: ShiftAssignment; handoffId: string }
@@ -482,6 +488,7 @@ export function completeShiftHandoff(
     id: store.newId("ho"),
     careRecipientId: input.careRecipientId,
     fromPersonId: input.actorPersonId,
+    toPersonId: input.toPersonId,
     whatChanged: input.whatChanged,
     stillNeedsAttention: input.stillNeedsAttention,
     watch: [],
@@ -501,6 +508,15 @@ export function completeShiftHandoff(
     truthState: "confirmed",
     confidenceLabel: "confirmed",
     structured: { handoffId: handoff.id, assignmentId: a.id },
+  });
+  // Wire first-class lifecycle so incoming DSP can discover + acknowledge
+  ensureHandoffLifecycle(store, handoff, input.actorPersonId);
+  transitionHandoffLifecycle(store, {
+    careRecipientId: input.careRecipientId,
+    handoffId: handoff.id,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    status: "sent",
   });
   const completed: ShiftAssignment = {
     ...a,

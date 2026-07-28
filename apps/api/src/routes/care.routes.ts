@@ -4142,7 +4142,11 @@ export async function registerCareRoutes(
   );
 
   app.post<{
-    Body: { what_changed?: string[]; still_needs_attention?: string[] };
+    Body: {
+      what_changed?: string[];
+      still_needs_attention?: string[];
+      to_person_id?: string;
+    };
   }>(
     "/api/v1/care/recipients/:id/shifts/:shiftId/handoff",
     async (request, reply) => {
@@ -4161,6 +4165,8 @@ export async function registerCareRoutes(
         stillNeedsAttention: Array.isArray(body.still_needs_attention)
           ? body.still_needs_attention.map(String)
           : [],
+        toPersonId:
+          typeof body.to_person_id === "string" ? body.to_person_id : undefined,
       });
       if (!result.ok) {
         return reply.code(400).send({
