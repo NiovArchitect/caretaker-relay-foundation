@@ -1198,6 +1198,7 @@ export async function registerCareRoutes(
       kind: result.kind,
       message: result.message,
       persisted: result.persisted,
+      execution_receipt: result.executionReceipt ?? null,
       evidence_mode: result.evidenceMode,
       current_state: result.currentState,
       audit_ids: result.auditIds,

@@ -502,6 +502,14 @@ export function fixtureExtract(
   } else if (
     /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
       lower,
+    ) &&
+    // Medication-effect linkage wins: "dizzy after Advil" is not generic dizziness
+    !(
+      /\b(after|following)\b/i.test(lower) &&
+      (/\b(pill|tablet|dose|medication|medicine|med|cream|drops?)\b/i.test(
+        lower,
+      ) ||
+        isMedicationTopic(text))
     )
   ) {
     const soft = /seemed|a little|more tired than usual|seems\s+tired/.test(
@@ -721,10 +729,12 @@ export function fixtureExtract(
     );
   const effectAfterMed =
     medTopic &&
-    /\b(after|following)\b.{0,40}\b(pill|tablet|dose|medication|medicine|med)\b/i.test(
-      lower,
-    ) &&
-    /\b(dizzy|dizziness|nause|vomit|rash|sleepy|sleepiness|confused|confusion|agitated|better|improved|worse|fever\s+down|no\s+change)\b/i.test(
+    /\b(after|following)\b/i.test(lower) &&
+    (Boolean(medExtracted) ||
+      /\b(pill|tablet|dose|medication|medicine|med|cream|drops?)\b/i.test(
+        lower,
+      )) &&
+    /\b(dizzy|dizziness|nauseous|nausea|vomit(?:ing)?|rash|sleepy|sleepiness|confused|confusion|agitated|better|improved|worse|fever\s+down|no\s+(?:visible\s+)?change)\b/i.test(
       lower,
     );
 

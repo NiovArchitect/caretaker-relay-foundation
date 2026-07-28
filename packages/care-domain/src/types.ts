@@ -613,6 +613,8 @@ export interface CareLoopResult {
     careNoteId?: string;
     careNoteBody?: string;
   };
+  /** Structured receipt — user-visible copy must derive from this when present. */
+  executionReceipt?: import("./services/execution-receipt.js").ExecutionReceipt;
   currentState?: CurrentCareState;
   evidenceMode: EvidenceMode;
   auditIds: string[];

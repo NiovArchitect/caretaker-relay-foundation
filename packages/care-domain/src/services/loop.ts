@@ -41,6 +41,7 @@ import {
   listCareNotes,
   coachingPromptForRaw,
 } from "./care-notes.js";
+import { buildExecutionReceipt } from "./execution-receipt.js";
 
 export interface CareLoopServiceConfig {
   store: CareStore;
@@ -525,12 +526,10 @@ export class CareLoopService {
     });
 
     const coach = coachingPromptForRaw(bundle.understood.rawText ?? "");
-    const noteLine = `${careNote.title} prepared for the care record.`;
     const coachLine = coach ? ` ${coach}` : "";
 
-    return {
+    const resultBase: CareLoopResult = {
       kind: "persisted",
-      message: `Confirmed. ${noteLine} Handoff ready.${coachLine}`,
       evidenceMode,
       auditIds: [audit.id],
       persisted: {
@@ -544,6 +543,17 @@ export class CareLoopService {
       },
       currentState: this.config.store.getCurrentState(ctx.careRecipientId),
     };
+    const executionReceipt = buildExecutionReceipt({
+      bundle,
+      result: resultBase,
+      actorId: ctx.actorPersonId,
+      actorName: ctx.actorDisplayName,
+      requestId: `rcpt-${handoff.id}`,
+    });
+    // Prefer receipt-derived human copy over API slogans
+    resultBase.message = `${executionReceipt.userVisibleConfirmation}${coachLine}`;
+    resultBase.executionReceipt = executionReceipt;
+    return resultBase;
   }
 
   /**
