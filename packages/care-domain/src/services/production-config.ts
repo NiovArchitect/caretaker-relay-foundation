@@ -92,8 +92,20 @@ export function validateCareProductionConfig(
   }
 
   // AI
+  // Synthetic/lab competition universe may use Grok without PHI BAA (Mode B).
+  // Live PHI (Mode C) still requires dual BAA+PHI flags.
+  const syntheticUniverse =
+    env.CARE_AI_DATA_CLASS === "synthetic" ||
+    env.CARE_AI_DATA_CLASS === "lab";
   let aiLiveAllowed = true;
-  if (mode === "regulated_restricted") {
+  if (syntheticUniverse) {
+    aiLiveAllowed = true;
+    if (understand === "llm" || env.XAI_API_KEY || env.OPENAI_API_KEY) {
+      warnings.push(
+        "CARE_AI_DATA_CLASS=synthetic|lab: live model permitted for synthetic/de-identified care universes only (per-recipient server check still required)",
+      );
+    }
+  } else if (mode === "regulated_restricted") {
     if (
       understand === "llm" ||
       env.ANTHROPIC_API_KEY ||
@@ -104,12 +116,12 @@ export function validateCareProductionConfig(
         // Fail closed: disable live AI rather than crash entire API if already deployed
         aiLiveAllowed = false;
         warnings.push(
-          "regulated_restricted: live AI disabled without BAA+PHI allow flags (set CARE_AI_BAA_EXECUTED=1 and CARE_AI_PHI_ALLOWED=1, or CARE_DEPLOYMENT_MODE=regulated_ai_enabled)",
+          "regulated_restricted: live AI disabled without BAA+PHI allow flags (set CARE_AI_BAA_EXECUTED=1 and CARE_AI_PHI_ALLOWED=1, or CARE_AI_DATA_CLASS=synthetic)",
         );
       }
     }
   }
-  if (mode === "regulated_ai_enabled") {
+  if (!syntheticUniverse && mode === "regulated_ai_enabled") {
     if (!baa || !phiAllowed) {
       errors.push(
         "regulated_ai_enabled requires CARE_AI_BAA_EXECUTED=1 and CARE_AI_PHI_ALLOWED=1",
@@ -117,7 +129,12 @@ export function validateCareProductionConfig(
       aiLiveAllowed = false;
     }
   }
-  if (requireBaa && understand === "llm" && (!baa || !phiAllowed)) {
+  if (
+    !syntheticUniverse &&
+    requireBaa &&
+    understand === "llm" &&
+    (!baa || !phiAllowed)
+  ) {
     aiLiveAllowed = false;
   }
 
@@ -178,6 +195,8 @@ export function validateCareProductionConfig(
       multi_instance_session_safe: multiInstanceSessionSafe,
       shared_revocation: sharedRevocationBackend,
       understand_mode: understand || "auto",
+      care_ai_data_class: env.CARE_AI_DATA_CLASS ?? "unset",
+      synthetic_universe: syntheticUniverse,
       verification_provider: env.CARE_VERIFICATION_PROVIDER ?? "none",
       error_count: errors.length,
       warning_count: warnings.length,

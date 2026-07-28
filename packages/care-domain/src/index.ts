@@ -25,6 +25,7 @@ export * from "./services/provisional-recipient.js";
 export * from "./services/phi-redact.js";
 export * from "./services/audit-taxonomy.js";
 export * from "./services/ai-phi-gate.js";
+export * from "./services/synthetic-universe.js";
 export * from "./services/care-view-audit.js";
 export * from "./services/production-config.js";
 export * from "./services/account-suspension.js";

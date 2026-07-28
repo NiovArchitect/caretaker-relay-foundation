@@ -40,16 +40,20 @@ function resolveUnderstandMode(
 ): "fixture" | "llm" {
   if (config.understandMode) return config.understandMode;
   const env = process.env.CARE_UNDERSTAND_MODE?.toLowerCase();
+  // Explicit fixture wins (ops kill-switch)
   if (env === "fixture") return "fixture";
   if (env === "llm") return "llm";
-  // Auto: prefer llm when a provider key is present
-  if (
+  const hasKey = Boolean(
     process.env.ANTHROPIC_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.XAI_API_KEY
-  ) {
-    return "llm";
-  }
+      process.env.OPENAI_API_KEY ||
+      process.env.XAI_API_KEY,
+  );
+  // Mode B: synthetic competition universe may auto-enable Grok when key present
+  const synthetic =
+    process.env.CARE_AI_DATA_CLASS === "synthetic" ||
+    process.env.CARE_AI_DATA_CLASS === "lab";
+  if (hasKey && synthetic) return "llm";
+  if (hasKey) return "llm";
   return "fixture";
 }
 

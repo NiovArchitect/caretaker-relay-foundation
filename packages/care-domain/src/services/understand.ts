@@ -218,24 +218,58 @@ export function buildPersonalizedClarification(input: {
   dose?: string;
   reason?: string;
   kind?: string;
+  rawText?: string;
 }): string {
   const who = input.careRecipientName || "the care recipient";
-  const reporter = input.actorDisplayName ? `${input.actorDisplayName} reported` : "You reported";
+  const reporter = input.actorDisplayName
+    ? `${input.actorDisplayName} reported`
+    : "You reported";
   const med = formatMedLabel(input.med);
   const bits: string[] = [];
   if (input.med) bits.push(`medication as reported: ${med}`);
   if (input.dose) bits.push(`dose: ${input.dose}`);
   if (input.reason) bits.push(`context: ${input.reason}`);
+  // Soft extract from raw text for warmer fallbacks (no new care truth)
+  const raw = (input.rawText ?? "").trim();
+  const mealish = /\bate\b|meal|lunch|dinner|breakfast|barely ate|didn'?t eat/i.test(
+    raw,
+  );
+  const tiredish = /tired|fatigue|less tired|more energy|weaker/i.test(raw);
+  const moveish = /move|reschedule|friday|thursday|appointment|therapy|pt\b/i.test(
+    raw,
+  );
+  const nextish = /next (shift|caregiver)|tell whoever|handoff|let .+ know/i.test(
+    raw,
+  );
   const known = bits.length
-    ? `I understood: ${bits.join("; ")}.`
-    : `I heard a care update about ${who}.`;
+    ? `I understand that for ${who}: ${bits.join("; ")}.`
+    : mealish && tiredish
+      ? `I understand something about what ${who} ate and how ${who} felt afterward.`
+      : mealish
+        ? `I understand a meal update for ${who}.`
+        : tiredish
+          ? `I understand an energy or tiredness observation for ${who}.`
+          : moveish
+            ? `I understand you want to change a schedule item for ${who}.`
+            : nextish
+              ? `I understand you want the next caregiver to know something about ${who}.`
+              : `I understand a care update about ${who}.`;
   if (input.kind === "plan_change") {
-    return `${known} ${reporter} a possible medication-plan change for ${who}. I can save it as pending verification (not an active order). Please confirm the medication name, dose, and whether a clinician authorized the change.`;
+    return `${known} ${reporter} a possible medication-plan change for ${who}. I can save it as pending verification (not an active order). What is the medication name and dose, and did a clinician authorize the change?`;
   }
   if (input.kind === "administration") {
-    return `${known} To file an administration report for ${who}, confirm whether it was given, refused, or missed, and the approximate time if you know it.`;
+    return `${known} To file an administration report for ${who}, was it given, refused, or missed — and about what time?`;
   }
-  return `${known} Tell me whether this was taken, refused, missed, newly added to the plan, discontinued, or an observed effect — so I can file the right kind of record for ${who}.`;
+  if (moveish) {
+    return `${known} I can draft a schedule change for review. Which appointment is this, and what day or time should it move to?`;
+  }
+  if (nextish) {
+    return `${known} I can record it and include it in the next-shift handoff. What exactly should the next caregiver know, and when did it happen?`;
+  }
+  if (mealish) {
+    return `${known} I can save a meal observation for ${who}. Was this breakfast, lunch, dinner, or a snack — and how much did ${who} eat?`;
+  }
+  return `${known} Was this taken, refused, missed, newly added to the plan, discontinued, an observed effect, or something else for ${who}? After you confirm, I will save the right kind of record and show where it appears.`;
 }
 
 function mkCandidate(
@@ -1050,6 +1084,7 @@ export function fixtureExtract(
         med: medExtracted,
         dose: doseExtracted,
         reason: reasonExtracted,
+        rawText: text,
       }),
     );
   }
@@ -1383,6 +1418,7 @@ export function fixtureExtract(
         buildPersonalizedClarification({
           careRecipientName,
           actorDisplayName: ctx.actorDisplayName,
+          rawText: text,
         }),
       );
     }

@@ -21,6 +21,8 @@ export const careRecipient: CareRecipient = {
   displayName: "Evelyn Carter",
   preferredName: "Evelyn",
   householdId: HOUSEHOLD_OLIVIA,
+  /** Server-authoritative: lab/competition universe — not live PHI. */
+  dataClassification: "synthetic",
   profile: {
     dateOfBirth: "1948-03-12",
     pronouns: "she/her",

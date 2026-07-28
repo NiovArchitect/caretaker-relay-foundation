@@ -102,11 +102,26 @@ export interface CareRecipientProfile {
   profileSourceSummary?: string;
 }
 
+/**
+ * Server-authoritative data classification for AI policy.
+ * Never trust a client flag — only seed, ops, or secure admin may set this.
+ */
+export type CareDataClassification =
+  | "synthetic"
+  | "live_phi"
+  | "unknown";
+
 export interface CareRecipient {
   id: string;
   displayName: string;
   preferredName?: string;
   householdId: string;
+  /**
+   * Server-owned classification for AI mode selection.
+   * synthetic → Grok-assisted interpretation permitted without PHI BAA.
+   * live_phi → fixture only until Mode C (BAA+PHI) is proven.
+   */
+  dataClassification?: CareDataClassification;
   /** Person intelligence — optional; never invent when absent. */
   profile?: CareRecipientProfile;
 }

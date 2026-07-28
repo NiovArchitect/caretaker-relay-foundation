@@ -43,6 +43,7 @@ import {
   activateProvisional,
   declineProvisional,
   evaluateAiPhiGate,
+  grokAssistPermitted,
   redactAuditDetails,
   recordCareDataView,
   notificationFromCoordination,
@@ -974,53 +975,6 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    // Live LLM only when runtime is llm-ready AND PHI gate approves.
-    // Client cannot force mode=llm when deploy is fixture / unapproved.
-    const requestedMode = body.mode ?? runtime.understandMode;
-    if (requestedMode === "llm") {
-      if (runtime.understandMode !== "llm" || !runtime.llmReady) {
-        runtime.store.writeAudit({
-          at: new Date().toISOString(),
-          actorPersonId: principal.carePersonId,
-          action: "AI_MODEL_CALL_BLOCKED",
-          careRecipientId,
-          details: redactAuditDetails({
-            code: "LLM_PATH_DISABLED",
-            surface: "understand",
-            requested: "llm",
-            effective: runtime.understandMode,
-          }),
-        });
-        return reply.code(403).send({
-          ok: false,
-          code: "LLM_PATH_DISABLED",
-          message:
-            "Live model understanding is not enabled for this deployment. Care language is handled with the deterministic path only.",
-          correlation_id: correlationId(request),
-        });
-      }
-      // Evaluate as live-llm request (do not short-circuit on env fixture default)
-      const gate = evaluateAiPhiGate({
-        ...process.env,
-        CARE_UNDERSTAND_MODE: "llm",
-      });
-      if (!gate.allowed) {
-        runtime.store.writeAudit({
-          at: new Date().toISOString(),
-          actorPersonId: principal.carePersonId,
-          action: "AI_MODEL_CALL_BLOCKED",
-          careRecipientId,
-          details: redactAuditDetails({ code: gate.code, surface: "understand" }),
-        });
-        return reply.code(403).send({
-          ok: false,
-          code: gate.code,
-          message: gate.message,
-          correlation_id: correlationId(request),
-        });
-      }
-    }
-
     // Low-confidence STT involving medication → force review note
     const stt = body.transcript_meta;
     const medLike = /medication|meds|dose|mg/i.test(text);
@@ -1043,12 +997,56 @@ export async function registerCareRoutes(
       });
     }
 
+    // Dual-mode AI: Grok only for server-authoritative synthetic (or Mode C BAA).
+    // Client cannot declare synthetic; recipient binding is server-side.
+    const assist = grokAssistPermitted(runtime.store, careRecipientId);
+    const clientForceFixture = body.mode === "fixture";
+    const clientForceLlm = body.mode === "llm";
+    let mode: "fixture" | "llm" = "fixture";
+    if (clientForceFixture) {
+      mode = "fixture";
+    } else if (
+      runtime.llmReady &&
+      assist.allowed &&
+      (runtime.understandMode === "llm" || assist.reason === "synthetic_universe")
+    ) {
+      mode = "llm";
+    } else {
+      mode = "fixture";
+    }
+    if (clientForceLlm && mode !== "llm") {
+      runtime.store.writeAudit({
+        at: new Date().toISOString(),
+        actorPersonId: principal.carePersonId,
+        action: "AI_MODEL_CALL_BLOCKED",
+        careRecipientId,
+        details: redactAuditDetails({
+          code: assist.allowed ? "LLM_PATH_DISABLED" : "AI_PHI_NOT_APPROVED",
+          surface: "understand",
+          classification: assist.classification,
+          reason: assist.reason,
+        }),
+      });
+      return reply.code(403).send({
+        ok: false,
+        code: assist.allowed ? "LLM_PATH_DISABLED" : "AI_PHI_NOT_APPROVED",
+        message: assist.allowed
+          ? "Live model understanding is not enabled for this deployment."
+          : "Live model use is not permitted for this care record. Synthetic or approved PHI mode is required.",
+        correlation_id: correlationId(request),
+      });
+    }
+
     const temporal = interpretHumanTime(text);
-    // Prefer explicit body.mode; otherwise runtime production default (llm when keys present)
-    const mode = body.mode ?? runtime.understandMode;
-    const result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
+    let result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
       mode,
     });
+    // Provider failure on synthetic Grok: fall back to deterministic interpret (no false success)
+    if (mode === "llm" && result.kind === "refusal" && /provider|unavailable|quota/i.test(result.message ?? "")) {
+      result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
+        mode: "fixture",
+      });
+    }
 
     if (result.kind === "access_denied") {
       return reply.code(403).send({
