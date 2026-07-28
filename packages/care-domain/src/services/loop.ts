@@ -26,6 +26,11 @@ import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
 import { createWorkItem } from "./care-work-items.js";
 import {
+  encodeInvitationUpdate,
+  newInviteToken,
+  listInvitations,
+} from "./invitation.js";
+import {
   understandCareInput,
   toVerificationBundle,
   type UnderstandOptions,
@@ -420,36 +425,149 @@ export class CareLoopService {
           candidate.intendedRecipientPersonId ??
           opts?.prepareHandoffForPersonId ??
           "p-maya";
-        const summary = this.buildUpdateSummary(bundle);
-        const cHash = communicationHash({
-          careRecipientId: ctx.careRecipientId,
-          toPersonId,
-          summary,
-        });
-        const existingUpd = this.config.store
-          .getUpdates(ctx.careRecipientId)
-          .find(
-            (u) =>
-              communicationHash({
-                careRecipientId: u.careRecipientId,
-                toPersonId: u.toPersonId,
-                summary: u.summary,
-              }) === cHash,
+
+        // Relay-orchestrated People invitation (dedicated invitation persistence).
+        if (
+          /^Invite helper:/i.test(candidate.statement) &&
+          candidate.intendedRecipientPersonId
+        ) {
+          const inviteeId = candidate.intendedRecipientPersonId;
+          const existingRel = this.config.store.getRelationship(
+            ctx.careRecipientId,
+            inviteeId,
           );
-        if (existingUpd) {
-          updateIds.push(existingUpd.id);
-        } else {
-          const update: CareUpdate = {
+          if (existingRel?.status === "active") {
+            const already: CareUpdate = {
+              id: this.config.store.newId("upd"),
+              careRecipientId: ctx.careRecipientId,
+              toPersonId: inviteeId,
+              summary: `Already a member: ${candidate.intendedRecipientName ?? inviteeId} already has active access. Open People to review roles or revoke.`,
+              status: "ready",
+              safetyClass: "low",
+              source: candidate.sourceReference,
+            };
+            this.config.store.addUpdate(already);
+            updateIds.push(already.id);
+          } else {
+            const pending = listInvitations(
+              this.config.store,
+              ctx.careRecipientId,
+            ).find(
+              (inv) =>
+                inv.inviteePersonId === inviteeId && inv.status === "pending",
+            );
+            if (pending) {
+              updateIds.push(pending.id);
+            } else {
+              const nowIso = now;
+              const inv = {
+                id: this.config.store.newId("inv"),
+                careRecipientId: ctx.careRecipientId,
+                token: newInviteToken(),
+                inviterPersonId: ctx.actorPersonId,
+                inviteePersonId: inviteeId,
+                inviteeDisplayName:
+                  candidate.intendedRecipientName ?? inviteeId,
+                role: (/professional/i.test(candidate.statement)
+                  ? "paid_caregiver"
+                  : "family_caregiver") as
+                  | "family_caregiver"
+                  | "paid_caregiver",
+                roleLabel: /professional/i.test(candidate.statement)
+                  ? "Professional caregiver"
+                  : "Family / friend caregiver",
+                status: "pending" as const,
+                createdAt: nowIso,
+                expiresAt: new Date(
+                  Date.now() + 7 * 24 * 3600 * 1000,
+                ).toISOString(),
+              };
+              const invUpdate = encodeInvitationUpdate(inv, {
+                id: this.config.store.newId("src"),
+                kind: "system_derived",
+                label: "Care invitation from Relay",
+                actorName: ctx.actorDisplayName,
+                actorPersonId: ctx.actorPersonId,
+                recordedAt: nowIso,
+                whyVisible:
+                  "Invitation created after caregiver confirmed in Relay",
+              });
+              this.config.store.addUpdate(invUpdate);
+              updateIds.push(invUpdate.id);
+              createNotificationIfNew(this.config.store, {
+                principalId: inviteeId,
+                careRecipientId: ctx.careRecipientId,
+                type: "INVITATION",
+                priority: "attention",
+                title: "Care invitation",
+                body: `${ctx.actorDisplayName} invited you to help care for ${bundle.understood.careRecipientName}. Open People to accept.`,
+                sourceType: "invitation",
+                sourceId: inv.id,
+                actorPersonId: ctx.actorPersonId,
+                actorDisplayName: ctx.actorDisplayName,
+                actionType: "open_people",
+                actionTarget: inv.id,
+                dedupeKey: `invite:${inv.id}`,
+              });
+            }
+          }
+        } else if (/^Invitation draft:/i.test(candidate.statement)) {
+          // Unknown invitee — durable draft note; People completes identity.
+          const draft: CareUpdate = {
             id: this.config.store.newId("upd"),
             careRecipientId: ctx.careRecipientId,
-            toPersonId,
-            summary,
-            status: "ready",
+            toPersonId: ctx.actorPersonId,
+            summary: candidate.statement,
+            status: "draft",
+            safetyClass: "low",
+            source: candidate.sourceReference,
+          };
+          this.config.store.addUpdate(draft);
+          updateIds.push(draft.id);
+        } else if (/^Access change request:/i.test(candidate.statement)) {
+          const draft: CareUpdate = {
+            id: this.config.store.newId("upd"),
+            careRecipientId: ctx.careRecipientId,
+            toPersonId: ctx.actorPersonId,
+            summary: candidate.statement,
+            status: "draft",
             safetyClass: "moderate",
             source: candidate.sourceReference,
           };
-          this.config.store.addUpdate(update);
-          updateIds.push(update.id);
+          this.config.store.addUpdate(draft);
+          updateIds.push(draft.id);
+        } else {
+          const summary = this.buildUpdateSummary(bundle);
+          const cHash = communicationHash({
+            careRecipientId: ctx.careRecipientId,
+            toPersonId,
+            summary,
+          });
+          const existingUpd = this.config.store
+            .getUpdates(ctx.careRecipientId)
+            .find(
+              (u) =>
+                communicationHash({
+                  careRecipientId: u.careRecipientId,
+                  toPersonId: u.toPersonId,
+                  summary: u.summary,
+                }) === cHash,
+            );
+          if (existingUpd) {
+            updateIds.push(existingUpd.id);
+          } else {
+            const update: CareUpdate = {
+              id: this.config.store.newId("upd"),
+              careRecipientId: ctx.careRecipientId,
+              toPersonId,
+              summary,
+              status: "ready",
+              safetyClass: "moderate",
+              source: candidate.sourceReference,
+            };
+            this.config.store.addUpdate(update);
+            updateIds.push(update.id);
+          }
         }
       }
 
@@ -577,6 +695,25 @@ export class CareLoopService {
       actorName: ctx.actorDisplayName,
       requestId: `rcpt-${handoff.id}`,
     });
+    // Invite already-member honesty (dedicated People path)
+    const alreadyMemberUpdate = this.config.store
+      .getUpdates(ctx.careRecipientId)
+      .some(
+        (u) =>
+          updateIds.includes(u.id) && /Already a member:/i.test(u.summary),
+      );
+    if (alreadyMemberUpdate) {
+      const who =
+        bundle.understood.candidates
+          .find((c) => /^Invite helper:/i.test(c.statement))
+          ?.intendedRecipientName ?? "That person";
+      executionReceipt.userVisibleConfirmation = `${who} already has active access for ${bundle.understood.careRecipientName}. Open People to review roles or revoke access.`;
+      executionReceipt.screenDestinations = [
+        "people_privacy",
+        "relay_retrieval",
+      ];
+      executionReceipt.result = "saved";
+    }
     // Prefer receipt-derived human copy over API slogans
     resultBase.message = `${executionReceipt.userVisibleConfirmation}${coachLine}`;
     resultBase.executionReceipt = executionReceipt;

@@ -89,6 +89,10 @@ function categorizeCandidate(statement: string, eventType: string): CareActionCa
   if (/missed/.test(s)) return "med_missed";
   if (/uncertain medication|not confirmed administration/.test(s)) return "med_uncertain";
   if (/after .* reported association|experienced .* after/.test(s)) return "med_effect";
+  if (/invite helper:|invitation draft:|access change request:|already a member:/.test(s)) {
+    return "communication";
+  }
+  if (/document candidate:/.test(s)) return "note";
   if (eventType === "medication_administration") return "med_administration";
   if (eventType === "observation") return "observation";
   if (eventType === "meal") return "meal";
@@ -133,6 +137,8 @@ function destinationsFor(cat: CareActionCategory): SurfaceDestination[] {
       return ["open_work", "today_attention", "handoff"];
     case "communication":
       return ["notifications", "relay_retrieval"];
+    case "note":
+      return ["care_timeline", "relay_retrieval"];
     default:
       return ["care_timeline", "relay_retrieval"];
   }
@@ -165,7 +171,29 @@ export function buildExecutionReceipt(input: {
       candidates.map((c) => categorizeCandidate(c.statement, c.eventType)),
     ),
   ];
-  const dest = [...new Set(cats.flatMap(destinationsFor))];
+  let dest: SurfaceDestination[] = [
+    ...new Set(cats.flatMap(destinationsFor)),
+  ];
+  const join = candidates.map((c) => c.statement).join(" ");
+  if (
+    /invite helper:|invitation draft:|access change request:|already a member:/i.test(
+      join,
+    )
+  ) {
+    dest = [
+      ...new Set<SurfaceDestination>([
+        ...dest,
+        "people_privacy",
+        "notifications",
+        "relay_retrieval",
+      ]),
+    ];
+  }
+  if (/document candidate:/i.test(join)) {
+    dest = [
+      ...new Set<SurfaceDestination>([...dest, "documents", "relay_retrieval"]),
+    ];
+  }
   const taskTitles = candidates
     .filter((c) => c.eventType === "task")
     .map((c) => c.statement);
@@ -175,8 +203,23 @@ export function buildExecutionReceipt(input: {
   const p = result.persisted;
   const lines = candidates.map((c) => c.statement);
   const recipient = bundle.understood.careRecipientName;
+  const inviteLine = lines.find((l) =>
+    /invite helper:|invitation draft:|access change request:|already a member:/i.test(
+      l,
+    ),
+  );
   let userVisible: string;
-  if (!p?.eventIds?.length && !taskTitles.length) {
+  if (inviteLine && /already a member|active access/i.test(inviteLine + " " + (p?.careNoteBody ?? ""))) {
+    userVisible = `${inviteLine.split("·")[0]?.trim() || "That person"} already has access for ${recipient}. Open People to review roles or revoke access.`;
+  } else if (inviteLine && /^Invite helper:/i.test(inviteLine)) {
+    userVisible = `I created a People invitation for ${recipient}: ${inviteLine}. It appears under People and Privacy; the invitee gets a notification when authorized.`;
+  } else if (inviteLine && /^Invitation draft:/i.test(inviteLine)) {
+    userVisible = `I saved an invitation draft for ${recipient}. Open People to choose the person and access scope, then send the secure invitation.`;
+  } else if (inviteLine && /^Access change request:/i.test(inviteLine)) {
+    userVisible = `I saved an access change request for ${recipient}. Open People and Privacy to review or change who can help.`;
+  } else if (lines.some((l) => /document candidate:/i.test(l))) {
+    userVisible = `I noted a document candidate for ${recipient}. Open Documents to attach the file securely — chat alone does not store clinical files.`;
+  } else if (!p?.eventIds?.length && !taskTitles.length && !(p?.updateIds?.length)) {
     userVisible = `Nothing durable was saved for ${recipient}. You can correct the wording and try again.`;
   } else if (pendingReview) {
     userVisible = `I saved a report for ${recipient} that needs verification (not an active medication-plan change): ${lines.slice(0, 3).join("; ")}. It will appear under pending medication changes, Today attention, and the next-shift handoff.`;

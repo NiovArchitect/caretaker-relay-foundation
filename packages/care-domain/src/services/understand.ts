@@ -1054,6 +1054,127 @@ export function fixtureExtract(
     );
   }
 
+  // Invite helper — Relay orchestrates dedicated People invitation path
+  // (does not replace invitation API; creates a confirmable invitation draft).
+  const inviteMatch =
+    lower.match(
+      /\binvite\s+([a-z][a-z\-']{1,40})(?:\s+([a-z][a-z\-']{1,40}))?(?:\s+to\s+(?:help|join|care|support))?\b/,
+    ) ||
+    lower.match(
+      /\bsend (?:an? )?invitation to\s+([a-z][a-z\-']{1,40})(?:\s+([a-z][a-z\-']{1,40}))?/,
+    ) ||
+    lower.match(
+      /\badd\s+([a-z][a-z\-']{1,40})(?:\s+([a-z][a-z\-']{1,40}))?\s+as (?:a )?(?:helper|caregiver|member)/,
+    );
+  if (inviteMatch) {
+    const first = inviteMatch[1] ?? "";
+    const second = inviteMatch[2] ?? "";
+    const directory: Record<string, { id: string; name: string }> = {
+      maya: { id: "p-maya", name: "Maya Bennett" },
+      walter: { id: "p-walter", name: "Daniel Kim" },
+      daniel: { id: "p-walter", name: "Daniel Kim" },
+      marcus: { id: "p-sadeil", name: "Marcus Carter" },
+      sadeil: { id: "p-sadeil", name: "Marcus Carter" },
+    };
+    const known = directory[first];
+    const display = known
+      ? known.name
+      : [first, second]
+          .filter(Boolean)
+          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(" ");
+    const roleHint = /paid|professional|dsp|agency|nurse|aide/.test(lower)
+      ? "Professional caregiver"
+      : "Family / friend caregiver";
+    if (known) {
+      candidates.push(
+        mkCandidate(
+          {
+            eventType: "communication_request",
+            statement: `Invite helper: ${display} · role: ${roleHint} · scope: help care for ${careRecipientName} · People invitation on confirm`,
+            epistemicStatus: "REPORTED",
+            confidence: 0.92,
+            consequentiality: "moderate",
+            intendedRecipientName: display,
+            intendedRecipientPersonId: known.id,
+          },
+          ctx,
+          careRecipientName,
+          source,
+          ++i,
+        ),
+      );
+    } else {
+      candidates.push(
+        mkCandidate(
+          {
+            eventType: "communication_request",
+            statement: `Invitation draft: ${display || "helper"} · open People to choose person and access scope for ${careRecipientName}`,
+            epistemicStatus: "UNCERTAIN",
+            confidence: 0.75,
+            consequentiality: "moderate",
+            intendedRecipientName: display || undefined,
+          },
+          ctx,
+          careRecipientName,
+          source,
+          ++i,
+        ),
+      );
+      uncertainties.push(
+        `I can help invite ${display || "someone"}, but I need a known person in People to send a secure invitation for ${careRecipientName}.`,
+      );
+    }
+  }
+
+  // Access request / revoke — route to Privacy / People dedicated flows
+  if (
+    candidates.length === 0 &&
+    /\b(request access|revoke access|remove access|change (access|permissions)|who can see)\b/.test(
+      lower,
+    )
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "communication_request",
+          statement: `Access change request: open People and Privacy to review who can help care for ${careRecipientName}`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.85,
+          consequentiality: "moderate",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  }
+
+  // Document candidate — dedicated Documents path
+  if (
+    candidates.length === 0 &&
+    /\b(upload|attach|add)\b.*\b(document|file|pdf|form|paperwork)\b|\bdocument\b.*\b(upload|attach|add)\b/.test(
+      lower,
+    )
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "note",
+          statement: `Document candidate: open Documents to attach a file for ${careRecipientName} (Relay does not store clinical files from chat alone)`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.82,
+          consequentiality: "low",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  }
+
   // Communication / keep another caregiver in the loop
   if (
     /let maya know|tell maya|update maya|maya know|make sure she knows|make sure maya|can you make sure she|caught up|what.?s going on/.test(
