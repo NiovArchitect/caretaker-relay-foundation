@@ -71,6 +71,10 @@ Rules:
 - Soft observations like "seemed tired" are REPORTED or UNCERTAIN, never confirmed clinical diagnoses.
 - Ambiguous times stay UNCERTAIN.
 - Medication statements are candidates only; never invent doses.
+- NEW medication / please-add / put-on-list / doctor-added is eventType "task" with statement starting
+  "Medication change needs verification:" — NEVER medication_administration and NEVER an active order.
+- "I gave / administered" is medication_administration (report of what happened), still not a plan change.
+- Fever / symptom reasons are separate observation candidates.
 - Do not invent protocols or clinical instructions.
 - Prefer uncertainty over fabricated certainty.`;
 
@@ -89,6 +93,42 @@ function sourceRef(
     whyVisible: `${ctx.actorDisplayName} shared a care update in this session.`,
     rawExcerpt: rawText.slice(0, 280),
   };
+}
+
+/** Known OTC/common names for plan-change extraction (not a formulary). */
+const KNOWN_MED_NAMES =
+  /\b(tylenol|acetaminophen|paracetamol|ibuprofen|advil|motrin|aspirin|metformin|lisinopril|atorvastatin|amoxicillin|benadryl|diphenhydramine|omeprazole|losartan|amlodipine|gabapentin|sertraline|escitalopram)\b/i;
+
+/**
+ * Best-effort medication name from free text. Never invents a drug not present.
+ */
+function extractMedicationNameFromText(text: string): string | undefined {
+  const known = text.match(KNOWN_MED_NAMES);
+  if (known) {
+    const n = known[1]!;
+    return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+  }
+  // "new medicine X" / "med called X" / "medication X"
+  const patterns = [
+    /new\s+(?:medicine|medication|med|drug)\s+(?:called\s+|named\s+)?([A-Za-z][A-Za-z-]{1,40})/i,
+    /(?:medicine|medication|med)\s+(?:called\s+|named\s+)([A-Za-z][A-Za-z-]{1,40})/i,
+    /(?:add|started|start|taking|take)\s+([A-Za-z][A-Za-z-]{1,40})\s+\d/i,
+    /(?:add|started)\s+([A-Za-z][A-Za-z-]{1,40})\s+(?:for|to|with)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m?.[1] && !/^(for|the|her|his|with|and|please|new|dose|mg)$/i.test(m[1])) {
+      return m[1].charAt(0).toUpperCase() + m[1].slice(1);
+    }
+  }
+  return undefined;
+}
+
+function extractMedicationReasonFromText(text: string): string | undefined {
+  const m =
+    text.match(/\bfor\s+(?:a\s+)?(fever|pain|cough|nausea|dizziness|infection|headache|inflammation)\b/i) ||
+    text.match(/\b(fever|pain|cough|nausea|dizziness|infection|headache)\b/i);
+  return m?.[1] ? m[1].toLowerCase() : undefined;
 }
 
 function mkCandidate(
@@ -462,11 +502,39 @@ export function fixtureExtract(
 
   // Medication states must NOT collapse: negation / intent / completed / uncertain
   const medTopic =
-    /medication|meds|dose|mg|lunch med|pills?|tablets?|blue pills?/i.test(
+    /medication|meds|dose|mg|lunch med|pills?|tablets?|blue pills?|tylenol|acetaminophen|ibuprofen/i.test(
       lower,
     ) ||
     (/gave|administered|took|take|give/.test(lower) &&
-      /med|dose|lunch|pill|tablet/.test(lower));
+      /med|dose|lunch|pill|tablet|tylenol|acetaminophen/.test(lower));
+  // Recommendation / clinical advice request — never invent dose guidance
+  if (
+    medTopic &&
+    (/\bshould\s+i\s+(give|administer|take)\b/i.test(lower) ||
+      /\bcan\s+i\s+give\b/i.test(lower) ||
+      /\bis\s+it\s+(ok|okay|safe)\s+to\s+give\b/i.test(lower) ||
+      /\bdo\s+i\s+give\b/i.test(lower))
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "note",
+          statement:
+            "Caregiver asked whether to give a medication — Relay does not provide dosing advice. Check the authorized medication plan or clinician.",
+          epistemicStatus: "REPORTED",
+          confidence: 0.9,
+          consequentiality: "high",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+    uncertainties.push(
+      "No administration and no plan change were recorded from a recommendation question. Do not treat chat as permission to dose.",
+    );
+  }
   const negatedMed =
     /\b(did\s+not|didn't|not)\s+(give|gave|administer)/i.test(text) ||
     /\b(did\s+not|didn't)\b.*\b(medication|meds|dose)\b/i.test(lower) ||
@@ -575,22 +643,31 @@ export function fixtureExtract(
       extracted = `${n} tablets`;
     }
     const dose = extracted ?? undefined;
+    const medName = extractMedicationNameFromText(text);
     const ambiguousColorPills = bluePills || (!dose && /pills?|tablets?/.test(lower));
+    const lunchish = /lunch\s*med|metformin/i.test(lower) || (!medName && /lunch/.test(lower));
+    const labelBase = medName
+      ? medName
+      : lunchish
+        ? "Lunch medication"
+        : "Medication";
     candidates.push(
       mkCandidate(
         {
           eventType: "medication_administration",
           statement: ambiguousColorPills
             ? dose
-              ? `Medication reported given (${dose}) — identity/strength needs checking`
-              : "Medication reported given — amount/identity unclear"
+              ? `${labelBase} reported given (${dose}) — identity/strength needs checking`
+              : `${labelBase} reported given — amount/identity unclear`
             : dose
-              ? `Lunch medication marked as given (${dose})`
-              : "Lunch medication marked as given (as scheduled)",
+              ? `${labelBase} marked as given (${dose})`
+              : lunchish
+                ? "Lunch medication marked as given (as scheduled)"
+                : `${labelBase} marked as given (as scheduled)`,
           epistemicStatus: ambiguousColorPills ? "UNCERTAIN" : "REPORTED",
           confidence: ambiguousColorPills ? 0.55 : 0.85,
           recordedDose: dose,
-          timeLabel: ambiguousColorPills ? undefined : "lunch",
+          timeLabel: ambiguousColorPills ? undefined : lunchish ? "lunch" : undefined,
           consequentiality: "high",
         },
         ctx,
@@ -602,6 +679,109 @@ export function fixtureExtract(
     if (ambiguousColorPills) {
       uncertainties.push(
         "Medication report is ambiguous (e.g. color/count without matching strength). Relay will not guess the dose.",
+      );
+    }
+  }
+
+  // ── Medication PLAN CHANGE / new medicine request ──
+  // Caregiver report or request to add/change a medicine on the plan.
+  // NEVER becomes an active medication order. Durable as task pending verification.
+  // Distinct from medication_administration ("I gave…") above.
+  const planChangeRequest =
+    !negatedMed &&
+    (medTopic ||
+      /\b(tylenol|acetaminophen|ibuprofen|advil|motrin|aspirin|metformin|lisinopril|atorvastatin|amoxicillin)\b/i.test(
+        lower,
+      )) &&
+    (/new\s+(medicine|medication|med|drug)\b/i.test(lower) ||
+      /\b(please\s+)?add\b.{0,60}\b(med|medicine|medication|dose|dosage|mg|tylenol|acetaminophen)\b/i.test(
+        lower,
+      ) ||
+      /\badd\b.{0,40}\b(to\s+)?(her|his|their|the)\s+(med|medicine)/i.test(
+        lower,
+      ) ||
+      /\b(put|place)\b.{0,40}\b(on\s+)?(her|his|their)?\s*(med|medicine)\s*list/i.test(
+        lower,
+      ) ||
+      /\bstarted\b.{0,40}\b(tylenol|acetaminophen|ibuprofen|med|medicine|medication)\b/i.test(
+        lower,
+      ) ||
+      /\b(doctor|prescriber|clinician|provider)\s+(added|prescribed|started|ordered)\b/i.test(
+        lower,
+      ) ||
+      /\bchange\b.{0,30}\b(dose|dosage|to\s+\d)/i.test(lower) ||
+      (/\bdosage\b|\bdose\b/.test(lower) &&
+        /\b(add|please|new)\b/.test(lower) &&
+        !/gave|administered|took|given/.test(lower)));
+
+  if (planChangeRequest) {
+    const alreadyPlan = candidates.some(
+      (c) =>
+        c.eventType === "task" &&
+        /medication change needs verification/i.test(c.statement),
+    );
+    if (!alreadyPlan) {
+      const medName = extractMedicationNameFromText(text) ?? "medication";
+      const dose =
+        opts?.recordedDoseOverride ?? extractDoseFromText(text) ?? undefined;
+      const reason = extractMedicationReasonFromText(text);
+      const missing: string[] = [];
+      if (!dose) missing.push("dose");
+      else if (!/(mg|mcg|µg|ml|mL|tablet|tab|pill|g)\b/i.test(dose))
+        missing.push("unit clarity");
+      if (!reason) missing.push("frequency/timing");
+      if (
+        !/\b(doctor|prescriber|clinician|provider|as prescribed)\b/i.test(lower)
+      ) {
+        missing.push("prescriber or authorizing source");
+      }
+      const dosePart = dose ? ` · reported dose ${dose}` : " · dose not stated";
+      const reasonPart = reason ? ` · reason: ${reason}` : "";
+      candidates.push(
+        mkCandidate(
+          {
+            eventType: "task",
+            statement: `Medication change needs verification: ${medName}${dosePart}${reasonPart}. Not an active medication-plan instruction until authorized review.`,
+            epistemicStatus: "REPORTED",
+            confidence: dose ? 0.88 : 0.72,
+            recordedDose: dose,
+            consequentiality: "high",
+          },
+          ctx,
+          careRecipientName,
+          source,
+          ++i,
+        ),
+      );
+      // Symptom/reason as separate observation (e.g. fever)
+      if (reason && /fever|pain|cough|nausea|dizziness|infection/i.test(reason)) {
+        const alreadySym = candidates.some(
+          (c) =>
+            c.eventType === "observation" &&
+            new RegExp(reason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(
+              c.statement,
+            ),
+        );
+        if (!alreadySym) {
+          candidates.push(
+            mkCandidate(
+              {
+                eventType: "observation",
+                statement: `Caregiver reported: ${reason}`,
+                epistemicStatus: "REPORTED",
+                confidence: 0.84,
+                consequentiality: "moderate",
+              },
+              ctx,
+              careRecipientName,
+              source,
+              ++i,
+            ),
+          );
+        }
+      }
+      uncertainties.push(
+        `Saved as a medication-change candidate only. Active medication plan is unchanged. Missing or incomplete: ${missing.join(", ") || "none noted"}. Authorized reviewer must confirm before this becomes an active instruction.`,
       );
     }
   }

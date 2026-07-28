@@ -63,7 +63,7 @@ export function userFacingNoteLabel(kind: CareNoteKind): string {
 function classifyLine(c: CareCandidate): string {
   switch (c.eventType) {
     case "medication_administration":
-      return "Medication report";
+      return "Medication administration report";
     case "observation":
       return "Observation";
     case "appointment_change":
@@ -73,6 +73,9 @@ function classifyLine(c: CareCandidate): string {
     case "communication_request":
       return "Communication";
     case "task":
+      if (/medication change needs verification/i.test(c.statement)) {
+        return "Medication change (pending verification — not an active order)";
+      }
       return "Care activity";
     default:
       return "Care update";
@@ -114,8 +117,20 @@ export function composeCareNote(input: {
     }
   }
 
+  const hasPlanChange = input.bundle.understood.candidates.some(
+    (c) =>
+      c.eventType === "task" &&
+      /medication change needs verification/i.test(c.statement),
+  );
+  const hasAdmin = input.bundle.understood.candidates.some(
+    (c) => c.eventType === "medication_administration",
+  );
+
   if (lines.length === 0) {
-    lines.push("No confirmed care items in this update.");
+    // Never imply a successful care record when nothing structured was kept.
+    lines.push(
+      "Draft not saved as structured care items. No active medication-plan change was made.",
+    );
   }
 
   const header =
@@ -125,6 +140,14 @@ export function composeCareNote(input: {
         ? `Provider-facing update — ${recipient} (caregiver-reported)`
         : `Care update — ${recipient}`;
 
+  const statusLine = hasPlanChange
+    ? "Status: Report saved for medication-plan verification (active plan unchanged; not a clinical order)"
+    : hasAdmin
+      ? "Status: Caregiver-reported administration (not a prescription or plan change)"
+      : lines.some((l) => /Draft not saved/i.test(l))
+        ? "Status: Needs clarification — nothing durable was confirmed"
+        : "Status: Caregiver-reported care record (not a clinical diagnosis or order)";
+
   const body = [
     header,
     "",
@@ -132,7 +155,7 @@ export function composeCareNote(input: {
     "",
     `Reported by: ${input.ctx.actorDisplayName}`,
     `Role: ${input.roleLabel}`,
-    `Status: Caregiver-verified care record (not a clinical diagnosis or order)`,
+    statusLine,
     `Recorded: ${new Date(now).toLocaleString("en-US", { timeZone: "America/Los_Angeles" })}`,
   ].join("\n");
 
