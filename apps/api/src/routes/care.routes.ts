@@ -974,10 +974,36 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    // When live LLM path and BAA required, block unapproved PHI model use
+    // Live LLM only when runtime is llm-ready AND PHI gate approves.
+    // Client cannot force mode=llm when deploy is fixture / unapproved.
     const requestedMode = body.mode ?? runtime.understandMode;
     if (requestedMode === "llm") {
-      const gate = evaluateAiPhiGate(process.env);
+      if (runtime.understandMode !== "llm" || !runtime.llmReady) {
+        runtime.store.writeAudit({
+          at: new Date().toISOString(),
+          actorPersonId: principal.carePersonId,
+          action: "AI_MODEL_CALL_BLOCKED",
+          careRecipientId,
+          details: redactAuditDetails({
+            code: "LLM_PATH_DISABLED",
+            surface: "understand",
+            requested: "llm",
+            effective: runtime.understandMode,
+          }),
+        });
+        return reply.code(403).send({
+          ok: false,
+          code: "LLM_PATH_DISABLED",
+          message:
+            "Live model understanding is not enabled for this deployment. Care language is handled with the deterministic path only.",
+          correlation_id: correlationId(request),
+        });
+      }
+      // Evaluate as live-llm request (do not short-circuit on env fixture default)
+      const gate = evaluateAiPhiGate({
+        ...process.env,
+        CARE_UNDERSTAND_MODE: "llm",
+      });
       if (!gate.allowed) {
         runtime.store.writeAudit({
           at: new Date().toISOString(),
