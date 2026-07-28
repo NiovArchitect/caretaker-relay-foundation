@@ -94,12 +94,17 @@ export function validateCareProductionConfig(
   // AI
   let aiLiveAllowed = true;
   if (mode === "regulated_restricted") {
-    if (understand === "llm" || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY) {
+    if (
+      understand === "llm" ||
+      env.ANTHROPIC_API_KEY ||
+      env.OPENAI_API_KEY ||
+      env.XAI_API_KEY
+    ) {
       if (!baa || !phiAllowed) {
         // Fail closed: disable live AI rather than crash entire API if already deployed
         aiLiveAllowed = false;
         warnings.push(
-          "regulated_restricted: live AI disabled without BAA+PHI allow flags",
+          "regulated_restricted: live AI disabled without BAA+PHI allow flags (set CARE_AI_BAA_EXECUTED=1 and CARE_AI_PHI_ALLOWED=1, or CARE_DEPLOYMENT_MODE=regulated_ai_enabled)",
         );
       }
     }

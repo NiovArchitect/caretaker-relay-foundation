@@ -248,33 +248,71 @@ export class AnthropicProvider implements LLMProvider {
 }
 
 // WHAT: OpenAIProvider concrete class. gpt-4o default.
-// INPUT: API key + optional model override.
+// INPUT: API key + optional model override. Also supports OpenAI-compatible
+//        hosts (xAI Grok) via baseURL / XAI_API_KEY.
 // OUTPUT: An LLMProvider that calls the OpenAI Chat Completions API.
 // WHY: Production class; CI never instantiates this.
 export class OpenAIProvider implements LLMProvider {
-  readonly name = "openai";
+  readonly name: string;
   private readonly client: OpenAI;
   private readonly model: string;
 
-  constructor(args: { apiKey?: string; model?: string } = {}) {
-    const apiKey = args.apiKey ?? process.env.OPENAI_API_KEY;
+  constructor(
+    args: {
+      apiKey?: string;
+      model?: string;
+      baseURL?: string;
+      providerName?: string;
+    } = {},
+  ) {
+    const baseURL =
+      args.baseURL ??
+      process.env.OPENAI_BASE_URL ??
+      process.env.XAI_BASE_URL ??
+      undefined;
+    const isXai =
+      args.providerName === "xai" ||
+      args.providerName === "grok" ||
+      Boolean(baseURL && /x\.ai/i.test(baseURL)) ||
+      (Boolean(process.env.XAI_API_KEY) &&
+        !process.env.OPENAI_API_KEY &&
+        !args.apiKey);
+    const apiKey =
+      args.apiKey ??
+      (isXai
+        ? process.env.XAI_API_KEY ?? process.env.OPENAI_API_KEY
+        : process.env.OPENAI_API_KEY ?? process.env.XAI_API_KEY);
     if (typeof apiKey !== "string" || apiKey.length === 0) {
       throw new Error(
-        "OpenAIProvider: OPENAI_API_KEY env var is required",
+        "OpenAIProvider: OPENAI_API_KEY or XAI_API_KEY env var is required",
       );
     }
-    this.client = new OpenAI({ apiKey });
+    this.name = args.providerName ?? (isXai ? "xai" : "openai");
+    this.client = new OpenAI({
+      apiKey,
+      ...(baseURL
+        ? { baseURL }
+        : isXai
+          ? { baseURL: "https://api.x.ai/v1" }
+          : {}),
+    });
     // Model selection precedence:
     //   1. explicit args.model (used by tests / explicit DI)
-    //   2. OPENAI_MODEL env var (operator override for a specific deploy)
-    //   3. MODEL_ROUTER_DEFAULT_MODEL env var (Founder-facing alias documented
-    //      in .env.example for symmetry with multi-provider env naming)
-    //   4. "gpt-4o" hard-coded default (the production-safe fallback)
+    //   2. XAI_MODEL / GROK_MODEL when xAI path
+    //   3. OPENAI_MODEL env var (operator override for a specific deploy)
+    //   4. MODEL_ROUTER_DEFAULT_MODEL env var
+    //   5. provider default
     this.model =
       args.model ??
-      process.env.OPENAI_MODEL ??
-      process.env.MODEL_ROUTER_DEFAULT_MODEL ??
-      "gpt-4o";
+      (isXai
+        ? process.env.XAI_MODEL ??
+          process.env.GROK_MODEL ??
+          process.env.OPENAI_MODEL ??
+          process.env.MODEL_ROUTER_DEFAULT_MODEL ??
+          "grok-3"
+        : process.env.OPENAI_MODEL ??
+          process.env.MODEL_ROUTER_DEFAULT_MODEL ??
+          "gpt-4o");
   }
 
   async generateResponse(
@@ -323,13 +361,27 @@ export function getLLMProvider(): LLMProvider {
     process.env.LLM_PROVIDER ?? process.env.PREFERRED_LLM ?? "anthropic"
   ).toLowerCase();
   if (preferred === "openai") {
-    return withCircuitBreaker(new OpenAIProvider());
+    return withCircuitBreaker(new OpenAIProvider({ providerName: "openai" }));
+  }
+  if (preferred === "xai" || preferred === "grok") {
+    return withCircuitBreaker(
+      new OpenAIProvider({
+        providerName: "xai",
+        apiKey: process.env.XAI_API_KEY ?? process.env.OPENAI_API_KEY,
+        baseURL: process.env.XAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.x.ai/v1",
+        model:
+          process.env.XAI_MODEL ??
+          process.env.GROK_MODEL ??
+          process.env.OPENAI_MODEL ??
+          "grok-3",
+      }),
+    );
   }
   if (preferred === "anthropic") {
     return withCircuitBreaker(new AnthropicProvider());
   }
   throw new Error(
-    `getLLMProvider: unknown PREFERRED_LLM "${preferred}" (expected "anthropic" or "openai")`,
+    `getLLMProvider: unknown PREFERRED_LLM "${preferred}" (expected "anthropic", "openai", "xai", or "grok")`,
   );
 }
 

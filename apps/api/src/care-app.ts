@@ -43,14 +43,24 @@ function resolveUnderstandMode(
   if (env === "fixture") return "fixture";
   if (env === "llm") return "llm";
   // Auto: prefer llm when a provider key is present
-  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return "llm";
+  if (
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.XAI_API_KEY
+  ) {
+    return "llm";
+  }
   return "fixture";
 }
 
 function tryCreateLlmProvider(): import("@caretaker-relay/care-domain").LLMProvider | undefined {
   try {
     // Dynamic import of Foundation factory — only when keys exist
-    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+    if (
+      !process.env.ANTHROPIC_API_KEY &&
+      !process.env.OPENAI_API_KEY &&
+      !process.env.XAI_API_KEY
+    ) {
       return undefined;
     }
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -243,8 +253,12 @@ export async function buildCareApp(
       understand_mode: effectiveMode,
       llm_provider_ready: Boolean(llmProvider),
       llm_keys_present: Boolean(
-        process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY ||
+          process.env.OPENAI_API_KEY ||
+          process.env.XAI_API_KEY,
       ),
+      llm_provider:
+        process.env.LLM_PROVIDER ?? process.env.PREFERRED_LLM ?? null,
       deployment_config: configValidation.publicStatus,
     });
   });
