@@ -30,12 +30,27 @@ services:
         value: caretaker-relay
       - key: PORT
         value: "3100"
-      # Prefer llm when ANTHROPIC_API_KEY or OPENAI_API_KEY is configured in dashboard.
-      # Auto-detects keys at runtime; set explicitly to "fixture" only for deterministic lab.
+      # Prefer llm when a provider key is configured in dashboard.
+      # Grok (xAI): LLM_PROVIDER=xai + XAI_API_KEY (+ optional XAI_MODEL=grok-3).
+      # Also requires CARE_DEPLOYMENT_MODE=regulated_ai_enabled with
+      # CARE_AI_BAA_EXECUTED=1 and CARE_AI_PHI_ALLOWED=1 (or live AI stays disabled).
+      # Set CARE_UNDERSTAND_MODE=fixture only for deterministic lab.
       - key: CARE_UNDERSTAND_MODE
         value: llm
       - key: LLM_PROVIDER
-        value: anthropic
+        value: xai
+      - key: CARE_DEPLOYMENT_MODE
+        value: regulated_ai_enabled
+      - key: CARE_AI_BAA_EXECUTED
+        sync: false
+      - key: CARE_AI_PHI_ALLOWED
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: XAI_MODEL
+        value: grok-3
+      - key: XAI_BASE_URL
+        value: https://api.x.ai/v1
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OPENAI_API_KEY
