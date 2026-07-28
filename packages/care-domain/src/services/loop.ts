@@ -24,6 +24,7 @@ import type {
 } from "../types.js";
 import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
+import { createWorkItem } from "./care-work-items.js";
 import {
   understandCareInput,
   toVerificationBundle,
@@ -386,6 +387,32 @@ export class CareLoopService {
           epistemicStatus: "CONFIRMED",
           source: candidate.sourceReference,
         });
+        // Receipt destinations open_work + notifications: create claimable work
+        // for plan-change / supply / verification tasks so Today + Open work update.
+        const needsOwner =
+          /medication change needs verification|supply|refill|needs attention/i.test(
+            candidate.statement,
+          );
+        if (needsOwner) {
+          const wi = createWorkItem(this.config.store, {
+            careRecipientId: ctx.careRecipientId,
+            actorPersonId: ctx.actorPersonId,
+            actorDisplayName: ctx.actorDisplayName,
+            action: candidate.statement.slice(0, 200),
+            reason:
+              "Recorded from caregiver report · needs an owner / authorized review · not an active medication order",
+            priority: /medication change|discontinue/i.test(candidate.statement)
+              ? "high"
+              : "normal",
+            evidenceKind: "operational",
+            status: "available_to_claim",
+            trustShiftActor: true,
+          });
+          if (wi.ok) {
+            // Circle already notified by createWorkItem when unowned
+            void wi.item.id;
+          }
+        }
       }
 
       if (candidate.eventType === "communication_request") {
