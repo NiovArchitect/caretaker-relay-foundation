@@ -89,10 +89,14 @@ function categorizeCandidate(statement: string, eventType: string): CareActionCa
   if (/missed/.test(s)) return "med_missed";
   if (/uncertain medication|not confirmed administration/.test(s)) return "med_uncertain";
   if (/after .* reported association|experienced .* after/.test(s)) return "med_effect";
-  if (/invite helper:|invitation draft:|access change request:|already a member:/.test(s)) {
+  if (
+    /invite helper:|invitation draft:|access change request:|access request:|already a member:/.test(
+      s,
+    )
+  ) {
     return "communication";
   }
-  if (/document candidate:/.test(s)) return "note";
+  if (/document candidate:|document ingest:/.test(s)) return "note";
   if (eventType === "medication_administration") return "med_administration";
   if (eventType === "observation") return "observation";
   if (eventType === "meal") return "meal";
@@ -176,7 +180,7 @@ export function buildExecutionReceipt(input: {
   ];
   const join = candidates.map((c) => c.statement).join(" ");
   if (
-    /invite helper:|invitation draft:|access change request:|already a member:/i.test(
+    /invite helper:|invitation draft:|access change request:|access request:|already a member:/i.test(
       join,
     )
   ) {
@@ -185,13 +189,19 @@ export function buildExecutionReceipt(input: {
         ...dest,
         "people_privacy",
         "notifications",
+        "open_work",
         "relay_retrieval",
       ]),
     ];
   }
-  if (/document candidate:/i.test(join)) {
+  if (/document candidate:|document ingest:/i.test(join)) {
     dest = [
-      ...new Set<SurfaceDestination>([...dest, "documents", "relay_retrieval"]),
+      ...new Set<SurfaceDestination>([
+        ...dest,
+        "documents",
+        "relay_retrieval",
+        "open_work",
+      ]),
     ];
   }
   const taskTitles = candidates
@@ -215,8 +225,12 @@ export function buildExecutionReceipt(input: {
     userVisible = `I created a People invitation for ${recipient}: ${inviteLine}. It appears under People and Privacy; the invitee gets a notification when authorized.`;
   } else if (inviteLine && /^Invitation draft:/i.test(inviteLine)) {
     userVisible = `I saved an invitation draft for ${recipient}. Open People to choose the person and access scope, then send the secure invitation.`;
+  } else if (inviteLine && /^Access request:/i.test(inviteLine)) {
+    userVisible = `I recorded an access request for ${recipient}. It is pending Privacy review — an authorized person must approve, limit, or deny before access changes. Open work and notifications were updated.`;
   } else if (inviteLine && /^Access change request:/i.test(inviteLine)) {
-    userVisible = `I saved an access change request for ${recipient}. Open People and Privacy to review or change who can help.`;
+    userVisible = `I saved an access change request for ${recipient}. Open People and Privacy to review who can help; open work was created for follow-up.`;
+  } else if (lines.some((l) => /document ingest:/i.test(l))) {
+    userVisible = `I saved a document for ${recipient} and extracted proposed facts only. Open Documents to confirm or reject each proposal — nothing becomes care truth until authorized review.`;
   } else if (lines.some((l) => /document candidate:/i.test(l))) {
     userVisible = `I noted a document candidate for ${recipient}. Open Documents to attach the file securely — chat alone does not store clinical files.`;
   } else if (!p?.eventIds?.length && !taskTitles.length && !(p?.updateIds?.length)) {

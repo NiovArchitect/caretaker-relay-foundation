@@ -31,6 +31,12 @@ import {
   listInvitations,
 } from "./invitation.js";
 import {
+  encodeAccessRequestUpdate,
+  listAccessRequestsForRecipient,
+  type CareAccessRequest,
+} from "./access-request.js";
+import { ingestDocumentText } from "./document-actions.js";
+import {
   understandCareInput,
   toVerificationBundle,
   type UnderstandOptions,
@@ -524,6 +530,89 @@ export class CareLoopService {
           };
           this.config.store.addUpdate(draft);
           updateIds.push(draft.id);
+        } else if (/^Access request:/i.test(candidate.statement)) {
+          // Durable access request → Privacy review (approve/deny changes membership).
+          const relM = candidate.statement.match(/relationship\s+([^·]+)/i);
+          const reasonM = candidate.statement.match(/reason:\s*(.+?)(?:\s*·|$)/i);
+          const claimed = (relM?.[1] ?? "caregiver").trim();
+          const reason = (reasonM?.[1] ?? candidate.statement).trim().slice(0, 280);
+          const pendingDup = listAccessRequestsForRecipient(
+            this.config.store,
+            ctx.careRecipientId,
+          ).find(
+            (r) =>
+              r.status === "pending" &&
+              r.requesterPersonId === ctx.actorPersonId,
+          );
+          if (pendingDup) {
+            updateIds.push(pendingDup.id);
+          } else {
+            const ar: CareAccessRequest = {
+              id: this.config.store.newId("ar"),
+              careRecipientId: ctx.careRecipientId,
+              requesterPersonId: ctx.actorPersonId,
+              requesterDisplayName: ctx.actorDisplayName,
+              claimedRelationship: claimed,
+              reason,
+              status: "pending",
+              createdAt: now,
+            };
+            const arUpdate = encodeAccessRequestUpdate(ar, {
+              id: this.config.store.newId("src"),
+              kind: "system_derived",
+              label: "Access request from Relay",
+              actorName: ctx.actorDisplayName,
+              actorPersonId: ctx.actorPersonId,
+              recordedAt: now,
+              whyVisible:
+                "Access request pending Privacy review — not membership yet",
+            });
+            this.config.store.addUpdate(arUpdate);
+            updateIds.push(arUpdate.id);
+            // Notify controlling members (lab: primary family caregiver Marcus)
+            for (const rel of this.config.store.getRelationships(
+              ctx.careRecipientId,
+            )) {
+              if (
+                rel.status !== "active" ||
+                rel.personId === ctx.actorPersonId
+              ) {
+                continue;
+              }
+              const canManage =
+                rel.access?.allowedActions?.includes("*") ||
+                rel.access?.allowedActions?.includes("invite") ||
+                rel.access?.allowedActions?.includes("manage_access") ||
+                /primary|family|adult_child|spouse/i.test(rel.role);
+              if (!canManage) continue;
+              createNotificationIfNew(this.config.store, {
+                principalId: rel.personId,
+                careRecipientId: ctx.careRecipientId,
+                type: "CARE_UPDATE",
+                priority: "attention",
+                title: "Access request needs review",
+                body: `${ctx.actorDisplayName} requested access (${claimed}). Open Privacy to approve, limit, or deny.`,
+                sourceType: "access_request",
+                sourceId: ar.id,
+                actorPersonId: ctx.actorPersonId,
+                actorDisplayName: ctx.actorDisplayName,
+                actionType: "open_privacy",
+                actionTarget: ar.id,
+                dedupeKey: `access-req:${ar.id}:${rel.personId}`,
+              });
+            }
+            createWorkItem(this.config.store, {
+              careRecipientId: ctx.careRecipientId,
+              actorPersonId: ctx.actorPersonId,
+              actorDisplayName: ctx.actorDisplayName,
+              action: `Review access request from ${ctx.actorDisplayName}`,
+              reason: reason.slice(0, 200),
+              priority: "high",
+              evidenceKind: "operational",
+              status: "available_to_claim",
+              trustShiftActor: true,
+            });
+          }
         } else if (/^Access change request:/i.test(candidate.statement)) {
           const draft: CareUpdate = {
             id: this.config.store.newId("upd"),
@@ -536,6 +625,17 @@ export class CareLoopService {
           };
           this.config.store.addUpdate(draft);
           updateIds.push(draft.id);
+          createWorkItem(this.config.store, {
+            careRecipientId: ctx.careRecipientId,
+            actorPersonId: ctx.actorPersonId,
+            actorDisplayName: ctx.actorDisplayName,
+            action: `Review who can access care for ${bundle.understood.careRecipientName}`,
+            reason: "Access change requested via Relay — open Privacy",
+            priority: "normal",
+            evidenceKind: "operational",
+            status: "available_to_claim",
+            trustShiftActor: true,
+          });
         } else {
           const summary = this.buildUpdateSummary(bundle);
           const cHash = communicationHash({
@@ -567,6 +667,34 @@ export class CareLoopService {
             };
             this.config.store.addUpdate(update);
             updateIds.push(update.id);
+          }
+        }
+      }
+
+      // Document text ingest — proposals only until human confirms on Documents
+      if (
+        candidate.eventType === "note" &&
+        /^Document ingest:/i.test(candidate.statement)
+      ) {
+        const raw = bundle.understood.rawText ?? "";
+        const bodyFromRaw =
+          raw.match(
+            /(?:document(?: body)?|discharge summary|therapy note|says|content)[:\s]+(.+)/is,
+          )?.[1] ??
+          candidate.recordedDose ??
+          candidate.statement.replace(/^Document ingest:\s*/i, "");
+        const body = String(bodyFromRaw).trim();
+        if (body.length >= 20) {
+          const ing = ingestDocumentText(this.config.store, {
+            careRecipientId: ctx.careRecipientId,
+            actorPersonId: ctx.actorPersonId,
+            actorDisplayName: ctx.actorDisplayName,
+            title: "Care document from Relay",
+            body,
+          });
+          if (ing.ok) {
+            updateIds.push(ing.document.id);
+            for (const p of ing.proposals) updateIds.push(p.id);
           }
         }
       }

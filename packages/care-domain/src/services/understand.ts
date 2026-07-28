@@ -1127,10 +1127,38 @@ export function fixtureExtract(
     }
   }
 
-  // Access request / revoke — route to Privacy / People dedicated flows
+  // Access — durable request vs privacy review (dedicated Privacy workflow)
   if (
     candidates.length === 0 &&
-    /\b(request access|revoke access|remove access|change (access|permissions)|who can see)\b/.test(
+    /\b(request access|i need access|apply for access|ask (for )?access)\b/.test(
+      lower,
+    )
+  ) {
+    const rel =
+      /daughter|son|spouse|wife|husband|friend|neighbor|sibling|parent|dsp|aide|nurse|cousin/.exec(
+        lower,
+      )?.[0] ?? "caregiver";
+    const reason =
+      text.replace(/\s+/g, " ").trim().slice(0, 180) ||
+      `Request access to help care for ${careRecipientName}`;
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "communication_request",
+          statement: `Access request: relationship ${rel} · reason: ${reason} · Privacy review required before membership`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.88,
+          consequentiality: "high",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  } else if (
+    candidates.length === 0 &&
+    /\b(revoke access|remove access|change (access|permissions)|who can see|review access|limit access)\b/.test(
       lower,
     )
   ) {
@@ -1151,21 +1179,31 @@ export function fixtureExtract(
     );
   }
 
-  // Document candidate — dedicated Documents path
+  // Document candidate — text body can be ingested as proposals (not care truth)
   if (
     candidates.length === 0 &&
-    /\b(upload|attach|add)\b.*\b(document|file|pdf|form|paperwork)\b|\bdocument\b.*\b(upload|attach|add)\b/.test(
+    /\b(upload|attach|add|file|paste)\b.*\b(document|file|pdf|form|paperwork|note)\b|\bdocument\b.*\b(upload|attach|add|says|body)\b|\bdischarge summary\b|\btherapy note\b/.test(
       lower,
     )
   ) {
+    // Prefer text after colon / "says" / "body" as document body for ingest
+    const bodyMatch =
+      text.match(
+        /(?:document(?: body)?|discharge summary|therapy note|says|content)[:\s]+(.+)/i,
+      ) ?? text.match(/:\s*(.+)$/s);
+    const body = (bodyMatch?.[1] ?? text).trim().slice(0, 2000);
+    const hasBody = body.length >= 20;
     candidates.push(
       mkCandidate(
         {
           eventType: "note",
-          statement: `Document candidate: open Documents to attach a file for ${careRecipientName} (Relay does not store clinical files from chat alone)`,
+          statement: hasBody
+            ? `Document ingest: ${body.slice(0, 160)}${body.length > 160 ? "…" : ""}`
+            : `Document candidate: open Documents to attach a file for ${careRecipientName} (Relay does not store clinical files from chat alone)`,
           epistemicStatus: "REPORTED",
-          confidence: 0.82,
-          consequentiality: "low",
+          confidence: hasBody ? 0.9 : 0.82,
+          consequentiality: "moderate",
+          recordedDose: hasBody ? body : undefined, // reuse field as payload carrier for ingest body
         },
         ctx,
         careRecipientName,
