@@ -164,6 +164,8 @@ export function createWorkItem(
     escalationRule?: string | null;
     evidenceKind?: CareWorkItem["evidenceKind"];
     status?: WorkItemStatus;
+    /** Internal handoff seed may run before circle membership is fully warm. */
+    trustShiftActor?: boolean;
   },
 ):
   | { ok: true; item: CareWorkItem }
@@ -173,7 +175,7 @@ export function createWorkItem(
     input.actorPersonId,
     input.careRecipientId,
   );
-  if (!access.allowed) {
+  if (!access.allowed && !input.trustShiftActor) {
     return { ok: false, code: access.code, message: access.reason };
   }
   const now = new Date().toISOString();
@@ -446,6 +448,7 @@ export function seedWorkItemsFromHandoff(
         ? "high"
         : "normal",
       evidenceKind: "operational",
+      trustShiftActor: true,
     });
     if (r.ok) {
       const withHandoff: CareWorkItem = {

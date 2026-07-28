@@ -1678,9 +1678,23 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    const invitee =
+    let invitee =
       runtime.store.getPerson(inviteeId) ??
       Object.values(people).find((p) => p.id === inviteeId);
+    // Registered accounts may exist in auth without a CareStore person row yet
+    if (!invitee) {
+      const display =
+        typeof body.invitee_display_name === "string" &&
+        body.invitee_display_name.trim()
+          ? body.invitee_display_name.trim()
+          : inviteeId;
+      runtime.store.upsertPerson({
+        id: inviteeId,
+        displayName: display,
+        kind: "professional",
+      });
+      invitee = runtime.store.getPerson(inviteeId);
+    }
     if (!invitee) {
       return reply.code(404).send({
         ok: false,
