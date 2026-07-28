@@ -473,7 +473,12 @@ function answerWithState(
 ): RelayAnswerResponse {
   const store = req.store;
   const handoffs = store.getHandoffs(req.careRecipientId);
-  const latest = handoffs[handoffs.length - 1];
+  // Prefer true temporal latest — Map/array order is not a contract under Prisma reload.
+  const latest = [...handoffs].sort((a, b) => {
+    const ta = Date.parse(String(a.createdAt ?? "")) || 0;
+    const tb = Date.parse(String(b.createdAt ?? "")) || 0;
+    return ta - tb;
+  })[handoffs.length - 1];
   const open = (state.openSafetyReviews ?? []).map((r) =>
     String(r.reason ?? r.message ?? ""),
   );
@@ -679,6 +684,24 @@ function answerWithState(
         (slots.some((s) => s.phase === "next")
           ? `\n\nI can prepare a handoff for the next helper before they arrive.`
           : "");
+      // Append latest handoff so "what should the next caregiver know?" evolves
+      // with real shift data instead of static coverage alone.
+      if (latest?.whatChanged?.length) {
+        answer +=
+          `\n\nWhat the next caregiver should know (latest handoff):\n` +
+          latest.whatChanged
+            .slice(0, 6)
+            .map((w) => `• ${w}`)
+            .join("\n");
+        if (latest.stillNeedsAttention?.length) {
+          answer +=
+            `\n\nStill open:\n` +
+            latest.stillNeedsAttention
+              .slice(0, 4)
+              .map((w) => `• ${w}`)
+              .join("\n");
+        }
+      }
     } else if (personIntent === "TRANSPORTATION") {
       const notes = recipient?.profile?.transportationNotes;
       const apts = store.getAppointments(req.careRecipientId);

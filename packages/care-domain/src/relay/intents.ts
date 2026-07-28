@@ -580,7 +580,11 @@ export function classifyIntent(
     )
   ) {
     if (/next|due|need (next|now)|coming up/.test(q)) intents.push("MEDICATION_DUE");
-    if (/already|did anyone|was .* given|last (recorded|given|dose)|when did .* give/.test(q)) {
+    if (
+      /already|did anyone|was .* given|was .* administered|was medication|last (recorded|given|dose|admin)|when did .* give|administered\?|did they (get|take|receive) (the )?(med|dose|pill|metformin)/.test(
+        q,
+      )
+    ) {
       intents.push("MEDICATION_ADMINISTRATION_HISTORY");
     }
     if (/with food|how (do|should)|instruction|take it|route/.test(q)) {
