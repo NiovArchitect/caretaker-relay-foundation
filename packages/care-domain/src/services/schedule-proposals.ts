@@ -7,6 +7,7 @@
 import type { CareStore } from "../store/memory-store.js";
 import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
+import { reconcileTransportAfterAppointment } from "./care-work-items.js";
 
 export type ScheduleProposalStatus =
   | "proposed"
@@ -240,10 +241,11 @@ export function confirmScheduleProposal(
   }
 
   const aptId = store.newId("apt");
+  const title = prop.proposedTitle.replace(/\s*\(proposed[^)]*\)/i, "").trim();
   store.upsertAppointment({
     id: aptId,
     careRecipientId: input.careRecipientId,
-    title: prop.proposedTitle.replace(/\s*\(proposed[^)]*\)/i, "").trim(),
+    title,
     startsAt,
     startsAtLabel,
     status: "scheduled",
@@ -251,6 +253,79 @@ export function confirmScheduleProposal(
     epistemicStatus: "CONFIRMED",
     rescheduledFromId: prop.replacesAppointmentId ?? undefined,
     changeSource: `schedule_proposal:${prop.id}`,
+  });
+
+  // Durable reminder reconciliation (old superseded; new active)
+  const REM_PREFIX = "CARE_REMINDER_V1:";
+  for (const u of store.getUpdates(input.careRecipientId)) {
+    if (!u.summary?.startsWith(REM_PREFIX)) continue;
+    try {
+      const rem = JSON.parse(u.summary.slice(REM_PREFIX.length)) as {
+        id: string;
+        appointmentId?: string;
+        status?: string;
+        title?: string;
+      };
+      if (
+        rem.appointmentId === prop.replacesAppointmentId ||
+        /physical therapy|pt\b|appointment/i.test(rem.title ?? "")
+      ) {
+        store.addUpdate({
+          ...u,
+          summary:
+            REM_PREFIX +
+            JSON.stringify({
+              ...rem,
+              status: "superseded",
+              supersededBy: aptId,
+              supersededAt: now,
+            }),
+          status: "sent",
+        });
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  const leaveBy = new Date(Date.parse(startsAt) - 30 * 60e3).toISOString();
+  const remId = store.newId("rem");
+  store.addUpdate({
+    id: remId,
+    careRecipientId: input.careRecipientId,
+    toPersonId: "care-circle",
+    summary:
+      REM_PREFIX +
+      JSON.stringify({
+        id: remId,
+        kind: "appointment",
+        appointmentId: aptId,
+        title: `${title} reminder`,
+        whenLabel: startsAtLabel,
+        leaveByLabel: `Leave by ~${new Date(leaveBy).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+        status: "active",
+        createdAt: now,
+      }),
+    status: "ready",
+    safetyClass: "moderate",
+    source: {
+      id: `src-rem-${remId}`,
+      kind: "system_derived",
+      label: "Reminder after confirmed schedule change",
+      actorPersonId: input.actorPersonId,
+      actorName: input.actorDisplayName,
+      recordedAt: now,
+      whyVisible: "Governed appointment confirmation reconciled reminders",
+    },
+  });
+
+  // Transportation / open work due times follow the confirmed appointment
+  reconcileTransportAfterAppointment(store, {
+    careRecipientId: input.careRecipientId,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    appointmentId: aptId,
+    startsAt,
+    startsAtLabel,
   });
 
   const next: ScheduleProposal = {
@@ -273,7 +348,24 @@ export function confirmScheduleProposal(
       proposalId: prop.id,
       appointmentId: aptId,
       superseded: prop.replacesAppointmentId,
+      reminders_reconciled: true,
+      transport_reconciled: true,
     },
+  });
+  createNotificationIfNew(store, {
+    principalId: input.actorPersonId,
+    careRecipientId: input.careRecipientId,
+    type: "CARE_UPDATE",
+    priority: "attention",
+    title: "Schedule confirmed",
+    body: `${title} · ${startsAtLabel}. Transportation and reminders updated.`,
+    sourceType: "schedule_proposal",
+    sourceId: prop.id,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    actionType: "open_schedule",
+    actionTarget: aptId,
+    dedupeKey: `sched-confirmed:${aptId}`,
   });
   return { ok: true, proposal: next, appointmentId: aptId };
 }

@@ -528,6 +528,202 @@ export function transitionWorkItem(
   return { ok: true, item: next };
 }
 
+/**
+ * Coordinator proposes a new owner. Does NOT complete the task.
+ * Target must accept (claim) or decline separately.
+ */
+export function reassignWorkItem(
+  store: CareStore,
+  input: {
+    careRecipientId: string;
+    workItemId: string;
+    actorPersonId: string;
+    actorDisplayName: string;
+    newOwnerPersonId: string;
+    newOwnerDisplayName: string;
+    note?: string;
+  },
+):
+  | { ok: true; item: CareWorkItem }
+  | { ok: false; code: string; message: string } {
+  const access = evaluateAccess(
+    store,
+    input.actorPersonId,
+    input.careRecipientId,
+  );
+  if (!access.allowed) {
+    return { ok: false, code: access.code, message: access.reason };
+  }
+  const targetAccess = evaluateAccess(
+    store,
+    input.newOwnerPersonId,
+    input.careRecipientId,
+  );
+  if (!targetAccess.allowed) {
+    return {
+      ok: false,
+      code: "TARGET_NO_ACCESS",
+      message: "Proposed owner has no authorized relationship for this recipient",
+    };
+  }
+  const item = listWorkItems(store, input.careRecipientId, {
+    includeTerminal: true,
+  }).find((w) => w.id === input.workItemId);
+  if (!item) {
+    return { ok: false, code: "NOT_FOUND", message: "Work item not found" };
+  }
+  if (["completed", "cancelled"].includes(item.status)) {
+    return {
+      ok: false,
+      code: "TERMINAL",
+      message: "Cannot reassign completed or cancelled work",
+    };
+  }
+  const now = new Date().toISOString();
+  const next: CareWorkItem = {
+    ...item,
+    previousOwnerPersonId: item.ownerPersonId ?? null,
+    previousOwnerDisplayName: item.ownerDisplayName ?? null,
+    proposedOwnerPersonId: input.newOwnerPersonId,
+    proposedOwnerDisplayName: input.newOwnerDisplayName,
+    // Stay open — proposed owner must accept; not silent transfer of ownership
+    ownerPersonId: null,
+    ownerDisplayName: null,
+    status: "available_to_claim",
+    blockingReason: input.note ?? `Proposed for ${input.newOwnerDisplayName}`,
+    updatedAt: now,
+  };
+  save(store, next);
+  store.writeAudit({
+    at: now,
+    actorPersonId: input.actorPersonId,
+    action: "WORK_ITEM_REASSIGN_PROPOSED",
+    careRecipientId: input.careRecipientId,
+    details: {
+      workItemId: item.id,
+      proposedOwnerPersonId: input.newOwnerPersonId,
+      previousOwnerPersonId: item.ownerPersonId,
+    },
+  });
+  createNotificationIfNew(store, {
+    principalId: input.newOwnerPersonId,
+    careRecipientId: input.careRecipientId,
+    type: "CARE_UPDATE",
+    priority: "attention",
+    title: `Work offered: ${item.action}`,
+    body: `${input.actorDisplayName} proposed you as owner. Accept or decline — this is not automatic assignment.`,
+    sourceType: "work_item",
+    sourceId: item.id,
+    actorPersonId: input.actorPersonId,
+    actorDisplayName: input.actorDisplayName,
+    actionType: "claim_work",
+    actionTarget: item.id,
+    dedupeKey: `work-reassign:${item.id}:${input.newOwnerPersonId}:${now.slice(0, 16)}`,
+  });
+  return { ok: true, item: next };
+}
+
+/** Immediate no-response escalation — task stays open. */
+export function escalateWorkItem(
+  store: CareStore,
+  input: {
+    careRecipientId: string;
+    workItemId: string;
+    actorPersonId: string;
+    actorDisplayName: string;
+    reason?: string;
+    alternatePersonId?: string | null;
+    alternateDisplayName?: string | null;
+  },
+):
+  | { ok: true; item: CareWorkItem }
+  | { ok: false; code: string; message: string } {
+  const access = evaluateAccess(
+    store,
+    input.actorPersonId,
+    input.careRecipientId,
+  );
+  if (!access.allowed) {
+    return { ok: false, code: access.code, message: access.reason };
+  }
+  const item = listWorkItems(store, input.careRecipientId, {
+    includeTerminal: true,
+  }).find((w) => w.id === input.workItemId);
+  if (!item) {
+    return { ok: false, code: "NOT_FOUND", message: "Work item not found" };
+  }
+  if (["completed", "cancelled"].includes(item.status)) {
+    return {
+      ok: false,
+      code: "TERMINAL",
+      message: "Cannot escalate completed or cancelled work",
+    };
+  }
+  const now = new Date().toISOString();
+  const altId = input.alternatePersonId ?? item.backupOwnerPersonId ?? null;
+  const altName = input.alternateDisplayName ?? null;
+  const next: CareWorkItem = {
+    ...item,
+    status: "escalated",
+    escalatedAt: now,
+    blockingReason:
+      input.reason ??
+      "No one accepted before deadline — escalated; still open",
+    backupOwnerPersonId: altId ?? item.backupOwnerPersonId,
+    ownerPersonId: null,
+    ownerDisplayName: null,
+    updatedAt: now,
+  };
+  save(store, next);
+  store.writeAudit({
+    at: now,
+    actorPersonId: input.actorPersonId,
+    action: "WORK_ITEM_ESCALATED",
+    careRecipientId: input.careRecipientId,
+    details: {
+      workItemId: item.id,
+      alternatePersonId: altId,
+      note: "Escalation keeps work open",
+    },
+  });
+  const notifyIds = new Set<string>();
+  if (altId) notifyIds.add(altId);
+  for (const rel of store.getRelationships(input.careRecipientId)) {
+    if (rel.status !== "active") continue;
+    // Controllers / family often need escalation awareness
+    if (
+      /family|spouse|parent|adult_child|coordinator|controller/i.test(
+        rel.roleLabel ?? rel.role ?? "",
+      )
+    ) {
+      notifyIds.add(rel.personId);
+    }
+  }
+  for (const pid of notifyIds) {
+    createNotificationIfNew(store, {
+      principalId: pid,
+      careRecipientId: input.careRecipientId,
+      type: "CARE_UPDATE",
+      priority: "urgent",
+      title: `Escalated: ${item.action}`,
+      body:
+        (input.reason ?? "No acceptance before deadline.") +
+        " Task remains open. Accept responsibility if you can help.",
+      sourceType: "work_item",
+      sourceId: item.id,
+      actorPersonId: input.actorPersonId,
+      actorDisplayName: input.actorDisplayName,
+      actionType: "claim_work",
+      actionTarget: item.id,
+      dedupeKey: `work-esc-now:${item.id}:${pid}:${now.slice(0, 13)}`,
+    });
+  }
+  if (altName) {
+    /* name used only for audit readability */
+  }
+  return { ok: true, item: next };
+}
+
 /** Escalate items with no acknowledgment past due (or rule threshold). */
 export function escalateOverdueWork(
   store: CareStore,
@@ -541,15 +737,59 @@ export function escalateOverdueWork(
     if (!w.dueAt) continue;
     if (Date.parse(w.dueAt) > now) continue;
     if (["completed", "cancelled", "escalated"].includes(w.status)) continue;
-    const r = transitionWorkItem(store, {
+    const r = escalateWorkItem(store, {
       careRecipientId,
       workItemId: w.id,
       actorPersonId,
       actorDisplayName,
-      status: "escalated",
-      blockingReason: "Past due with no completion",
+      reason: "Past due with no acceptance or completion",
+      alternatePersonId: w.backupOwnerPersonId,
     });
     if (r.ok) out.push(r.item);
   }
   return out;
+}
+
+/** After appointment confirm — align transport open work due times. */
+export function reconcileTransportAfterAppointment(
+  store: CareStore,
+  input: {
+    careRecipientId: string;
+    actorPersonId: string;
+    actorDisplayName: string;
+    appointmentId: string;
+    startsAt: string;
+    startsAtLabel: string;
+  },
+): CareWorkItem[] {
+  const updated: CareWorkItem[] = [];
+  for (const w of listWorkItems(store, input.careRecipientId, {
+    includeTerminal: true,
+  })) {
+    if (["completed", "cancelled"].includes(w.status)) continue;
+    if (!/transport|ride|drive|pickup|pick-up|pharmacy/i.test(w.action)) {
+      continue;
+    }
+    const now = new Date().toISOString();
+    const next: CareWorkItem = {
+      ...w,
+      dueAt: input.startsAt,
+      reason: `${w.reason} · Aligned to appointment ${input.startsAtLabel} (${input.appointmentId})`,
+      updatedAt: now,
+    };
+    save(store, next);
+    updated.push(next);
+    store.writeAudit({
+      at: now,
+      actorPersonId: input.actorPersonId,
+      action: "WORK_ITEM_DUE_RECONCILED",
+      careRecipientId: input.careRecipientId,
+      details: {
+        workItemId: w.id,
+        appointmentId: input.appointmentId,
+        dueAt: input.startsAt,
+      },
+    });
+  }
+  return updated;
 }

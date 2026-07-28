@@ -82,6 +82,8 @@ import {
   createWorkItem,
   claimWorkItem,
   declineWorkItem,
+  reassignWorkItem,
+  escalateWorkItem,
   transitionWorkItem,
   listWorkItems,
   listNeedsOwner,
@@ -89,6 +91,8 @@ import {
   listScheduleProposals,
   confirmScheduleProposal,
   rejectScheduleProposal,
+  createCareSpace,
+  listCareReminders,
   buildSinceLastVisit,
   projectHandoffForRole,
   buildEmergencyCard,
@@ -4657,6 +4661,181 @@ export async function registerCareRoutes(
         work_item: result.item,
         message:
           "Declined responsibility. The task remains open — not cancelled.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      new_owner_person_id?: string;
+      new_owner_display_name?: string;
+      note?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/work-items/:workId/reassign",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, workId } = request.params as { id: string; workId: string };
+      const body = request.body ?? {};
+      const newOwner =
+        typeof body.new_owner_person_id === "string"
+          ? body.new_owner_person_id
+          : "";
+      if (!newOwner) {
+        return reply.code(400).send({
+          ok: false,
+          code: "BAD_REQUEST",
+          message: "new_owner_person_id required",
+          correlation_id: correlationId(request),
+        });
+      }
+      const result = reassignWorkItem(runtime.store, {
+        careRecipientId: id,
+        workItemId: workId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        newOwnerPersonId: newOwner,
+        newOwnerDisplayName:
+          typeof body.new_owner_display_name === "string"
+            ? body.new_owner_display_name
+            : newOwner,
+        note: typeof body.note === "string" ? body.note : undefined,
+      });
+      if (!result.ok) {
+        return reply
+          .code(
+            result.code === "NOT_FOUND"
+              ? 404
+              : result.code === "TARGET_NO_ACCESS"
+                ? 403
+                : 400,
+          )
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        work_item: result.item,
+        message:
+          "Reassignment proposed. New owner must accept — not automatic ownership.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      reason?: string;
+      alternate_person_id?: string;
+      alternate_display_name?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/work-items/:workId/escalate",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id, workId } = request.params as { id: string; workId: string };
+      const body = request.body ?? {};
+      const result = escalateWorkItem(runtime.store, {
+        careRecipientId: id,
+        workItemId: workId,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        alternatePersonId:
+          typeof body.alternate_person_id === "string"
+            ? body.alternate_person_id
+            : null,
+        alternateDisplayName:
+          typeof body.alternate_display_name === "string"
+            ? body.alternate_display_name
+            : null,
+      });
+      if (!result.ok) {
+        return reply
+          .code(result.code === "NOT_FOUND" ? 404 : 400)
+          .send({
+            ok: false,
+            code: result.code,
+            message: result.message,
+            correlation_id: correlationId(request),
+          });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        work_item: result.item,
+        message: "Escalated. Task remains open for acceptance.",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  /** Create a new care space (recipient) with caller as controlling family caregiver. */
+  app.post<{
+    Body: {
+      display_name?: string;
+      preferred_name?: string;
+      timezone?: string;
+    };
+  }>("/api/v1/care/care-spaces", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const result = createCareSpace(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+      displayName:
+        typeof body.display_name === "string" ? body.display_name : "",
+      preferredName:
+        typeof body.preferred_name === "string" ? body.preferred_name : undefined,
+      timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(201).send({
+      ok: true,
+      care_recipient_id: result.careRecipientId,
+      relationship_id: result.relationshipId,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.get(
+    "/api/v1/care/recipients/:id/reminders",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const reminders = listCareReminders(runtime.store, id);
+      return reply.code(200).send({
+        ok: true,
+        reminders,
+        active: reminders.filter((r) => r.status === "active"),
+        superseded: reminders.filter((r) => r.status === "superseded"),
         correlation_id: correlationId(request),
       });
     },
