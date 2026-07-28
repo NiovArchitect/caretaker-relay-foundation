@@ -95,40 +95,147 @@ function sourceRef(
   };
 }
 
-/** Known OTC/common names for plan-change extraction (not a formulary). */
-const KNOWN_MED_NAMES =
-  /\b(tylenol|acetaminophen|paracetamol|ibuprofen|advil|motrin|aspirin|metformin|lisinopril|atorvastatin|amoxicillin|benadryl|diphenhydramine|omeprazole|losartan|amlodipine|gabapentin|sertraline|escitalopram)\b/i;
+/**
+ * Soft normalize map — common brand/generic aliases and misspellings only.
+ * Never invents a drug not present in the utterance. Reported spelling is preserved.
+ */
+const MED_SOFT_NORMALIZE: Record<string, string> = {
+  tylenol: "Tylenol (acetaminophen)",
+  tylonal: "Tylenol (acetaminophen)",
+  tylonol: "Tylenol (acetaminophen)",
+  acetaminophen: "acetaminophen",
+  paracetamol: "paracetamol (acetaminophen)",
+  ibuprofen: "ibuprofen",
+  advil: "Advil (ibuprofen)",
+  motrin: "Motrin (ibuprofen)",
+  aspirin: "aspirin",
+  benadryl: "Benadryl (diphenhydramine)",
+  metformin: "metformin",
+};
+
+const STOP_MED_WORDS =
+  /^(for|the|her|his|their|with|and|please|new|dose|dosage|mg|ml|pill|pills|tablet|tablets|medicine|medication|med|drug|today|now|again|some|any|this|that|from|after|before|almost|out)$/i;
+
+export type ExtractedMedName = {
+  /** Exact token as reported by the caregiver (preferred in UI). */
+  reported: string;
+  /** Optional soft normalization; never replaces reported unless confirmed. */
+  possibleNormalized?: string;
+};
 
 /**
- * Best-effort medication name from free text. Never invents a drug not present.
+ * Universal medication name extraction — any reported name, not a formulary.
+ * Preserves misspellings; may suggest a soft normalize for common aliases only.
  */
-function extractMedicationNameFromText(text: string): string | undefined {
-  const known = text.match(KNOWN_MED_NAMES);
-  if (known) {
-    const n = known[1]!;
-    return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
-  }
-  // "new medicine X" / "med called X" / "medication X"
+export function extractMedicationNameFromText(
+  text: string,
+): ExtractedMedName | undefined {
+  // Prefer explicit product phrases before person-name traps ("give Taylor…")
   const patterns = [
-    /new\s+(?:medicine|medication|med|drug)\s+(?:called\s+|named\s+)?([A-Za-z][A-Za-z-]{1,40})/i,
-    /(?:medicine|medication|med)\s+(?:called\s+|named\s+)([A-Za-z][A-Za-z-]{1,40})/i,
-    /(?:add|started|start|taking|take)\s+([A-Za-z][A-Za-z-]{1,40})\s+\d/i,
-    /(?:add|started)\s+([A-Za-z][A-Za-z-]{1,40})\s+(?:for|to|with)/i,
+    /(?:tablet|pill|dose|doses)\s+of\s+([A-Za-z][A-Za-z0-9-]{1,40})/i,
+    /(?:applied|apply|using)\s+([A-Za-z][A-Za-z0-9-]{1,40})\s+(?:cream|ointment|gel|lotion|drops?)/i,
+    /([A-Za-z][A-Za-z0-9-]{1,40})\s+(?:cream|ointment|gel|lotion)\b/i,
+    /new\s+(?:medicine|medication|med|drug)\s+(?:called\s+|named\s+)?([A-Za-z][A-Za-z0-9-]{1,40})/i,
+    /(?:medicine|medication|med|drug)\s+(?:called\s+|named\s+)([A-Za-z][A-Za-z0-9-]{1,40})/i,
+    /([A-Za-z][A-Za-z0-9-]{1,40})\s+\d+(?:\.\d+)?\s*(?:mg|mcg|µg|ml|mL|g)\b/i,
+    /(?:almost\s+out\s+of|out\s+of|refill\s+(?:for\s+)?|running\s+low\s+on)\s+([A-Za-z][A-Za-z0-9-]{1,40})/i,
+    /(?:after|from)\s+(?:the\s+)?(?:new\s+)?([A-Za-z][A-Za-z0-9-]{1,40})(?:\s+pill|\s+tablet|\s+dose)?/i,
+    /(?:stopped|discontinued|discontinue)\s+([A-Za-z][A-Za-z0-9-]{1,40})\b/i,
+    /(?:put|place|add)\s+([A-Za-z][A-Za-z0-9-]{1,40})\s+on\s+(?:the\s+|her\s+|his\s+|their\s+)?(?:med|medicine)/i,
+    /(?:missed|skipped|refused|refill(?:\s+for)?|stopped|discontinued)\s+(?:her|his|their|the|a|an)?\s*([A-Za-z][A-Za-z0-9-]{1,40})\b/i,
+    /(?:give|gave)\s+(?:her|him|them)\s+([A-Za-z][A-Za-z0-9-]{1,40})\b/i,
+    /(?:eye|ear|nose)\s+drops\b/i,
+    /(?:gave|give|administered|took|taken|taking|take|add|added|started|start|using)\s+(?:her|him|them|the)?\s*([A-Za-z][A-Za-z0-9-]{1,40})\s+(?:\d|mg|mcg|ml|for|again)/i,
+    /(?:gave|administered|took|taken|taking|add|added|started)\s+(?:her|him|them)?\s*([A-Za-z][A-Za-z0-9-]{1,40})\b/i,
+    /(?:change|increase|decrease)\s+(?:her|his|their)?\s*([A-Za-z][A-Za-z0-9-]{1,40})\s+(?:dose|dosage|to)/i,
+    /\b(blood\s+pressure|bp)\s+(?:pill|tablet|med|medication)\b/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
-    if (m?.[1] && !/^(for|the|her|his|with|and|please|new|dose|mg)$/i.test(m[1])) {
-      return m[1].charAt(0).toUpperCase() + m[1].slice(1);
+    let raw = (m?.[1] ?? m?.[0])?.trim();
+    if (!raw) continue;
+    if (/blood\s+pressure|^\s*bp\s/i.test(raw)) raw = "blood pressure medication";
+    if (/eye\s+drops|ear\s+drops|nose\s+drops/i.test(raw)) raw = raw.toLowerCase();
+    if (STOP_MED_WORDS.test(raw)) continue;
+    // Avoid capturing person first names when a clearer product phrase exists later
+    if (
+      /^[A-Z][a-z]+$/.test(raw) &&
+      !MED_SOFT_NORMALIZE[raw.toLowerCase()] &&
+      /\b(tablet|pill|mg|mcg|medicine|medication)\s+of\b/i.test(text)
+    ) {
+      continue;
     }
+    const reported = raw.charAt(0).toUpperCase() + raw.slice(1);
+    const key = raw.toLowerCase();
+    const possibleNormalized = MED_SOFT_NORMALIZE[key];
+    return possibleNormalized && !possibleNormalized.toLowerCase().startsWith(key)
+      ? { reported, possibleNormalized }
+      : possibleNormalized
+        ? { reported, possibleNormalized }
+        : { reported };
   }
   return undefined;
 }
 
+/** Display label: reported name, with optional soft normalize in parentheses. */
+export function formatMedLabel(med?: ExtractedMedName): string {
+  if (!med) return "medication";
+  if (med.possibleNormalized && !med.possibleNormalized.toLowerCase().includes(med.reported.toLowerCase())) {
+    return `${med.reported} (possible match: ${med.possibleNormalized})`;
+  }
+  return med.reported;
+}
+
 function extractMedicationReasonFromText(text: string): string | undefined {
   const m =
-    text.match(/\bfor\s+(?:a\s+)?(fever|pain|cough|nausea|dizziness|infection|headache|inflammation)\b/i) ||
-    text.match(/\b(fever|pain|cough|nausea|dizziness|infection|headache)\b/i);
+    text.match(
+      /\bfor\s+(?:a\s+)?(fever|pain|cough|nausea|dizziness|infection|headache|inflammation|anxiety|sleep|allergy|allergies)\b/i,
+    ) ||
+    text.match(
+      /\b(fever|pain|cough|nausea|dizziness|infection|headache|rash|vomiting|confusion|agitation|sleepiness)\b/i,
+    );
   return m?.[1] ? m[1].toLowerCase() : undefined;
+}
+
+function isMedicationTopic(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    /\b(medication|medications|medicine|medicines|meds?|dose|dosage|pill|pills|tablet|tablets|cream|ointment|drops?|inhaler|patch|syrup|liquid|injection|insulin|vitamin|supplement|antibiotic|prn)\b/i.test(
+      lower,
+    ) ||
+    /\b\d+(?:\.\d+)?\s*(mg|mcg|µg|ml|mL|g)\b/i.test(lower) ||
+    Boolean(extractMedicationNameFromText(text))
+  );
+}
+
+/**
+ * Personalized clarification when we have partial context — never a cold generic.
+ */
+export function buildPersonalizedClarification(input: {
+  careRecipientName: string;
+  actorDisplayName?: string;
+  med?: ExtractedMedName;
+  dose?: string;
+  reason?: string;
+  kind?: string;
+}): string {
+  const who = input.careRecipientName || "the care recipient";
+  const reporter = input.actorDisplayName ? `${input.actorDisplayName} reported` : "You reported";
+  const med = formatMedLabel(input.med);
+  const bits: string[] = [];
+  if (input.med) bits.push(`medication as reported: ${med}`);
+  if (input.dose) bits.push(`dose: ${input.dose}`);
+  if (input.reason) bits.push(`context: ${input.reason}`);
+  const known = bits.length
+    ? `I understood: ${bits.join("; ")}.`
+    : `I heard a care update about ${who}.`;
+  if (input.kind === "plan_change") {
+    return `${known} ${reporter} a possible medication-plan change for ${who}. I can save it as pending verification (not an active order). Please confirm the medication name, dose, and whether a clinician authorized the change.`;
+  }
+  if (input.kind === "administration") {
+    return `${known} To file an administration report for ${who}, confirm whether it was given, refused, or missed, and the approximate time if you know it.`;
+  }
+  return `${known} Tell me whether this was taken, refused, missed, newly added to the plan, discontinued, or an observed effect — so I can file the right kind of record for ${who}.`;
 }
 
 function mkCandidate(
@@ -367,6 +474,32 @@ export function fixtureExtract(
       ),
     );
   } else if (
+    /\b(fever|temperature|running\s+a\s+temp)\b/i.test(lower) &&
+    !/\b(tylenol|advil|ibuprofen|acetaminophen|medicine|medication|med|mg)\b/i.test(
+      lower,
+    )
+  ) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "observation",
+          statement: `Caregiver reported: fever / elevated temperature for ${careRecipientName}`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.86,
+          consequentiality: "moderate",
+          timeLabel: /\btoday\b/.test(lower)
+            ? "today"
+            : /\bthis afternoon\b/.test(lower)
+              ? "this afternoon"
+              : undefined,
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  } else if (
     /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
       lower,
     )
@@ -500,27 +633,31 @@ export function fixtureExtract(
     }
   }
 
-  // Medication states must NOT collapse: negation / intent / completed / uncertain
-  const medTopic =
-    /medication|meds|dose|mg|lunch med|pills?|tablets?|blue pills?|tylenol|acetaminophen|ibuprofen/i.test(
-      lower,
-    ) ||
-    (/gave|administered|took|take|give/.test(lower) &&
-      /med|dose|lunch|pill|tablet|tylenol|acetaminophen/.test(lower));
+  // ── Universal medication intents (any named/unnamed product; no catalog required) ──
+  const medTopic = isMedicationTopic(text);
+  const medExtracted = extractMedicationNameFromText(text);
+  const medLabel = formatMedLabel(medExtracted);
+  const doseExtracted =
+    opts?.recordedDoseOverride ?? extractDoseFromText(text) ?? undefined;
+  const reasonExtracted = extractMedicationReasonFromText(text);
+
   // Recommendation / clinical advice request — never invent dose guidance
   if (
     medTopic &&
     (/\bshould\s+i\s+(give|administer|take)\b/i.test(lower) ||
       /\bcan\s+i\s+give\b/i.test(lower) ||
       /\bis\s+it\s+(ok|okay|safe)\s+to\s+give\b/i.test(lower) ||
-      /\bdo\s+i\s+give\b/i.test(lower))
+      /\bdo\s+i\s+give\b/i.test(lower) ||
+      (/\banother\s+(dose|tablet|pill)\b/i.test(lower) &&
+        /\b(should|can|may|ok|okay|safe)\b/i.test(lower)))
   ) {
     candidates.push(
       mkCandidate(
         {
           eventType: "note",
-          statement:
-            "Caregiver asked whether to give a medication — Relay does not provide dosing advice. Check the authorized medication plan or clinician.",
+          statement: medExtracted
+            ? `Caregiver asked whether to give ${medLabel} — Relay does not provide dosing advice. Check the authorized medication plan or clinician for ${careRecipientName}.`
+            : `Caregiver asked whether to give a medication — Relay does not provide dosing advice. Check the authorized medication plan or clinician for ${careRecipientName}.`,
           epistemicStatus: "REPORTED",
           confidence: 0.9,
           consequentiality: "high",
@@ -535,39 +672,124 @@ export function fixtureExtract(
       "No administration and no plan change were recorded from a recommendation question. Do not treat chat as permission to dose.",
     );
   }
+
   const negatedMed =
-    /\b(did\s+not|didn't|not)\s+(give|gave|administer)/i.test(text) ||
-    /\b(did\s+not|didn't)\b.*\b(medication|meds|dose)\b/i.test(lower) ||
-    /\b(definitely\s+did\s+not|never\s+got|did\s+not\s+get|didn't\s+get)\b/i.test(
+    /\b(did\s+not|didn't|not)\s+(give|gave|administer|take|took)\b/i.test(text) ||
+    /\b(refused|wouldn't take|would not take|won't take|will not take)\b/i.test(
       lower,
     ) ||
-    /\b(not\s+get|never\s+received)\b.*\b(medication|meds|dose|it)\b/i.test(
+    /\b(did\s+not|didn't)\b.*\b(medication|meds|dose|pill|tablet)\b/i.test(
+      lower,
+    ) ||
+    /\b(definitely\s+did\s+not|never\s+got|did\s+not\s+get|didn't\s+get)\b/i.test(
       lower,
     );
+  const missedMed =
+    medTopic &&
+    /\b(missed|skipped|forgot\s+to\s+give|did\s+not\s+get|wasn't\s+given|was\s+not\s+given)\b/i.test(
+      lower,
+    );
+  const supplyLow =
+    (medTopic ||
+      /\b(refill|almost\s+out|running\s+low|out\s+of)\b/i.test(lower)) &&
+    /\b(almost\s+out|running\s+low|need\s+(a\s+)?refill|refill\s+needed|out\s+of|refill\s+for)\b/i.test(
+      lower,
+    ) &&
+    (medTopic || Boolean(extractMedicationNameFromText(text)));
+  const discontinued =
+    medTopic &&
+    (/\b(stopped|discontinued|discontinue|no longer\s+taking|took\s+(her|him|them)\s+off)\b/i.test(
+      lower,
+    ) ||
+      /\b(doctor|prescriber|clinician|provider)\s+(stopped|discontinued)\b/i.test(
+        lower,
+      ));
   const intentMed =
     /\b(going to|will|gonna|plan to|about to)\b.*\b(give|administer)\b/i.test(
       text,
     ) ||
     /\b(give|administer)\b.*\b(later|tonight|this evening)\b/i.test(lower);
   const uncertainMed =
-    /\b(i think|maybe|might have|may have|not sure if|possibly|forgot whether|don't remember if|do not remember if)\b.*\b(gave|give|administered|walter|got|medication|meds)\b/i.test(
+    /\b(i think|maybe|might have|may have|not sure if|possibly|forgot whether|don't remember if|do not remember if)\b.*\b(gave|give|administered|got|medication|meds)\b/i.test(
       lower,
     ) ||
     /\b(think|maybe|might|may have|forgot|unsure|uncertain)\b.*\b(medication|meds|gave|give|got)\b/i.test(
       lower,
     ) ||
-    /\b(whether\s+i\s+gave|if\s+i\s+gave|if\s+she\s+got|if\s+he\s+got)\b/i.test(
+    /\b(whether\s+i\s+gave|if\s+i\s+gave|if\s+she\s+got|if\s+he\s+got|if\s+they\s+got)\b/i.test(
+      lower,
+    );
+  const effectAfterMed =
+    medTopic &&
+    /\b(after|following)\b.{0,40}\b(pill|tablet|dose|medication|medicine|med)\b/i.test(
+      lower,
+    ) &&
+    /\b(dizzy|dizziness|nause|vomit|rash|sleepy|sleepiness|confused|confusion|agitated|better|improved|worse|fever\s+down|no\s+change)\b/i.test(
       lower,
     );
 
-  if (negatedMed) {
+  if (negatedMed || (missedMed && /refus/i.test(lower))) {
+    const kind = /refus/i.test(lower) ? "refused" : "was NOT given / refused";
     candidates.push(
       mkCandidate(
         {
           eventType: "note",
-          statement: "Caregiver stated lunch medication was NOT given",
+          statement: `Caregiver reported: ${medLabel} ${kind} for ${careRecipientName}`,
           epistemicStatus: "REPORTED",
-          confidence: 0.9,
+          confidence: 0.88,
+          consequentiality: "high",
+          recordedDose: doseExtracted,
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+    uncertainties.push(
+      "Negative or refused medication statement — must not create MedicationAdministration=given",
+    );
+  } else if (missedMed) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "note",
+          statement: `Caregiver reported: ${medLabel} was missed for ${careRecipientName}`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.86,
+          consequentiality: "high",
+          recordedDose: doseExtracted,
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  } else if (supplyLow) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "task",
+          statement: `Medication supply / refill needs attention: ${medLabel} for ${careRecipientName}`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.86,
+          consequentiality: "moderate",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  } else if (discontinued) {
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "task",
+          statement: `Medication change needs verification: discontinue ${medLabel} for ${careRecipientName}. Not removed from the active plan until authorized review.`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.84,
           consequentiality: "high",
         },
         ctx,
@@ -577,17 +799,18 @@ export function fixtureExtract(
       ),
     );
     uncertainties.push(
-      "Negative medication statement — must not create MedicationAdministration=given",
+      "Discontinuation is pending verification only. Active medication plan is unchanged until authorized review.",
     );
   } else if (intentMed && medTopic) {
     candidates.push(
       mkCandidate(
         {
           eventType: "task",
-          statement: "Intent: give lunch medication later (not yet administered)",
+          statement: `Intent: give ${medLabel} later (not yet administered) for ${careRecipientName}`,
           epistemicStatus: "REPORTED",
           confidence: 0.8,
           consequentiality: "high",
+          recordedDose: doseExtracted,
         },
         ctx,
         careRecipientName,
@@ -603,11 +826,11 @@ export function fixtureExtract(
       mkCandidate(
         {
           eventType: "note",
-          statement:
-            "Uncertain medication report (e.g. thinks someone may have given it) — not confirmed administration",
+          statement: `Uncertain medication report for ${careRecipientName} (${medLabel}) — not confirmed administration`,
           epistemicStatus: "UNCERTAIN",
           confidence: 0.4,
           consequentiality: "high",
+          recordedDose: doseExtracted,
         },
         ctx,
         careRecipientName,
@@ -618,10 +841,13 @@ export function fixtureExtract(
     uncertainties.push(
       "Uncertain medication attribution — do not record as given without verification",
     );
-  } else if (medTopic && /gave|administered|took|taken|given/.test(lower)) {
-    // Capture value+unit (mg, g, mcg, mL, textual forms) — not mg-only.
-    // Also capture count phrases like "two of the blue pills" without inventing strength.
-    let extracted = opts?.recordedDoseOverride ?? extractDoseFromText(text);
+  } else if (
+    medTopic &&
+    /gave|administered|took|taken|given|applied|apply|used\s+the|used\s+(eye|ear|nose)/.test(
+      lower,
+    )
+  ) {
+    let extracted = doseExtracted;
     const bluePills = /(?:two|2)\s+(?:of\s+the\s+)?blue\s+pills?\b/i.test(text);
     const pillCount = text.match(
       /\b(one|two|three|four|five|1|2|3|4|5)\s+(?:of\s+(?:the\s+)?)?(?:blue\s+)?pills?\b/i,
@@ -643,14 +869,9 @@ export function fixtureExtract(
       extracted = `${n} tablets`;
     }
     const dose = extracted ?? undefined;
-    const medName = extractMedicationNameFromText(text);
-    const ambiguousColorPills = bluePills || (!dose && /pills?|tablets?/.test(lower));
-    const lunchish = /lunch\s*med|metformin/i.test(lower) || (!medName && /lunch/.test(lower));
-    const labelBase = medName
-      ? medName
-      : lunchish
-        ? "Lunch medication"
-        : "Medication";
+    const ambiguousColorPills =
+      bluePills || (!dose && /pills?|tablets?/.test(lower) && !medExtracted);
+    const labelBase = medExtracted ? medLabel : "Medication";
     candidates.push(
       mkCandidate(
         {
@@ -660,14 +881,18 @@ export function fixtureExtract(
               ? `${labelBase} reported given (${dose}) — identity/strength needs checking`
               : `${labelBase} reported given — amount/identity unclear`
             : dose
-              ? `${labelBase} marked as given (${dose})`
-              : lunchish
-                ? "Lunch medication marked as given (as scheduled)"
-                : `${labelBase} marked as given (as scheduled)`,
+              ? `${labelBase} marked as given (${dose}) for ${careRecipientName}`
+              : /applied|apply|cream|ointment|gel|lotion|drops/i.test(lower)
+                ? `${labelBase} reported applied/used for ${careRecipientName}`
+                : `${labelBase} marked as given (as scheduled) for ${careRecipientName}`,
           epistemicStatus: ambiguousColorPills ? "UNCERTAIN" : "REPORTED",
           confidence: ambiguousColorPills ? 0.55 : 0.85,
           recordedDose: dose,
-          timeLabel: ambiguousColorPills ? undefined : lunchish ? "lunch" : undefined,
+          timeLabel: ambiguousColorPills
+            ? undefined
+            : /\blunch\b/.test(lower)
+              ? "lunch"
+              : undefined,
           consequentiality: "high",
         },
         ctx,
@@ -683,29 +908,48 @@ export function fixtureExtract(
     }
   }
 
-  // ── Medication PLAN CHANGE / new medicine request ──
-  // Caregiver report or request to add/change a medicine on the plan.
+  // Effect after medication — observation only; never claim causation
+  if (effectAfterMed) {
+    const effect =
+      lower.match(
+        /\b(dizzy|dizziness|nauseous|nausea|vomit(?:ing)?|rash|sleepy|sleepiness|confused|confusion|agitated|better|improved|worse|fever\s+down|no\s+(?:visible\s+)?change)\b/i,
+      )?.[1] ?? "a change";
+    candidates.push(
+      mkCandidate(
+        {
+          eventType: "observation",
+          statement: `${ctx.actorDisplayName} reported that ${careRecipientName} experienced ${effect} after ${medLabel}. Reported association only — not a clinical determination of cause.`,
+          epistemicStatus: "REPORTED",
+          confidence: 0.8,
+          consequentiality: "moderate",
+        },
+        ctx,
+        careRecipientName,
+        source,
+        ++i,
+      ),
+    );
+  }
+
+  // ── Medication PLAN CHANGE / new medicine / dose change ──
   // NEVER becomes an active medication order. Durable as task pending verification.
-  // Distinct from medication_administration ("I gave…") above.
   const planChangeRequest =
     !negatedMed &&
-    (medTopic ||
-      /\b(tylenol|acetaminophen|ibuprofen|advil|motrin|aspirin|metformin|lisinopril|atorvastatin|amoxicillin)\b/i.test(
-        lower,
-      )) &&
+    !missedMed &&
+    medTopic &&
     (/new\s+(medicine|medication|med|drug)\b/i.test(lower) ||
-      /\b(please\s+)?add\b.{0,60}\b(med|medicine|medication|dose|dosage|mg|tylenol|acetaminophen)\b/i.test(
+      /\b(please\s+)?add\b.{0,100}(meds?|medicine|medication|dose|dosage|mg\b|ml\b|pill|tablet)/i.test(
         lower,
       ) ||
-      /\badd\b.{0,40}\b(to\s+)?(her|his|their|the)\s+(med|medicine)/i.test(
+      /\badd\b.{0,40}\b(to\s+)?(her|his|their|the)\s+(meds?|medicine)/i.test(
         lower,
       ) ||
-      /\b(put|place)\b.{0,40}\b(on\s+)?(her|his|their)?\s*(med|medicine)\s*list/i.test(
+      /\b(put|place)\b.{0,40}\b(on\s+)?(her|his|their)?\s*(meds?|medicine)\s*list/i.test(
         lower,
       ) ||
-      /\bstarted\b.{0,40}\b(tylenol|acetaminophen|ibuprofen|med|medicine|medication)\b/i.test(
-        lower,
-      ) ||
+      /\bstarted\b.{0,40}\b(meds?|medicine|medication|pill|tablet)/i.test(lower) ||
+      (/\bstarted\b.{0,20}\b[A-Za-z]{3,}/i.test(lower) &&
+        /(mg\b|dose|for)/i.test(lower)) ||
       /\b(doctor|prescriber|clinician|provider)\s+(added|prescribed|started|ordered)\b/i.test(
         lower,
       ) ||
@@ -721,10 +965,8 @@ export function fixtureExtract(
         /medication change needs verification/i.test(c.statement),
     );
     if (!alreadyPlan) {
-      const medName = extractMedicationNameFromText(text) ?? "medication";
-      const dose =
-        opts?.recordedDoseOverride ?? extractDoseFromText(text) ?? undefined;
-      const reason = extractMedicationReasonFromText(text);
+      const dose = doseExtracted;
+      const reason = reasonExtracted;
       const missing: string[] = [];
       if (!dose) missing.push("dose");
       else if (!/(mg|mcg|µg|ml|mL|tablet|tab|pill|g)\b/i.test(dose))
@@ -741,7 +983,7 @@ export function fixtureExtract(
         mkCandidate(
           {
             eventType: "task",
-            statement: `Medication change needs verification: ${medName}${dosePart}${reasonPart}. Not an active medication-plan instruction until authorized review.`,
+            statement: `Medication change needs verification: ${medLabel}${dosePart}${reasonPart} for ${careRecipientName}. Not an active medication-plan instruction until authorized review.`,
             epistemicStatus: "REPORTED",
             confidence: dose ? 0.88 : 0.72,
             recordedDose: dose,
@@ -753,8 +995,7 @@ export function fixtureExtract(
           ++i,
         ),
       );
-      // Symptom/reason as separate observation (e.g. fever)
-      if (reason && /fever|pain|cough|nausea|dizziness|infection/i.test(reason)) {
+      if (reason && /fever|pain|cough|nausea|dizziness|infection|rash/i.test(reason)) {
         const alreadySym = candidates.some(
           (c) =>
             c.eventType === "observation" &&
@@ -767,7 +1008,7 @@ export function fixtureExtract(
             mkCandidate(
               {
                 eventType: "observation",
-                statement: `Caregiver reported: ${reason}`,
+                statement: `Caregiver reported: ${reason} for ${careRecipientName}`,
                 epistemicStatus: "REPORTED",
                 confidence: 0.84,
                 consequentiality: "moderate",
@@ -781,9 +1022,26 @@ export function fixtureExtract(
         }
       }
       uncertainties.push(
-        `Saved as a medication-change candidate only. Active medication plan is unchanged. Missing or incomplete: ${missing.join(", ") || "none noted"}. Authorized reviewer must confirm before this becomes an active instruction.`,
+        `Saved as a medication-change candidate only for ${careRecipientName}. Active medication plan is unchanged. Missing or incomplete: ${missing.join(", ") || "none noted"}. Authorized reviewer must confirm before this becomes an active instruction.`,
       );
     }
+  }
+
+  // Personalized fallback: if med-ish language produced no candidates, still guide
+  if (
+    medTopic &&
+    candidates.length === 0 &&
+    (medExtracted || doseExtracted || reasonExtracted)
+  ) {
+    uncertainties.push(
+      buildPersonalizedClarification({
+        careRecipientName,
+        actorDisplayName: ctx.actorDisplayName,
+        med: medExtracted,
+        dose: doseExtracted,
+        reason: reasonExtracted,
+      }),
+    );
   }
 
   // Communication / keep another caregiver in the loop
@@ -948,9 +1206,17 @@ export function fixtureExtract(
   }
 
   if (candidates.length === 0) {
-    uncertainties.push(
-      "I heard you, but I'm not sure what to file yet. You can correct me.",
+    const alreadyPersonal = uncertainties.some((u) =>
+      /I understood:|I heard a care update about/i.test(u),
     );
+    if (!alreadyPersonal) {
+      uncertainties.push(
+        buildPersonalizedClarification({
+          careRecipientName,
+          actorDisplayName: ctx.actorDisplayName,
+        }),
+      );
+    }
   }
 
   return toSlice(candidates, uncertainties, text, ctx, careRecipientName, "FIXTURE");
