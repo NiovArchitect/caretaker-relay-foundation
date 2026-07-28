@@ -188,6 +188,8 @@ export function buildProjections(input: {
   let NEXT_APPOINTMENT: Record<string, unknown> | null = null;
   if (apts.length) {
     // Active next only — never cancelled / superseded / completed / missed as "next".
+    // "moved" without a confirmed replacement is legacy noise on long-lived lab recipients;
+    // prefer scheduleState=confirmed / status=scheduled after governed confirm.
     const inactive = new Set([
       "cancelled",
       "completed",
@@ -204,9 +206,20 @@ export function buildProjections(input: {
       }
       return true;
     });
-    const sorted = [...active].sort((a, b) =>
-      str(a.startsAt).localeCompare(str(b.startsAt)),
-    );
+    const rank = (a: Record<string, unknown>) => {
+      const st = str(a.status).toLowerCase();
+      const life = str(a.scheduleState).toLowerCase();
+      // Higher is better
+      if (life === "confirmed" && st === "scheduled") return 3;
+      if (st === "scheduled") return 2;
+      if (st === "moved") return 0;
+      return 1;
+    };
+    const sorted = [...active].sort((a, b) => {
+      const rd = rank(b) - rank(a);
+      if (rd !== 0) return rd;
+      return str(a.startsAt).localeCompare(str(b.startsAt));
+    });
     NEXT_APPOINTMENT = sorted[0] ?? null;
   }
 
