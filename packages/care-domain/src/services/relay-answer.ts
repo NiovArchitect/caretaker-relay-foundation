@@ -792,8 +792,12 @@ function answerWithState(
   // Next / previous coverage questions MUST use CareCoverageTimeline — never
   // the seed CARE_COVER_V1 "Helping now / Next" prose short-circuit.
   const qCov = req.question.toLowerCase();
+  // Query-only: exclude action phrasing ("tell the next caregiver … refused lunch")
   const isNextCaregiverQ =
     /who works after me|who is (taking over|next|after me)|when does (the )?next (caregiver|helper|person)|next (caregiver|shift|helper)|who should receive my handoff|is anyone covering|has the next (caregiver|helper) accepted|covering tonight|who takes over|handoff target|who (do i|should i) hand (off|over)/i.test(
+      qCov,
+    ) &&
+    !/\b(tell|message|notify|ask|send|report|left|refused|unfinished|saying)\b/i.test(
       qCov,
     );
   const isPreviousCaregiverQ =
