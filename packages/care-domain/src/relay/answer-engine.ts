@@ -25,6 +25,10 @@ import {
   semanticDedupeLines,
   str as utilStr,
 } from "./util.js";
+import {
+  buildOrderedMedicationCandidatesFromLines,
+  formatOrderedMedicationList,
+} from "../services/medication-candidates.js";
 
 export type AnswerEngineInput = {
   question: string;
@@ -814,25 +818,18 @@ function composeAnswer(ctx: {
           );
         }
       } else {
-        // List every distinct pending medication-change candidate (multi-med proof)
-        const pendingAll = semanticDedupeLines(
+        // Canonical ordered candidates — same array ordinal follow-ups will use
+        const ordered = buildOrderedMedicationCandidatesFromLines(
           [
             ...cleanHandoffChanged,
             ...cleanHandoffOpen,
             ...cleanOpen,
             ...cleanChanges,
-          ].filter((c) =>
-            /medication change|waiting for medication-plan|needs verification|reported dose/i.test(
-              c,
-            ),
-          ),
-        ).slice(0, 5);
-        if (pendingAll.length > 1) {
-          parts.push(
-            `${pendingAll.length} medication changes are waiting for review for ${recipientName}:\n` +
-              pendingAll.map((c, i) => `${i + 1}. ${c.replace(/\s*\(from [^)]+\)\s*$/i, "")}`).join("\n") +
-              `\nNone of these is active plan instruction until authorized.`,
-          );
+          ],
+          8,
+        );
+        if (ordered.length) {
+          parts.push(formatOrderedMedicationList(ordered, recipientName));
         } else if (pendingChange) {
           parts.push(
             `One medication change is waiting for review: ${pendingChange}. It is not active plan instruction until authorized.`,
@@ -845,7 +842,7 @@ function composeAnswer(ctx: {
             "I only report what is on the care plan. I do not invent medication changes.",
           );
         }
-        if (primaryMed && pendingAll.length) {
+        if (primaryMed && ordered.length) {
           parts.push(
             `Active authorized medication remains ${str(primaryMed.name)} ${str(primaryMed.dose)}.`,
           );

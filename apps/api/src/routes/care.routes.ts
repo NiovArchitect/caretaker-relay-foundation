@@ -49,6 +49,8 @@ import {
   recordCareDataView,
   notificationFromCoordination,
   listNotificationsForPrincipal,
+  buildAttentionGroups,
+  attentionBadgeCount,
   markSeen,
   ingestCareEvent,
   buildTimeline,
@@ -2700,6 +2702,44 @@ export async function registerCareRoutes(
     return reply.code(201).send(payload);
   });
 
+  /**
+   * Canonical attention groups for the signed-in principal.
+   * Badge count MUST equal attention_groups.length (zero tolerance).
+   */
+  app.get("/api/v1/care/attention", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const q = request.query as { care_recipient_id?: string };
+    const careRecipientId =
+      typeof q.care_recipient_id === "string" ? q.care_recipient_id : undefined;
+    if (careRecipientId) {
+      const access = runtime.access(principal.carePersonId, careRecipientId);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+    }
+    const groups = buildAttentionGroups(
+      runtime.store,
+      principal.carePersonId,
+      careRecipientId,
+    );
+    const badge = attentionBadgeCount(groups);
+    return reply.code(200).send({
+      ok: true,
+      attention_groups: groups,
+      badge_count: badge,
+      group_count: groups.length,
+      exact_match: badge === groups.length,
+      authority: "server",
+      correlation_id: correlationId(request),
+    });
+  });
+
   /** Server-backed notifications for authenticated principal (not localStorage). */
   app.get("/api/v1/care/notifications", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
@@ -2723,7 +2763,12 @@ export async function registerCareRoutes(
       principal.carePersonId,
       careRecipientId,
     );
-    const unread = rows.filter((n) => !n.seenAt && !n.resolvedAt);
+    const groups = buildAttentionGroups(
+      runtime.store,
+      principal.carePersonId,
+      careRecipientId,
+    );
+    const badge = attentionBadgeCount(groups);
     return reply.code(200).send({
       ok: true,
       notifications: rows.map((n) => ({
@@ -2747,7 +2792,10 @@ export async function registerCareRoutes(
         dedupe_key: n.dedupeKey,
         metadata: n.metadata ?? null,
       })),
-      unread_count: unread.length,
+      // Canonical badge — not raw unread rows
+      unread_count: badge,
+      attention_groups: groups,
+      badge_count: badge,
       total_count: rows.length,
       authority: "server",
       correlation_id: correlationId(request),

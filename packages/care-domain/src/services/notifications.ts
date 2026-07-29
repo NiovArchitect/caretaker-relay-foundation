@@ -142,9 +142,10 @@ export function listNotificationsForPrincipal(
 }
 
 function collectRecipientIds(store: CareStore): string[] {
-  // Known lab recipients + any with updates
-  const ids = new Set<string>(["cr-olivia", "cr-robert"]);
-  // memory store may not expose listRecipients — probe known
+  const ids = new Set<string>();
+  if (typeof store.listRecipients === "function") {
+    for (const r of store.listRecipients()) ids.add(r.id);
+  }
   for (const id of ["cr-olivia", "cr-robert"]) {
     if (store.getRecipient(id)) ids.add(id);
   }

@@ -16,6 +16,7 @@
 import type { CareStore } from "../store/memory-store.js";
 import type { CareUpdate, SourceRef } from "../types.js";
 import type { ClassifiedTurn, RelayIntent } from "./intents.js";
+import { buildOrderedMedicationCandidatesFromLines } from "../services/medication-candidates.js";
 
 const TURN_PREFIX = "RELAY_TURN_V1:";
 const FOCUS_PREFIX = "RELAY_FOCUS_V1:";
@@ -62,6 +63,16 @@ export type RelayFocus = {
   }>;
   /** Explicitly selected multi-med candidate after clarification */
   selectedMedicationCandidate?: string;
+  /** Canonical ordered medication candidates (display_index 1-based) */
+  orderedMedicationCandidates?: Array<{
+    display_index: number;
+    candidate_id: string;
+    medication: string;
+    dose: string;
+    reason: string;
+    reporter: string;
+    report_time?: string | null;
+  }>;
   updatedAt: string;
 };
 
@@ -321,19 +332,21 @@ export function resolveContextualFollowUp(
   }
 
   const q = question.trim().toLowerCase();
-  const medChanges = referents.filter((r) => r.kind === "medication_change");
 
-  // Ordinal selection: "the second one" / "what about the first"
-  const ord =
-    q.match(/(?:the )?(first|1st)/)?.[1] ||
-    q.match(/(?:the )?(second|2nd)/)?.[1] ||
-    q.match(/(?:the )?(third|3rd)/)?.[1];
-  if (ord && medChanges.length >= 1) {
-    const idx =
-      /first|1st/.test(ord) ? 0 : /second|2nd/.test(ord) ? 1 : 2;
-    const pick = medChanges[idx] || medChanges[0];
+  // Ordinal selection from canonical ordered array only
+  const ordered = focus?.orderedMedicationCandidates ?? [];
+  const ordMatch = q.match(
+    /(?:the )?(first|1st|second|2nd|third|3rd|last)(?: one)?/,
+  );
+  if (ordMatch && ordered.length >= 1) {
+    const token = ordMatch[1]!;
+    let idx = 0;
+    if (/second|2nd/.test(token)) idx = 1;
+    else if (/third|3rd/.test(token)) idx = 2;
+    else if (/last/.test(token)) idx = ordered.length - 1;
+    else idx = 0;
+    const pick = ordered[idx];
     if (pick) {
-      // Persist selection for subsequent turns
       saveFocus(
         store,
         {
@@ -343,8 +356,9 @@ export function resolveContextualFollowUp(
             careRecipientId,
             updatedAt: new Date().toISOString(),
           }),
-          selectedMedicationCandidate: pick.label,
-          medicationName: pick.label.split(" ")[0],
+          selectedMedicationCandidate: pick.candidate_id,
+          medicationName: pick.medication,
+          orderedMedicationCandidates: ordered,
           lastAnswerSummary: lastAnswer,
           lastUserQuestion: lastQ,
           referents,
@@ -355,9 +369,9 @@ export function resolveContextualFollowUp(
       return {
         handled: true,
         confidence: "high",
-        selectedReferent: pick.label,
+        selectedReferent: `${pick.medication} ${pick.dose}`.trim(),
         modelPath: "deterministic",
-        answer: `Understood — focusing on the ${pick.label}${pick.dose ? ` (${pick.dose})` : ""}${pick.reason ? ` · ${pick.reason}` : ""}. Ask when it was reported, who reported it, or whether it is active.`,
+        answer: `Understood — focusing on #${pick.display_index}: ${pick.medication}${pick.dose ? ` ${pick.dose}` : ""}${pick.reason ? ` for ${pick.reason}` : ""}${pick.reporter ? ` (reported by ${pick.reporter})` : ""}. Ask when it was reported, who reported it, whether it is active, or if the recipient took it.`,
       };
     }
   }
@@ -367,10 +381,9 @@ export function resolveContextualFollowUp(
     /what time|when was|when did|at what time|when was it reported/.test(q) &&
     !focus?.selectedMedicationCandidate
   ) {
-    if (medChanges.length >= 2) {
-      const labels = medChanges
-        .slice(0, 3)
-        .map((r, i) => `${i + 1}) ${r.label}`)
+    if (ordered.length >= 2) {
+      const labels = ordered
+        .map((c) => `${c.display_index}) ${c.medication}${c.dose ? ` ${c.dose}` : ""}`)
         .join("; ");
       return {
         handled: true,
@@ -393,50 +406,38 @@ export function resolveContextualFollowUp(
     }
   }
 
-  // Time follow-up — selected or single referent
+  // Time follow-up — selected ordered candidate or single
   if (/what time|when was|when did|at what time|when was it reported/.test(q)) {
-    const selected = focus?.selectedMedicationCandidate
-      ? referents.find((r) => r.label === focus.selectedMedicationCandidate) ||
-        medChanges.find((r) => r.label === focus.selectedMedicationCandidate)
-      : undefined;
-    const ref = selected || (medChanges.length === 1 ? medChanges[0] : referents[0]);
-    if (ref?.timeLabel) {
+    const selected =
+      ordered.find((c) => c.candidate_id === focus?.selectedMedicationCandidate) ||
+      (ordered.length === 1 ? ordered[0] : undefined);
+    if (selected) {
       return {
         handled: true,
         confidence: "high",
-        selectedReferent: ref.label,
+        selectedReferent: selected.medication,
         modelPath: "deterministic",
-        answer: `The ${ref.label} is on file for ${recipientDisplayName} at ${ref.timeLabel}.`,
-      };
-    }
-    // Scan answer for clock-ish labels
-    const timeHit =
-      lastAnswer.match(
-        /\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[^.]*?\d{1,2}:\d{2}\s*(?:AM|PM)?[^.]*?(?:PDT|PST|EDT|EST)?/i,
-      )?.[0] ||
-      lastAnswer.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)\b/i)?.[0];
-    if (timeHit && ref) {
-      return {
-        handled: true,
-        confidence: "medium",
-        selectedReferent: ref.label,
-        modelPath: "deterministic",
-        answer: `I believe you mean the ${ref.label}. The time on file is ${timeHit.trim()}.`,
-      };
-    }
-    if (ref) {
-      return {
-        handled: true,
-        confidence: "medium",
-        selectedReferent: ref.label,
-        modelPath: "deterministic",
-        answer: `I believe you mean the ${ref.label} for ${recipientDisplayName}. I do not have a precise clock time for that report on file—only that it was recorded in the recent care day / prior shift notes.`,
+        answer: selected.report_time
+          ? `${selected.medication}${selected.dose ? ` ${selected.dose}` : ""} was reported at ${selected.report_time}.`
+          : `${selected.medication}${selected.dose ? ` ${selected.dose}` : ""} was reported for ${recipientDisplayName}; a precise clock time is not on file beyond the recent care record.`,
       };
     }
   }
 
   // Who reported
   if (/who (reported|said|noted|recorded)/.test(q)) {
+    const selected = ordered.find(
+      (c) => c.candidate_id === focus?.selectedMedicationCandidate,
+    );
+    if (selected?.reporter) {
+      return {
+        handled: true,
+        confidence: "high",
+        selectedReferent: selected.medication,
+        modelPath: "deterministic",
+        answer: `${selected.reporter} reported ${selected.medication}${selected.dose ? ` ${selected.dose}` : ""} for ${recipientDisplayName}.`,
+      };
+    }
     const ref = referents[0];
     const reporter =
       ref?.reporter ||
@@ -507,9 +508,13 @@ export function resolveContextualFollowUp(
 
   // Was it confirmed / is it active
   if (/was it confirmed|is (it|that) (active|confirmed)/.test(q)) {
-    const pending = referents.find((r) => r.kind === "medication_change");
-    if (pending || /pending|not an active|waiting for/i.test(lastAnswer)) {
-      const label = pending?.label || focus?.medicationName || "that medication change";
+    const selected = ordered.find(
+      (c) => c.candidate_id === focus?.selectedMedicationCandidate,
+    );
+    if (selected || focus?.medicationName || /pending|not an active|waiting for/i.test(lastAnswer)) {
+      const label = selected
+        ? `${selected.medication}${selected.dose ? ` ${selected.dose}` : ""}`
+        : focus?.medicationName || "that medication change";
       return {
         handled: true,
         confidence: "high",
@@ -531,27 +536,19 @@ export function resolveContextualFollowUp(
 
   // Has she taken it / did she take it
   if (/has she taken it|did she take it/.test(q)) {
-    // Prefer pending medication-change referents over standing plan med names
-    const pendingRef = referents.find((r) => r.kind === "medication_change");
-    const med =
-      pendingRef?.label ||
-      (focus?.medicationName &&
-      !/^metformin$/i.test(focus.medicationName) &&
-      /pending|change|allegra|tylenol|zyrtec/i.test(lastAnswer)
-        ? focus.medicationName
-        : undefined) ||
-      referents.find((r) => r.kind === "medication")?.label;
-    if (
-      pendingRef ||
-      (med && /allegra|pending|not an active|waiting|medication.change|tylenol|zyrtec/i.test(med + lastAnswer))
-    ) {
-      const label = pendingRef?.label || med || "that medication change";
+    const selected = ordered.find(
+      (c) => c.candidate_id === focus?.selectedMedicationCandidate,
+    );
+    if (selected || focus?.medicationName) {
+      const label = selected
+        ? `${selected.medication}${selected.dose ? ` ${selected.dose}` : ""}`
+        : focus!.medicationName!;
       return {
         handled: true,
         confidence: "high",
         selectedReferent: label,
         modelPath: "deterministic",
-        answer: `${label} is a pending medication-change request for ${recipientDisplayName}, not an authorized administration instruction. Relay does not treat it as something already given.`,
+        answer: `${label} is a pending medication-plan change for ${recipientDisplayName}, not an authorized administration instruction. Relay does not treat a pending plan request as something already given. Check Care → medication administration for administration history.`,
       };
     }
     if (/not administered|corrected/i.test(lastAnswer)) {
@@ -686,12 +683,27 @@ export function persistTurn(
 
   const prev = getFocus(store, input.principalId, input.careRecipientId);
   const referents = extractReferentsFromAnswer(input.answer, input.userMessage);
+  // Rebuild ordered candidates from the answer lines (same ordering policy as display)
+  let orderedMedicationCandidates = prev?.orderedMedicationCandidates;
+  const ordered = buildOrderedMedicationCandidatesFromLines(
+    input.answer.split("\n"),
+    8,
+  );
+  if (ordered.length) {
+    orderedMedicationCandidates = ordered.map((c) => ({
+      display_index: c.display_index,
+      candidate_id: c.candidate_id,
+      medication: c.medication,
+      dose: c.dose,
+      reason: c.reason,
+      reporter: c.reporter,
+      report_time: c.report_time,
+    }));
+  }
   let medicationName =
     input.classified.entities.medicationHint ?? prev?.medicationName;
-  if (/\ballegra\b/i.test(input.answer + input.userMessage)) {
-    medicationName = "Allegra";
-  } else if (/\btylenol|acetaminophen\b/i.test(input.answer + input.userMessage)) {
-    medicationName = medicationName ?? "Tylenol";
+  if (orderedMedicationCandidates?.[0]) {
+    medicationName = orderedMedicationCandidates[0].medication;
   }
 
   const focus: RelayFocus = {
@@ -709,6 +721,8 @@ export function persistTurn(
     lastAnswerSummary: input.answer.slice(0, 1500),
     lastUserQuestion: input.userMessage.slice(0, 500),
     referents: referents.length ? referents : prev?.referents,
+    selectedMedicationCandidate: prev?.selectedMedicationCandidate,
+    orderedMedicationCandidates,
     updatedAt: new Date().toISOString(),
   };
   if (input.classified.intents.some((i) => i.startsWith("MEDICATION"))) {
