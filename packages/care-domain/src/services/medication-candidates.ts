@@ -56,6 +56,32 @@ export function buildOrderedMedicationCandidatesFromLines(
 
   for (const line of lines) {
     if (!line || isSmokeResidueLine(line)) continue;
+    // Accept numbered Relay list lines: "1. Cetirizine 10mg for allergies"
+    const numbered = line.match(
+      /^\s*\d+\.\s*([A-Za-z][A-Za-z-]{2,})(?:\s+(\d+\s*(?:mg|mcg|ml|units?)))?(?:\s+for\s+([^(\n]+))?/i,
+    );
+    if (numbered) {
+      const medication = numbered[1]!;
+      const dose = (numbered[2] || "").trim();
+      const reason = (numbered[3] || "pending review").trim();
+      if (/medication|none|active|authorized/i.test(medication)) continue;
+      const key = `${medication.toLowerCase()}|${dose.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      raw.push({
+        medication,
+        dose,
+        reason,
+        reporter:
+          line.match(/\(reported by\s+([^)]+)\)/i)?.[1] ||
+          line.match(/\(from\s+([^)]+)\)/i)?.[1] ||
+          "caregiver",
+        report_time: null,
+        review_state: "pending_plan_verification",
+        source_line: sanitizeHumanCareCopy(line),
+      });
+      continue;
+    }
     if (
       !/medication change|needs verification|waiting for medication-plan|reported dose|plan verification/i.test(
         line,

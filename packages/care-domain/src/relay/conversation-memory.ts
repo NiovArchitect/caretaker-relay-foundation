@@ -280,7 +280,7 @@ export function extractReferentsFromAnswer(
 
 export function isShortContextualFollowUp(question: string): boolean {
   const q = question.trim().toLowerCase().replace(/[?.!]+$/g, "");
-  if (q.length > 80) return false;
+  if (q.length > 100) return false;
   return (
     /^(at )?what time( was (that|it|the .{0,30})?)?$/.test(q) ||
     /^when (was|is|did) (that|it|this)/.test(q) ||
@@ -297,8 +297,9 @@ export function isShortContextualFollowUp(question: string): boolean {
     /^(why|which one|what about yesterday)$/.test(q) ||
     /^what time did that happen$/.test(q) ||
     /^who corrected it$/.test(q) ||
-    /^(the )?(first|second|third|1st|2nd|3rd)( one)?$/.test(q) ||
-    /^what about the (first|second|third)( one)?$/.test(q)
+    /^(the )?(first|second|third|last|1st|2nd|3rd)( one)?$/.test(q) ||
+    /^what about the (first|second|third|last)( one)?$/.test(q) ||
+    /^go back to [a-z]{3,}/.test(q)
   );
 }
 
@@ -333,8 +334,59 @@ export function resolveContextualFollowUp(
 
   const q = question.trim().toLowerCase();
 
+  // Rebuild ordered from last answer if focus missing (numbered list lines)
+  let ordered = focus?.orderedMedicationCandidates ?? [];
+  if (!ordered.length && lastAnswer) {
+    ordered = buildOrderedMedicationCandidatesFromLines(
+      lastAnswer.split("\n"),
+      8,
+    ).map((c) => ({
+      display_index: c.display_index,
+      candidate_id: c.candidate_id,
+      medication: c.medication,
+      dose: c.dose,
+      reason: c.reason,
+      reporter: c.reporter,
+      report_time: c.report_time,
+    }));
+  }
+
+  // Name selection: "go back to Cetirizine"
+  const namePick = q.match(/go back to ([a-z][a-z-]{2,})/i);
+  if (namePick && ordered.length) {
+    const name = namePick[1]!.toLowerCase();
+    const pick = ordered.find((c) => c.medication.toLowerCase().includes(name));
+    if (pick) {
+      saveFocus(
+        store,
+        {
+          ...(focus ?? {
+            conversationId: conversationIdFor(principalId, careRecipientId),
+            principalId,
+            careRecipientId,
+            updatedAt: new Date().toISOString(),
+          }),
+          selectedMedicationCandidate: pick.candidate_id,
+          medicationName: pick.medication,
+          orderedMedicationCandidates: ordered,
+          lastAnswerSummary: lastAnswer,
+          lastUserQuestion: lastQ,
+          referents,
+          updatedAt: new Date().toISOString(),
+        },
+        "Relay",
+      );
+      return {
+        handled: true,
+        confidence: "high",
+        selectedReferent: pick.medication,
+        modelPath: "deterministic",
+        answer: `Focusing again on #${pick.display_index}: ${pick.medication}${pick.dose ? ` ${pick.dose}` : ""}${pick.reason ? ` for ${pick.reason}` : ""}.`,
+      };
+    }
+  }
+
   // Ordinal selection from canonical ordered array only
-  const ordered = focus?.orderedMedicationCandidates ?? [];
   const ordMatch = q.match(
     /(?:the )?(first|1st|second|2nd|third|3rd|last)(?: one)?/,
   );
