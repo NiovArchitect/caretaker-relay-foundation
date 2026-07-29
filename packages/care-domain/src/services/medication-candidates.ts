@@ -90,8 +90,20 @@ export function buildOrderedMedicationCandidatesFromLines(
     if (seen.has(key)) continue;
     seen.add(key);
     const reason =
-      clean.match(/reason:\s*([^.\n]+)/i)?.[1]?.trim() ||
-      ( /allerg/i.test(clean) ? "allergies" : /fever/i.test(clean) ? "fever" : "pending review");
+      clean.match(/reason:\s*([^.\n\[]+)/i)?.[1]?.trim() ||
+      (/allerg/i.test(clean)
+        ? "allergies"
+        : /fever/i.test(clean)
+          ? "fever"
+          : /pain/i.test(clean)
+            ? "pain"
+            : "pending review");
+    const report_time =
+      clean.match(/reported_at:([^\s·]+)/i)?.[1] ||
+      clean.match(
+        /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/,
+      )?.[0] ||
+      null;
     raw.push({
       medication,
       dose,
@@ -100,13 +112,17 @@ export function buildOrderedMedicationCandidatesFromLines(
         clean.match(/\(from\s+([^)]+)\)/i)?.[1] ||
         clean.match(/\b(Marcus Carter|Maya Bennett|Daniel Kim)\b/)?.[1] ||
         "caregiver",
-      report_time: null,
+      report_time,
       review_state: "pending_plan_verification",
       source_line: clean,
     });
   }
 
+  // Deterministic order: report_time ASC (unknown last), then medication, then dose
   raw.sort((a, b) => {
+    const ta = a.report_time || "9999";
+    const tb = b.report_time || "9999";
+    if (ta !== tb) return ta.localeCompare(tb);
     const n = a.medication.localeCompare(b.medication);
     if (n !== 0) return n;
     return a.dose.localeCompare(b.dose);
@@ -115,7 +131,7 @@ export function buildOrderedMedicationCandidatesFromLines(
   return raw.slice(0, max).map((c, i) => ({
     ...c,
     display_index: i + 1,
-    candidate_id: `medcand-${c.medication.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${c.dose.replace(/\s+/g, "") || "na"}`,
+    candidate_id: `medcand-${c.medication.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${c.dose.replace(/\s+/g, "") || "na"}-${i + 1}`,
   }));
 }
 
@@ -125,20 +141,27 @@ export function buildOrderedMedicationCandidates(
   max = 8,
 ): OrderedMedicationCandidate[] {
   const lines: string[] = [];
+  // Prefer full event statements (with times) so three distinct candidates survive
+  for (const e of (state.events ?? []).slice().reverse()) {
+    const statement = str(
+      (e as { statement?: string }).statement ??
+        (e as { title?: string }).title,
+    );
+    const when = str(
+      (e as { eventAt?: string }).eventAt ??
+        (e as { occurredAt?: string }).occurredAt ??
+        (e as { reportAt?: string }).reportAt,
+    );
+    if (statement) {
+      lines.push(when ? `${statement} · reported_at:${when}` : statement);
+    }
+  }
   if (proj?.ACTIVE_HANDOFF) {
     lines.push(...(proj.ACTIVE_HANDOFF.stillNeedsAttention ?? []));
     lines.push(...(proj.ACTIVE_HANDOFF.whatChanged ?? []));
   }
   for (const r of state.openSafetyReviews ?? []) {
     lines.push(str((r as { reason?: string }).reason ?? r));
-  }
-  for (const e of (state.events ?? []).slice(-40)) {
-    lines.push(
-      str(
-        (e as { statement?: string }).statement ??
-          (e as { title?: string }).title,
-      ),
-    );
   }
   for (const u of proj?.OPEN_UNCERTAINTIES ?? []) lines.push(str(u));
   for (const c of proj?.RECENT_CHANGES ?? []) lines.push(str(c));

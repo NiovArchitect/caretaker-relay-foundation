@@ -147,6 +147,34 @@ function authorityFor(
   return "membership";
 }
 
+/**
+ * Fingerprint for medication-plan change statements so distinct meds never share
+ * a dedupe key (even when a client reuses a coarse idempotency prefix).
+ */
+export function medicationChangeFingerprint(statement: string): string | null {
+  const s = statement.trim().toLowerCase().replace(/\s+/g, " ");
+  if (
+    !/medication change|needs verification|waiting for medication-plan|reported dose|plan verification/i.test(
+      s,
+    )
+  ) {
+    return null;
+  }
+  const name =
+    s.match(
+      /\b(cetirizine|acetaminophen|naproxen|tylenol|zyrtec|allegra|claritin|ibuprofen|benadryl|metformin|[a-z]{4,})\b/,
+    )?.[1] || "med";
+  // Prefer name after "verification:" if present
+  const after =
+    s.match(
+      /(?:medication change needs verification|needs verification)[:\s]+([a-z][a-z-]{2,})/i,
+    )?.[1] || name;
+  const dose = s.match(/(\d+\s*(?:mg|mcg|ml|units?))/i)?.[1]?.replace(/\s+/g, "") || "nodose";
+  const reason =
+    s.match(/reason[:\s]+([a-z][a-z\s-]{2,40})/i)?.[1]?.trim().slice(0, 32) || "noreason";
+  return `${after}|${dose}|${reason}`;
+}
+
 export function buildDedupeKey(input: {
   careRecipientId: string;
   type: CareEventType;
@@ -155,8 +183,20 @@ export function buildDedupeKey(input: {
   statement: string;
   idempotencyKey?: string;
 }): string {
+  const medFp = medicationChangeFingerprint(input.statement);
   if (input.idempotencyKey) {
-    return `idem:${input.careRecipientId}:${input.idempotencyKey}`;
+    // Never let a shared client key collapse distinct medication candidates
+    return medFp
+      ? `idem:${input.careRecipientId}:${input.idempotencyKey}:med:${medFp}`
+      : `idem:${input.careRecipientId}:${input.idempotencyKey}`;
+  }
+  if (medFp) {
+    return [
+      input.careRecipientId,
+      "medication_plan_change",
+      medFp,
+      input.actorPrincipalId,
+    ].join("|");
   }
   const norm = input.statement.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 120);
   return [

@@ -26,6 +26,7 @@ import {
   str as utilStr,
 } from "./util.js";
 import {
+  buildOrderedMedicationCandidates,
   buildOrderedMedicationCandidatesFromLines,
   formatOrderedMedicationList,
 } from "../services/medication-candidates.js";
@@ -113,6 +114,7 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
     principalName: input.principalName,
     question: input.question,
     personNameMap: input.personNameMap,
+    state: input.state,
   });
 
   return {
@@ -211,9 +213,11 @@ function composeAnswer(ctx: {
   principalName: string;
   question?: string;
   personNameMap?: Record<string, string>;
+  state?: CareStateBag;
 }): { answer: string; sourceRefs: string[]; projectionsUsed: string[] } {
   const { classified, persona, proj, recipientName } = ctx;
   const personNameMap = ctx.personNameMap;
+  const state = ctx.state ?? {};
   const question = ctx.question ?? "";
   const intents = exclusiveAnswerPlan(classified, question);
   const used = new Set<string>();
@@ -818,8 +822,9 @@ function composeAnswer(ctx: {
           );
         }
       } else {
-        // Canonical ordered candidates — same array ordinal follow-ups will use
-        const ordered = buildOrderedMedicationCandidatesFromLines(
+        // Canonical ordered candidates from full state.events + projections
+        const ordered = buildOrderedMedicationCandidates(state, proj, 8);
+        const fallback = buildOrderedMedicationCandidatesFromLines(
           [
             ...cleanHandoffChanged,
             ...cleanHandoffOpen,
@@ -828,8 +833,9 @@ function composeAnswer(ctx: {
           ],
           8,
         );
-        if (ordered.length) {
-          parts.push(formatOrderedMedicationList(ordered, recipientName));
+        const finalOrdered = ordered.length >= fallback.length ? ordered : fallback;
+        if (finalOrdered.length) {
+          parts.push(formatOrderedMedicationList(finalOrdered, recipientName));
         } else if (pendingChange) {
           parts.push(
             `One medication change is waiting for review: ${pendingChange}. It is not active plan instruction until authorized.`,
@@ -842,7 +848,7 @@ function composeAnswer(ctx: {
             "I only report what is on the care plan. I do not invent medication changes.",
           );
         }
-        if (primaryMed && ordered.length) {
+        if (primaryMed && finalOrdered.length) {
           parts.push(
             `Active authorized medication remains ${str(primaryMed.name)} ${str(primaryMed.dose)}.`,
           );
