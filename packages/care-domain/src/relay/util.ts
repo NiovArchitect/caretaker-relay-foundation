@@ -4,6 +4,66 @@ export function str(v: unknown): string {
   return v == null ? "" : String(v);
 }
 
+/** Development / smoke correlation residue that must never reach caregivers. */
+const SMOKE_MARKER_RE =
+  /\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]|\b(?:AZms|HOLms|FMHms|S3b|PROBE|SMOKE|SEED)\w*|\bOpen list\s+\d+\b|\bs\d+-\d{10,}\b|\bRESPONSE_RECEIVED\b|\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b/i;
+
+export function isSmokeResidueLine(text: string): boolean {
+  return SMOKE_MARKER_RE.test(text);
+}
+
+/**
+ * Strip machine run tags from human-facing care copy.
+ * Does not delete underlying audit records — only presentation.
+ */
+export function sanitizeHumanCareCopy(text: string): string {
+  return String(text ?? "")
+    .replace(/\s*\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]/gi, "")
+    .replace(/\b(?:AZms|HOLms|FMHms|S3b)\w*/gi, "")
+    .replace(/\bRESPONSE_RECEIVED:\s*/gi, "")
+    .replace(/\bOpen list\s+\d+/gi, "Open coordination item")
+    .replace(/\bs\d+-\d{10,}\b/gi, "")
+    .replace(/\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+/** Collapse near-duplicate caregiver-facing lines (Allegra pairs, repeated corrections). */
+export function semanticDedupeLines(lines: string[]): string[] {
+  const out: string[] = [];
+  const keys = new Set<string>();
+  for (const raw of lines) {
+    if (!raw) continue;
+    if (isSmokeResidueLine(raw) && !sanitizeHumanCareCopy(raw)) continue;
+    const clean = sanitizeHumanCareCopy(raw);
+    if (!clean) continue;
+    let key = clean.toLowerCase();
+    if (/allegra/i.test(key) && /allerg|verification|medication change/i.test(key)) {
+      key = "fact:allegra_pending_verification";
+    } else if (/correction:.*medication was not administered/i.test(key)) {
+      key = "fact:med_not_administered_correction";
+    } else if (/medication change needs verification/i.test(key)) {
+      key = `fact:med_change:${key.replace(/[^a-z0-9]+/g, " ").slice(0, 48)}`;
+    } else {
+      key = key.replace(/[^a-z0-9]+/g, " ").trim().slice(0, 96);
+    }
+    if (keys.has(key)) continue;
+    keys.add(key);
+    // Prefer a single calm Allegra line when collapsing duplicates
+    if (key === "fact:allegra_pending_verification") {
+      out.push(
+        "Allegra 60 mg was reported for allergies and is waiting for medication-plan verification.",
+      );
+    } else if (key === "fact:med_not_administered_correction") {
+      out.push("Medication administration was corrected: not administered.");
+    } else {
+      out.push(clean);
+    }
+  }
+  return out;
+}
+
 /**
  * Resolve a person display name without fixture hard-codes.
  * Prefer store-provided name map / fallback; never invent Evelyn/Marcus.

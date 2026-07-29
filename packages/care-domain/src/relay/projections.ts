@@ -5,8 +5,11 @@
 
 import {
   clusterObservations,
+  isSmokeResidueLine,
   plainDiscrepancyMessage,
   resolvePersonName,
+  sanitizeHumanCareCopy,
+  semanticDedupeLines,
   str,
 } from "./util.js";
 
@@ -171,19 +174,38 @@ export function buildProjections(input: {
       .join(" · ");
   });
 
-  const RECENT_CHANGES = events
-    .slice()
-    .reverse()
-    .slice(0, 8)
-    .map((e) => {
-      const who =
-        e.source && typeof e.source === "object"
-          ? str((e.source as { actorName?: string }).actorName)
-          : "";
-      return `${str(e.statement ?? e.title)}${who ? ` (from ${who})` : ""}`;
-    });
+  const RECENT_CHANGES = semanticDedupeLines(
+    events
+      .slice()
+      .reverse()
+      .filter((e) => {
+        const statement = str(e.statement ?? e.title);
+        // Keep audit events in store; exclude pure smoke residue from primary projection
+        if (isSmokeResidueLine(statement) && /\[(?:AZ|HOL|FMH)/i.test(statement)) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, 16)
+      .map((e) => {
+        const who =
+          e.source && typeof e.source === "object"
+            ? str((e.source as { actorName?: string }).actorName)
+            : "";
+        const line = `${sanitizeHumanCareCopy(str(e.statement ?? e.title))}${
+          who ? ` (from ${who})` : ""
+        }`;
+        return line;
+      })
+      .filter(Boolean),
+  ).slice(0, 8);
 
-  const clusters = clusterObservations(obs as Array<Record<string, unknown>>);
+  const clusters = clusterObservations(
+    (obs as Array<Record<string, unknown>>).filter((o) => {
+      const summary = str(o.summary ?? "");
+      return !isSmokeResidueLine(summary);
+    }),
+  );
 
   let NEXT_APPOINTMENT: Record<string, unknown> | null = null;
   if (apts.length) {
@@ -311,8 +333,10 @@ export function buildProjections(input: {
     RECENT_OBSERVATION_CLUSTERS: clusters,
     ACTIVE_HANDOFF: input.handoff
       ? {
-          whatChanged: input.handoff.whatChanged,
-          stillNeedsAttention: input.handoff.stillNeedsAttention,
+          whatChanged: semanticDedupeLines(input.handoff.whatChanged ?? []),
+          stillNeedsAttention: semanticDedupeLines(
+            input.handoff.stillNeedsAttention ?? [],
+          ),
           toName: resolvePersonName(
             input.handoff.toPersonId,
             undefined,

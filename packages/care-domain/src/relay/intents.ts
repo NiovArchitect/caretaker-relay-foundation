@@ -46,11 +46,26 @@ export type RelayIntent =
   | "CARE_COVERAGE"
   | "TRANSPORTATION"
   | "UNKNOWN_QUESTION"
+  | "META_CONVERSATION"
   | "OPEN_LOOP_STATUS"
   | "WAITING_ON"
   | "VERIFICATION_STATUS"
   | "STATUS_SYNTHESIS"
+  | "PREVIOUS_SHIFT"
   | "CARE_UPDATE"; // tell path, not pure Q
+
+/** Conversational / product-meta — never a care update. */
+export function isMetaConversationQuestion(q: string): boolean {
+  const s = q.toLowerCase().trim();
+  return (
+    /\b(same response|repeat(ing|ed)? yourself|why did you|why are you|can you (make|be) (that )?shorter|what did you understand|are you (just )?repeating|am i getting|did you just|stop repeating|too long|shorter answer)\b/.test(
+      s,
+    ) ||
+    /^(am|are|was|were|why|how come)\b.*\b(same|repeat|response|answer|that)\b/.test(
+      s,
+    )
+  );
+}
 
 /** Permission-to-administer / redose questions — safety-critical, not history. */
 export function isMedicationRedoseSafetyQuestion(q: string): boolean {
@@ -317,33 +332,48 @@ export function classifyIntent(
     references.push("yesterday");
   if (/\bbefore\b/.test(q)) references.push("before");
 
-  // High-value synthesis: "How is {name} / How is she / How is they"
-  if (
-    /how('s| is) (she|he|mom|dad|they|everything|my (mom|dad|client|patient))\b/.test(
-      q,
-    ) ||
-    /how('s| is) (she|he) (doing|today|feeling|now)/.test(q) ||
-    /how are they|how is everything|what's (the )?latest (on|with)/.test(q) ||
-    /^how is\b/.test(q) ||
-    /\bhow (is|did|was) [a-z]{2,20}\b/.test(q)
-  ) {
-    intents.push("STATUS_SYNTHESIS");
-    intents.push("CHANGE_SINCE");
+  // Meta / conversational about Relay — never care-update
+  if (isMetaConversationQuestion(q)) {
+    intents.push("META_CONVERSATION");
   }
 
-  // Mood / feeling / previous shift wellbeing
+  // Previous shift — exclusive temporal scope (not current-status dump)
   if (
-    /\bmood\b|\bfeeling\b|\bfeelings\b|\bhow (is|was) (she|he|evelyn|robert) feel/.test(
+    /previous shift|last shift|during (the )?last shift|end of (the )?shift|from the last shift|on the last shift/.test(
+      q,
+    )
+  ) {
+    intents.push("PREVIOUS_SHIFT");
+    intents.push("HANDOFF_REVIEW");
+    intents.push("RECENT_ACTIVITY");
+  }
+
+  // High-value synthesis: "How is {name} today" — current day ONLY (no auto CHANGE_SINCE)
+  if (
+    !intents.includes("PREVIOUS_SHIFT") &&
+    !intents.includes("META_CONVERSATION") &&
+    (/how('s| is) (she|he|mom|dad|they|everything|my (mom|dad|client|patient))\b/.test(
       q,
     ) ||
-    /previous shift|last shift|during (the )?shift|end of shift/.test(q)
+      /how('s| is) (she|he) (doing|today|feeling|now)/.test(q) ||
+      /how are they|how is everything|what's (the )?latest (on|with)/.test(q) ||
+      /^how is\b/.test(q) ||
+      (/\bhow (is|did|was) [a-z]{2,20}\b/.test(q) &&
+        !/previous shift|last shift|yesterday/.test(q)))
+  ) {
+    intents.push("STATUS_SYNTHESIS");
+    // Do NOT also push CHANGE_SINCE — that concatenates a second canned block.
+  }
+
+  // Mood / feeling (without previous-shift double-stack)
+  if (
+    !intents.includes("PREVIOUS_SHIFT") &&
+    /\bmood\b|\bfeeling\b|\bfeelings\b|\bhow (is|was) (she|he|evelyn|robert) feel/.test(
+      q,
+    )
   ) {
     intents.push("OBSERVATION_HISTORY");
-    intents.push("STATUS_SYNTHESIS");
-    if (/previous shift|last shift|yesterday|while /.test(q)) {
-      intents.push("HANDOFF_REVIEW");
-      intents.push("RECENT_ACTIVITY");
-    }
+    if (!intents.includes("STATUS_SYNTHESIS")) intents.push("STATUS_SYNTHESIS");
   }
 
   // Caregiver / caretaker identity (who helps — not who is the recipient)
@@ -732,14 +762,19 @@ export function classifyIntent(
   else if (/this week|last week/.test(q)) timeHint = "this_week";
   else if (/last visit|since my last/.test(q)) timeHint = "last_visit";
 
-  // Primary priority: safety > verification > open loops > mobility > first match
+  // Primary priority: meta & temporal scopes beat generic status dump
   const priority: RelayIntent[] = [
+    "META_CONVERSATION",
     "MEDICATION_REDOSE_SAFETY",
-    "STATUS_SYNTHESIS",
+    "PREVIOUS_SHIFT",
+    "HANDOFF_REVIEW",
     "CARE_COVERAGE",
-    "VERIFICATION_STATUS",
+    "CARE_TEAM",
     "WAITING_ON",
     "OPEN_LOOP_STATUS",
+    "TASKS_REMAINING",
+    "STATUS_SYNTHESIS",
+    "VERIFICATION_STATUS",
     "RECIPIENT_MOBILITY",
     "APPOINTMENT_RESCHEDULE",
   ];

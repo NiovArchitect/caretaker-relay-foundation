@@ -21,6 +21,8 @@ import {
   formatCareDateTime,
   plainDiscrepancyMessage,
   resolvePersonName,
+  sanitizeHumanCareCopy,
+  semanticDedupeLines,
   str as utilStr,
 } from "./util.js";
 
@@ -123,6 +125,51 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
   };
 }
 
+/**
+ * One primary answer strategy — never concatenate every matched intent template.
+ */
+function exclusiveAnswerPlan(
+  classified: ClassifiedTurn,
+  question: string,
+): RelayIntent[] {
+  const q = question.toLowerCase();
+  const primary = classified.primary;
+  if (primary === "META_CONVERSATION" || classified.intents.includes("META_CONVERSATION")) {
+    return ["META_CONVERSATION"];
+  }
+  if (
+    primary === "PREVIOUS_SHIFT" ||
+    classified.intents.includes("PREVIOUS_SHIFT") ||
+    /previous shift|last shift/.test(q)
+  ) {
+    return ["PREVIOUS_SHIFT", "HANDOFF_REVIEW"];
+  }
+  if (primary === "STATUS_SYNTHESIS") {
+    return ["STATUS_SYNTHESIS"];
+  }
+  if (
+    primary === "CHANGE_SINCE" ||
+    primary === "RECENT_ACTIVITY" ||
+    primary === "TREND"
+  ) {
+    return [primary];
+  }
+  if (
+    primary === "WAITING_ON" ||
+    primary === "OPEN_LOOP_STATUS" ||
+    primary === "TASKS_REMAINING"
+  ) {
+    return ["TASKS_REMAINING", "OPEN_LOOP_STATUS"];
+  }
+  if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
+    return ["CARE_TEAM", "CARE_COVERAGE"];
+  }
+  if (primary.startsWith("MEDICATION_")) return [primary];
+  if (primary.startsWith("APPOINTMENT_")) return [primary];
+  // Default: primary only (blocks multi-template walls)
+  return [primary];
+}
+
 function composeAnswer(ctx: {
   classified: ClassifiedTurn;
   persona: CaregiverPersona;
@@ -134,11 +181,74 @@ function composeAnswer(ctx: {
 }): { answer: string; sourceRefs: string[]; projectionsUsed: string[] } {
   const { classified, persona, proj, recipientName } = ctx;
   const personNameMap = ctx.personNameMap;
-  const intents = classified.intents;
   const question = ctx.question ?? "";
+  const intents = exclusiveAnswerPlan(classified, question);
   const used = new Set<string>();
   const refs: string[] = [];
   const parts: string[] = [];
+
+  // Sanitize projection text once for human blocks
+  const cleanChanges = semanticDedupeLines(proj.RECENT_CHANGES ?? []);
+  const cleanHandoffChanged = semanticDedupeLines(
+    proj.ACTIVE_HANDOFF?.whatChanged ?? [],
+  );
+  const cleanHandoffOpen = semanticDedupeLines(
+    proj.ACTIVE_HANDOFF?.stillNeedsAttention ?? [],
+  );
+  const cleanOpen = semanticDedupeLines(proj.OPEN_UNCERTAINTIES ?? []).filter(
+    (l) => !/RESPONSE_RECEIVED|Open list\s+\d+|s\d+-\d{10,}/i.test(l),
+  );
+
+  if (intents.includes("META_CONVERSATION")) {
+    used.add("META_CONVERSATION");
+    parts.push(
+      "You're asking about how I answer — not about a new care event.",
+    );
+    parts.push(
+      "I try to answer each question with a different focus: today's status, a prior shift, medications, open work, or the care team. If two answers looked the same, that was a product defect in how I planned the reply — not a second care update.",
+    );
+    parts.push(
+      "I did not file a care report from this question. Ask something like “How is she today?” or “What medication does she take?” for care facts.",
+    );
+    return {
+      answer: parts.join("\n\n"),
+      sourceRefs: ["meta_conversation"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  if (intents.includes("PREVIOUS_SHIFT")) {
+    used.add("ACTIVE_HANDOFF");
+    used.add("RECENT_CHANGES");
+    parts.push(`From the previous shift for ${recipientName}:`);
+    if (cleanHandoffChanged.length) {
+      parts.push(
+        `What was handed off:\n` +
+          cleanHandoffChanged.slice(0, 6).map((w) => `• ${w}`).join("\n"),
+      );
+    } else if (cleanChanges.length) {
+      parts.push(
+        `Shift notes on file:\n` +
+          cleanChanges.slice(0, 5).map((c) => `• ${c}`).join("\n"),
+      );
+    } else {
+      parts.push("No completed previous-shift handoff is on file yet.");
+    }
+    if (cleanHandoffOpen.length) {
+      parts.push(
+        `Left unfinished after that shift:\n` +
+          cleanHandoffOpen.slice(0, 4).map((w) => `• ${w}`).join("\n"),
+      );
+    }
+    parts.push(
+      "This is prior-shift continuity only — not today's full medication plan or a second “what changed” dump.",
+    );
+    return {
+      answer: sanitizeHumanCareCopy(parts.join("\n\n")),
+      sourceRefs: ["previous_shift", "handoff"],
+      projectionsUsed: [...used],
+    };
+  }
 
   const medName =
     classified.entities.medicationHint ||
@@ -543,19 +653,19 @@ function composeAnswer(ctx: {
       parts.push(`Here's a plain-language picture of ${recipientName} right now:`);
       // Latest shift handoff is first-class current continuity — surface before
       // long-lived observation clusters so caregivers and judges see what just changed.
-      if (proj.ACTIVE_HANDOFF?.whatChanged?.length) {
+      if (cleanHandoffChanged.length) {
         parts.push(
           `From the latest caregiver handoff:\n` +
-            proj.ACTIVE_HANDOFF.whatChanged
-              .slice(0, 6)
+            cleanHandoffChanged
+              .slice(0, 4)
               .map((w) => `• ${w}`)
               .join("\n"),
         );
-        if (proj.ACTIVE_HANDOFF.stillNeedsAttention?.length) {
+        if (cleanHandoffOpen.length) {
           parts.push(
             `Still unfinished after that handoff:\n` +
-              proj.ACTIVE_HANDOFF.stillNeedsAttention
-                .slice(0, 4)
+              cleanHandoffOpen
+                .slice(0, 3)
                 .map((w) => `• ${w}`)
                 .join("\n"),
           );
@@ -637,17 +747,17 @@ function composeAnswer(ctx: {
       );
     } else {
       parts.push(`Here's what changed for ${recipientName}:`);
-      if (proj.ACTIVE_HANDOFF?.whatChanged?.length) {
+      if (cleanHandoffChanged.length) {
         parts.push(
           `Latest handoff:\n` +
-            proj.ACTIVE_HANDOFF.whatChanged
-              .slice(0, 6)
+            cleanHandoffChanged
+              .slice(0, 4)
               .map((w) => `• ${w}`)
               .join("\n"),
         );
       }
       parts.push(
-        proj.RECENT_CHANGES.slice(0, 5).map((c) => `• ${c}`).join("\n") ||
+        cleanChanges.slice(0, 5).map((c) => `• ${c}`).join("\n") ||
           "• Nothing new is recorded yet",
       );
       if (intents.includes("TREND") && proj.RECENT_OBSERVATION_CLUSTERS[0]) {
@@ -1055,13 +1165,15 @@ function composeAnswer(ctx: {
     used.add("OPEN_UNCERTAINTIES");
     used.add("NEXT_24H_TASKS");
     used.add("ACTIVE_HANDOFF");
-    const openLines = [
-      ...proj.OPEN_UNCERTAINTIES.map((u) => `Needs checking: ${u}`),
-      ...(proj.ACTIVE_HANDOFF?.stillNeedsAttention ?? []).map(
-        (a) => `Handoff still needs attention: ${a}`,
-      ),
-      ...proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `Upcoming: ${t}`),
-    ];
+    const openLines = semanticDedupeLines([
+      ...cleanOpen.map((u) => `Needs checking: ${u}`),
+      ...cleanHandoffOpen.map((a) => `Handoff still needs attention: ${a}`),
+      ...proj.NEXT_24H_TASKS.slice(0, 5)
+        .map((t) => sanitizeHumanCareCopy(t))
+        .filter((t) => t && !/RESPONSE_RECEIVED|Open list|s\d+-\d{10,}/i.test(t))
+        .slice(0, 3)
+        .map((t) => `Upcoming: ${t}`),
+    ]);
     if (openLines.length) {
       parts.push(
         `Here's what still looks open for ${recipientName}:\n` +
@@ -1146,7 +1258,7 @@ function composeAnswer(ctx: {
       : "");
 
   return {
-    answer: answer.trim(),
+    answer: sanitizeHumanCareCopy(answer.trim()),
     sourceRefs: refs.length ? refs : ["care_projections"],
     projectionsUsed: [...used],
   };
