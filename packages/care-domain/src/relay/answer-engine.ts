@@ -170,15 +170,16 @@ function exclusiveAnswerPlan(
   ) {
     return ["CHANGES_SINCE_YESTERDAY"];
   }
-  // Operating plan ("what am I doing today / on my shift") must not collapse
-  // to CHANGES_TODAY alone — that path can empty-out and yield no-match.
+  // Operating plan ("what am I doing today / on my shift") must not include
+  // CHANGES_TODAY: that block early-returns and never reaches TASKS_NOW.
+  // Keep only task/open-loop intents so caregivers get shift work, not a dump of updates.
   if (
     classified.intents.includes("TASKS_NOW") ||
-    /\bwhat am i (doing|handling|working on)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift today\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b/.test(
+    /\bwhat am i (doing|handling|working on)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift today\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b|\bwhat is on my shift\b|\bon my shift today\b/.test(
       q,
     )
   ) {
-    return ["TASKS_NOW", "TASKS_REMAINING", "CHANGES_TODAY"];
+    return ["TASKS_NOW", "TASKS_REMAINING"];
   }
   if (
     primary === "CHANGES_TODAY" ||
@@ -218,11 +219,13 @@ function exclusiveAnswerPlan(
   ) {
     return ["PREVIOUS_SHIFT"];
   }
-  // Next coverage must use timeline, not generic CARE_COVERAGE seed dump
+  // Next coverage must use timeline, not generic CARE_COVERAGE seed dump.
+  // Exclude handoff/message actions ("tell the next caregiver …").
   if (
     /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
       q,
-    )
+    ) &&
+    !/\b(tell|message|notify|ask|send|report|left|refused|unfinished)\b/i.test(q)
   ) {
     return ["NEXT_COVERAGE" as RelayIntent];
   }
@@ -385,11 +388,13 @@ function composeAnswer(ctx: {
     };
   }
 
+  // Coverage query only — not "tell the next caregiver …" handoff/message actions
   if (
-    intents.includes("NEXT_COVERAGE" as RelayIntent) ||
-    /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
-      question,
-    )
+    (intents.includes("NEXT_COVERAGE" as RelayIntent) ||
+      /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
+        question,
+      )) &&
+    !/\b(tell|message|notify|ask|send|report|left|refused|unfinished)\b/i.test(question)
   ) {
     used.add("CARE_COVERAGE_TIMELINE");
     const tl = (
