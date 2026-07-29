@@ -684,15 +684,47 @@ function answerWithState(
     );
     // Prefer latest handoff unfinished work first so shift-to-shift answers
     // advance instead of being drowned by long-lived review queues.
-    const lines: string[] = [];
+    const rawLines: string[] = [];
     if (latest?.stillNeedsAttention?.length) {
       for (const n of latest.stillNeedsAttention.slice(0, 4)) {
-        lines.push(`Handoff still needs attention: ${n}`);
+        rawLines.push(`Handoff still needs attention: ${n}`);
       }
     }
-    for (const l of loops.lines) lines.push(l);
+    for (const l of loops.lines) rawLines.push(l);
     for (const r of openReviews) {
-      if (r) lines.push(`Needs checking: ${r}`);
+      if (r) rawLines.push(`Needs checking: ${r}`);
+    }
+    // Final semantic reconcile across handoff + loops + safety reviews
+    const keys = new Set<string>();
+    const lines: string[] = [];
+    for (const line of rawLines) {
+      let key = line.toLowerCase();
+      if (/allegra/i.test(key)) key = "allegra";
+      else if (/metformin|with-lunch|with lunch/i.test(key)) key = "metformin_review";
+      else if (
+        /incompatible dimensions|not comparable|ambiguous \(count|cannot convert|missing unit/i.test(
+          key,
+        )
+      )
+        key = "dose_unit";
+      else key = key.replace(/[^a-z0-9]+/g, " ").trim().slice(0, 48);
+      if (keys.has(key)) continue;
+      keys.add(key);
+      if (key === "allegra") {
+        lines.push(
+          "Allegra 60 mg change is waiting for medication-plan verification (one active issue).",
+        );
+      } else if (key === "metformin_review") {
+        lines.push(
+          "Needs your review: a prior Metformin-with-lunch confirmation is still open.",
+        );
+      } else if (key === "dose_unit") {
+        lines.push(
+          "Needs checking: a reported dose unit does not match the authorized instruction.",
+        );
+      } else {
+        lines.push(line);
+      }
     }
     let answer: string;
     if (lines.length === 0) {

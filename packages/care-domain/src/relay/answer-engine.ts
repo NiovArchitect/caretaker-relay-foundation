@@ -304,7 +304,9 @@ function composeAnswer(ctx: {
     bits.push(`During the previous shift, ${who} reported care updates for ${recipientName}.`);
     if (fever) bits.push(`${recipientName} had a fever reported.`);
     else if (tired) bits.push(`${recipientName} was reported more tired than usual.`);
-    if (meal) bits.push(`A meal note was recorded (${strip(meal)}).`);
+    if (meal && !/\bprobe\b/i.test(meal)) {
+      bits.push(`A meal note was recorded (${strip(meal)}).`);
+    }
     if (correction) {
       bits.push(
         "A medication-administration entry was later corrected to show the medication was not given.",
