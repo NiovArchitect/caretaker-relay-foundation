@@ -15,6 +15,9 @@ export type RelayIntent =
   | "APPOINTMENT_LOGISTICS"
   | "APPOINTMENT_PREPARATION"
   | "CHANGE_SINCE"
+  | "YESTERDAY_WELLBEING"
+  | "CHANGES_TODAY"
+  | "CHANGES_SINCE_YESTERDAY"
   | "RECENT_ACTIVITY"
   | "TREND"
   | "OBSERVATION_HISTORY"
@@ -423,23 +426,58 @@ export function classifyIntent(
     intents.push("CARE_COVERAGE");
   }
 
-  // Temporal: anything happen yesterday / last night / overnight / this week
+  // Split temporal plans — do not collapse all into CHANGE_SINCE
   if (
-    /did anything happen|what happened|anything (new|happen)|yesterday|last night|this morning|overnight|this week|regarding (evelyn|robert|her|him)|between dinner and bedtime|since i was last|before i go see|different with her today|worse since|quick version|should i be worried|should i know before/.test(
-      q,
-    )
+    !intents.includes("PREVIOUS_SHIFT") &&
+    !intents.includes("META_CONVERSATION")
   ) {
-    if (/worried|safety|fall|unsafe/.test(q)) intents.push("SAFETY_CONCERN");
-    if (/overnight|last night|night caregiver|night report/.test(q)) {
-      intents.push("STATUS_SYNTHESIS");
-      intents.push("HANDOFF_REVIEW");
+    const wellbeingQ =
+      /how (did|was|is) .{0,40}(feel|feeling|mood|yesterday)|was she (tired|dizzy|ok|okay|feverish)|what was her (mood|energy)|concerning happen yesterday|how was .{0,20} yesterday/.test(
+        q,
+      ) ||
+      (/\byesterday\b/.test(q) &&
+        /\b(feel|feeling|mood|tired|fatigue|fever|dizz|pain|sleep|ate|eat|appetite|mobility|fall)\b/.test(
+          q,
+        ));
+    const sinceYesterday =
+      /since yesterday|better than yesterday|different from yesterday|resolved since yesterday|remains from yesterday|compared to yesterday/.test(
+        q,
+      );
+    const todayChanges =
+      /what changed today|what happened today|what is new today|anything (new|corrected|completed) today|was anything corrected today|what was completed today/.test(
+        q,
+      ) ||
+      (/today/.test(q) &&
+        /what (changed|happened|is new)|anything new|corrected|completed/.test(q) &&
+        !/how is|right now|urgent/.test(q));
+
+    if (wellbeingQ && !sinceYesterday) {
+      intents.push("YESTERDAY_WELLBEING");
+      intents.push("OBSERVATION_HISTORY");
+    } else if (sinceYesterday) {
+      intents.push("CHANGES_SINCE_YESTERDAY");
+    } else if (todayChanges) {
+      intents.push("CHANGES_TODAY");
+    } else if (
+      /did anything happen|what happened|anything (new|happen)|yesterday|last night|this morning|overnight|this week|between dinner and bedtime|since i was last|worse since|should i be worried/.test(
+        q,
+      )
+    ) {
+      if (/worried|safety|fall|unsafe/.test(q)) intents.push("SAFETY_CONCERN");
+      if (/overnight|last night/.test(q)) {
+        intents.push("STATUS_SYNTHESIS");
+        intents.push("HANDOFF_REVIEW");
+      }
+      if (/\byesterday\b/.test(q) && !todayChanges) {
+        intents.push("YESTERDAY_WELLBEING");
+      } else if (/this week|worse|more tired|trend|compared/.test(q)) {
+        intents.push("TREND");
+        intents.push("CHANGE_SINCE");
+      } else if (!intents.includes("CHANGE_SINCE") && !intents.includes("YESTERDAY_WELLBEING")) {
+        intents.push("CHANGE_SINCE");
+      }
+      if (!intents.includes("RECENT_ACTIVITY")) intents.push("RECENT_ACTIVITY");
     }
-    if (/this week|worse|more tired|trend|compared|than (usual|normal)/.test(q))
-      intents.push("TREND");
-    if (!intents.includes("CHANGE_SINCE")) intents.push("CHANGE_SINCE");
-    if (!intents.includes("RECENT_ACTIVITY")) intents.push("RECENT_ACTIVITY");
-    if (/hand off|handoff to the next|leave for the next/.test(q))
-      intents.push("HANDOFF_PREP");
   }
 
   // Meals / hydration / swallowing
@@ -698,17 +736,28 @@ export function classifyIntent(
   if (
     /what changed|since yesterday|since (my )?last|what happened|going on|while daniel|while maya|during my visit|this week/.test(
       q,
-    )
+    ) &&
+    !intents.includes("YESTERDAY_WELLBEING") &&
+    !intents.includes("CHANGES_TODAY") &&
+    !intents.includes("CHANGES_SINCE_YESTERDAY") &&
+    !intents.includes("PREVIOUS_SHIFT")
   ) {
-    if (/week|more tired|trend|worse|better|compared/.test(q)) intents.push("TREND");
-    else if (/while |during (my )?visit|while daniel|while maya/.test(q)) {
+    if (/since yesterday|better than yesterday|different from yesterday/.test(q)) {
+      intents.push("CHANGES_SINCE_YESTERDAY");
+    } else if (/what changed today|happened today|new today/.test(q)) {
+      intents.push("CHANGES_TODAY");
+    } else if (/week|more tired|trend|worse|better|compared/.test(q)) {
+      intents.push("TREND");
+      intents.push("CHANGE_SINCE");
+    } else if (/while |during (my )?visit|while daniel|while maya/.test(q)) {
       intents.push("RECENT_ACTIVITY");
+    } else if (/\byesterday\b/.test(q)) {
+      intents.push("YESTERDAY_WELLBEING");
     } else {
       intents.push("CHANGE_SINCE");
     }
-    // DSP: "since my last visit" is change_since (state delta), not only activity
     if (/since (my )?last visit/.test(q) && !intents.includes("CHANGE_SINCE")) {
-      intents.push("CHANGE_SINCE");
+      intents.push("CHANGES_SINCE_YESTERDAY");
     }
   }
 
@@ -802,6 +851,9 @@ export function classifyIntent(
     "META_CONVERSATION",
     "MEDICATION_REDOSE_SAFETY",
     "PREVIOUS_SHIFT",
+    "YESTERDAY_WELLBEING",
+    "CHANGES_TODAY",
+    "CHANGES_SINCE_YESTERDAY",
     "HANDOFF_REVIEW",
     "CARE_COVERAGE",
     "CARE_TEAM",

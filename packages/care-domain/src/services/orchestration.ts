@@ -928,7 +928,13 @@ export function summarizeOpenLoops(
       )
     ) {
       key = "sem:metformin_confirm_review";
-    } else if (/needs your review/i.test(key)) {
+    } else if (
+      /incompatible dimensions|ambiguous \(count unit|cannot convert to mg|missing unit/i.test(
+        key,
+      )
+    ) {
+      key = "sem:dose_unit_review";
+    } else if (/needs your review|needs checking/i.test(key)) {
       key = `sem:review:${key.replace(/[^a-z0-9]+/g, " ").slice(0, 40)}`;
     } else {
       key = key.replace(/[^a-z0-9]+/g, " ").trim().slice(0, 64);
@@ -942,6 +948,10 @@ export function summarizeOpenLoops(
     } else if (key === "sem:metformin_confirm_review") {
       lines.push(
         "Needs your review: a prior Metformin-with-lunch confirmation is still open.",
+      );
+    } else if (key === "sem:dose_unit_review") {
+      lines.push(
+        "Needs checking: a reported dose unit does not match the authorized instruction and needs human review.",
       );
     } else {
       lines.push(line);

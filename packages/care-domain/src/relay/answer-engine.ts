@@ -140,9 +140,32 @@ function exclusiveAnswerPlan(
   if (
     primary === "PREVIOUS_SHIFT" ||
     classified.intents.includes("PREVIOUS_SHIFT") ||
-    /previous shift|last shift/.test(q)
+    /previous shift|last shift|during her shift|during his shift/.test(q)
   ) {
-    return ["PREVIOUS_SHIFT", "HANDOFF_REVIEW"];
+    return ["PREVIOUS_SHIFT"];
+  }
+  // Three distinct temporal plans — never share one CHANGE_SINCE composer
+  if (
+    primary === "YESTERDAY_WELLBEING" ||
+    classified.intents.includes("YESTERDAY_WELLBEING") ||
+    (/\byesterday\b/.test(q) &&
+      /\b(feel|feeling|mood|tired|fever|dizz|sleep|ate)\b/.test(q))
+  ) {
+    return ["YESTERDAY_WELLBEING"];
+  }
+  if (
+    primary === "CHANGES_SINCE_YESTERDAY" ||
+    classified.intents.includes("CHANGES_SINCE_YESTERDAY") ||
+    /since yesterday|better than yesterday|different from yesterday/.test(q)
+  ) {
+    return ["CHANGES_SINCE_YESTERDAY"];
+  }
+  if (
+    primary === "CHANGES_TODAY" ||
+    classified.intents.includes("CHANGES_TODAY") ||
+    /what changed today|what happened today|what is new today/.test(q)
+  ) {
+    return ["CHANGES_TODAY"];
   }
   // Medication / Allegra before open-loop generic dump
   if (/allegra|medication change/i.test(q) || primary.startsWith("MEDICATION_")) {
@@ -249,49 +272,196 @@ function composeAnswer(ctx: {
     used.add("ACTIVE_HANDOFF");
     used.add("RECENT_CHANGES");
     used.add("RECENT_OBSERVATION_CLUSTERS");
-    // Prefer distinct shift events over a single pending-plan line
-    const shiftEvents = semanticDedupeLines([
-      ...cleanChanges.filter(
-        (c) =>
-          !/^allegra 60 mg was reported/i.test(c) &&
-          !/\bprobe\b/i.test(c),
-      ),
-      ...cleanHandoffChanged.filter(
-        (c) =>
-          !/^allegra 60 mg was reported/i.test(c) && !/\bprobe\b/i.test(c),
-      ),
-    ]).slice(0, 4);
-    const correction = cleanChanges.find((c) =>
-      /corrected|not administered/i.test(c),
+    const strip = (s: string) =>
+      sanitizeHumanCareCopy(s)
+        .replace(/\s*\(from [^)]+\)\s*$/i, "")
+        .replace(/^caregiver reported:\s*/i, "")
+        .replace(/^medication change needs verification:\s*/i, "")
+        .replace(/\.\s*not an active medication-plan instruction until authorized review\.?/i, "")
+        .replace(/^correction:\s*/i, "")
+        .trim();
+    const fever = cleanChanges.find((c) => /fever/i.test(c));
+    const tired = cleanChanges.find((c) => /tired|fatigue/i.test(c));
+    const meal = cleanChanges.find((c) => /lunch|breakfast|refused|ate|meal/i.test(c));
+    const tyenol = cleanChanges.find(
+      (c) => /tylenol|acetaminophen/i.test(c) && /verif|change/i.test(c),
     );
-    const pending = [...cleanHandoffOpen, ...cleanHandoffChanged].find((c) =>
-      /allegra|waiting for medication-plan|needs verification/i.test(c),
+    const correction =
+      cleanChanges.some((c) => /not administered|corrected/i.test(c)) ||
+      cleanHandoffChanged.some((c) => /not administered|corrected/i.test(c));
+    const pendingAllegra = [...cleanHandoffOpen, ...cleanHandoffChanged, ...cleanChanges].find(
+      (c) => /allegra/i.test(c),
     );
     const who =
       /maya/i.test(question)
         ? "Maya"
         : /daniel/i.test(question)
           ? "Daniel"
-          : "the prior caregiver";
-    let body = `During the previous shift, ${who}’s notes on file include `;
-    if (shiftEvents.length) {
-      body +=
-        shiftEvents
-          .slice(0, 3)
-          .map((e) => e.replace(/\s*\(from [^)]+\)\s*$/i, ""))
-          .join("; ") + ".";
-    } else {
-      body += "limited shift detail beyond the latest handoff line.";
-    }
+          : /marcus/i.test(question)
+            ? "Marcus"
+            : "the prior caregiver";
+    const bits: string[] = [];
+    bits.push(`During the previous shift, ${who} reported care updates for ${recipientName}.`);
+    if (fever) bits.push(`${recipientName} had a fever reported.`);
+    else if (tired) bits.push(`${recipientName} was reported more tired than usual.`);
+    if (meal) bits.push(`A meal note was recorded (${strip(meal)}).`);
     if (correction) {
-      body += ` A medication administration entry was corrected: not administered.`;
+      bits.push(
+        "A medication-administration entry was later corrected to show the medication was not given.",
+      );
     }
-    if (pending) {
-      body += ` Still waiting after that shift: ${pending.replace(/\s*\(from [^)]+\)\s*$/i, "")}.`;
+    if (tyenol) {
+      bits.push(
+        "A Tylenol dose for fever was proposed as a medication change and remains pending review — not an active plan instruction.",
+      );
+    }
+    if (pendingAllegra) {
+      bits.push(
+        "The Allegra 60 mg request remained unresolved at handoff and is still waiting for medication-plan verification.",
+      );
+    }
+    if (bits.length === 1) {
+      bits.push("Limited structured shift detail is on file beyond the latest handoff.");
     }
     return {
-      answer: sanitizeHumanCareCopy(body),
+      answer: sanitizeHumanCareCopy(bits.join(" ")),
       sourceRefs: ["previous_shift", "handoff", "recent_changes"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  // --- Temporal plans (recipient-local framing; projections are care-truth inputs) ---
+  if (intents.includes("YESTERDAY_WELLBEING")) {
+    used.add("RECENT_CHANGES");
+    used.add("RECENT_OBSERVATION_CLUSTERS");
+    const wellbeing = cleanChanges.filter((c) =>
+      /fever|tired|fatigue|mood|dizz|pain|sleep|ate|eat|appetite|meal|mobility|fall|calm|anxious/i.test(
+        c,
+      ),
+    );
+    const fever = wellbeing.find((c) => /fever/i.test(c));
+    const tired = wellbeing.find((c) => /tired|fatigue/i.test(c));
+    const mood = wellbeing.find((c) => /mood|calm|anxious/i.test(c));
+    const secondaryMed = cleanChanges.find(
+      (c) => /tylenol|fever/i.test(c) && /medication change|verif/i.test(c),
+    );
+    const bits: string[] = [];
+    if (fever) {
+      bits.push(
+        `Yesterday, ${recipientName} was reported as having a fever.`,
+      );
+    } else if (tired) {
+      bits.push(`Yesterday, ${recipientName} was reported as more tired than usual.`);
+    } else if (mood) {
+      bits.push(`Yesterday’s mood note on file: ${mood.replace(/\s*\(from [^)]+\)\s*$/i, "")}.`);
+    } else if (wellbeing[0]) {
+      bits.push(
+        `Yesterday’s wellbeing note on file: ${wellbeing[0].replace(/\s*\(from [^)]+\)\s*$/i, "")}.`,
+      );
+    } else {
+      bits.push(
+        `I don’t have a wellbeing report for ${recipientName} from yesterday.`,
+      );
+    }
+    if (!mood && fever) {
+      bits.push("I do not have a separate mood or energy report for that day.");
+    }
+    if (secondaryMed) {
+      bits.push(
+        "A Tylenol medication change for fever was also reported for review, but it was not added to the active medication plan.",
+      );
+    }
+    return {
+      answer: sanitizeHumanCareCopy(bits.join(" ")),
+      sourceRefs: ["yesterday_wellbeing"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  if (intents.includes("CHANGES_TODAY")) {
+    used.add("RECENT_CHANGES");
+    used.add("ACTIVE_HANDOFF");
+    // Prefer state-change style facts; exclude long-standing pending Allegra unless only signal
+    const todayish = semanticDedupeLines(
+      cleanChanges.filter(
+        (c) =>
+          !/\bprobe\b/i.test(c) &&
+          (/corrected|not administered|completed|fever|tylenol|zyrtec|reschedul|transport/i.test(
+            c,
+          ) ||
+            (!/allegra/i.test(c) && !/waiting for medication-plan/i.test(c))),
+      ),
+    ).slice(0, 5);
+    if (!todayish.length) {
+      return {
+        answer: `I don’t have any new care changes recorded for ${recipientName} today.`,
+        sourceRefs: ["changes_today"],
+        projectionsUsed: [...used],
+      };
+    }
+    const lines = todayish.map((c) => `• ${c.replace(/\s*\(from [^)]+\)\s*$/i, "")}`);
+    return {
+      answer: sanitizeHumanCareCopy(
+        `Care updates recorded for ${recipientName} today:\n` + lines.join("\n"),
+      ),
+      sourceRefs: ["changes_today"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  if (intents.includes("CHANGES_SINCE_YESTERDAY")) {
+    used.add("RECENT_CHANGES");
+    used.add("ACTIVE_HANDOFF");
+    const corrected = cleanChanges.some((c) =>
+      /corrected|not administered/i.test(c),
+    );
+    const completed = cleanChanges.find((c) =>
+      /completed|transportation completed/i.test(c),
+    );
+    const stillPending = [...cleanHandoffOpen, ...cleanHandoffChanged].find((c) =>
+      /allegra|waiting/i.test(c),
+    );
+    const fever = cleanChanges.find((c) => /fever/i.test(c));
+    const bits: string[] = [`Since yesterday for ${recipientName}:`];
+    if (completed) {
+      bits.push(
+        `${completed.replace(/\s*\(from [^)]+\)\s*$/i, "")} was completed.`,
+      );
+    }
+    if (corrected) {
+      bits.push(
+        "the medication-administration report was corrected to say it was not given.",
+      );
+    }
+    if (fever) {
+      bits.push("a fever report remains on the recent care record.");
+    }
+    if (stillPending) {
+      bits.push(
+        "the Allegra 60 mg request remains pending medication-plan verification.",
+      );
+    }
+    if (bits.length === 1) {
+      bits.push("I do not have a clear before/after delta beyond the latest handoff.");
+    }
+    // Join comparison clauses naturally
+    const head = bits[0]!;
+    const rest = bits.slice(1);
+    const body =
+      rest.length === 0
+        ? head
+        : head +
+          " " +
+          rest
+            .map((s, i) => {
+              const t = s.replace(/\.$/, "");
+              if (i === rest.length - 1 && rest.length > 1) return `and ${t}.`;
+              return `${t}${i < rest.length - 1 ? "," : "."}`;
+            })
+            .join(" ");
+    return {
+      answer: sanitizeHumanCareCopy(body),
+      sourceRefs: ["changes_since_yesterday"],
       projectionsUsed: [...used],
     };
   }

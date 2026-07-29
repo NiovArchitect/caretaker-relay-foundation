@@ -154,14 +154,28 @@ export function buildProjections(input: {
   const events = input.state.events ?? [];
   const records = input.state.medicationRecords ?? [];
 
-  const OPEN_UNCERTAINTIES = [
-    ...reviews.map((r) =>
-      plainDiscrepancyMessage(str(r.reason ?? r.message), input.recipientName),
-    ),
-    ...(input.attentionLines ?? []).map((l) =>
-      plainDiscrepancyMessage(l, input.recipientName),
-    ),
-  ].filter(Boolean);
+  const OPEN_UNCERTAINTIES = semanticDedupeLines(
+    [
+      ...reviews.map((r) =>
+        plainDiscrepancyMessage(str(r.reason ?? r.message), input.recipientName),
+      ),
+      ...(input.attentionLines ?? []).map((l) =>
+        plainDiscrepancyMessage(l, input.recipientName),
+      ),
+    ]
+      .filter(Boolean)
+      .map((line) => {
+        // Collapse unit/dose compatibility noise into one human line
+        if (
+          /incompatible dimensions|not comparable|ambiguous \(count unit|cannot convert to mg|missing unit/i.test(
+            line,
+          )
+        ) {
+          return "A reported dose unit does not match the authorized instruction and needs human review.";
+        }
+        return line;
+      }),
+  );
 
   const LATEST_PROVIDER_INSTRUCTIONS = meds.map((m) => {
     const name = str(m.name);
