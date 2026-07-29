@@ -4575,10 +4575,18 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    const q = (request.query ?? {}) as { include_terminal?: string };
+    const includeTerminal =
+      q.include_terminal === "true" ||
+      q.include_terminal === "1" ||
+      q.include_terminal === "yes";
+    // Default open/active queue; include_terminal=true returns completed/cancelled
+    // history so retention can be proven without deleting care work.
     return reply.code(200).send({
       ok: true,
-      work_items: listWorkItems(runtime.store, id),
+      work_items: listWorkItems(runtime.store, id, { includeTerminal }),
       needs_owner: listNeedsOwner(runtime.store, id),
+      include_terminal: includeTerminal,
       correlation_id: correlationId(request),
     });
   });
