@@ -513,75 +513,154 @@ export class PrismaCareStore implements CareStore {
         },
       });
     }
-    // Upsert by natural key (care_recipient_id, person_id). Using only `id`
-    // breaks when memory re-keys a relationship (e.g. invite accept creates
-    // `rel-p-maya` while seed/DB still has `rel-maya`) — Prisma then tries
-    // INSERT and hits @@unique([care_recipient_id, person_id]).
+    // Upsert by natural key (care_recipient_id, person_id). Durable row ids
+    // MUST include both recipient and person — bare `rel-${personId}` collides
+    // across care spaces and makes create hit P2002 on primary key `id`.
     for (const r of snap.relationships) {
       const relKey = `${r.careRecipientId}|${r.personId}`;
       if (deltaOnly && !this.dirtyRelationships.has(relKey) && !this.dirtyRelationships.has(r.id))
         continue;
-      await prisma.careRelationshipRow.upsert({
-        where: {
-          care_recipient_id_person_id: {
+      const durableRelId = r.id.includes(r.careRecipientId)
+        ? r.id
+        : `rel-${r.careRecipientId}-${r.personId}`;
+      try {
+        await prisma.careRelationshipRow.upsert({
+          where: {
+            care_recipient_id_person_id: {
+              care_recipient_id: r.careRecipientId,
+              person_id: r.personId,
+            },
+          },
+          create: {
+            id: durableRelId,
             care_recipient_id: r.careRecipientId,
             person_id: r.personId,
+            role: r.role,
+            role_label: r.roleLabel,
+            responsibilities: r.responsibilities,
+            access: r.access as object,
+            status: r.status,
+            start_date: r.startDate ?? null,
+            end_date: r.endDate ?? null,
+            contact_preference: r.contactPreference ?? null,
+            schedule_notes: r.scheduleNotes ?? null,
+            product_id: PRODUCT_ID,
           },
-        },
-        create: {
-          id: r.id,
-          care_recipient_id: r.careRecipientId,
-          person_id: r.personId,
-          role: r.role,
-          role_label: r.roleLabel,
-          responsibilities: r.responsibilities,
-          access: r.access as object,
-          status: r.status,
-          start_date: r.startDate ?? null,
-          end_date: r.endDate ?? null,
-          contact_preference: r.contactPreference ?? null,
-          schedule_notes: r.scheduleNotes ?? null,
-          product_id: PRODUCT_ID,
-        },
-        update: {
-          role: r.role,
-          role_label: r.roleLabel,
-          responsibilities: r.responsibilities,
-          access: r.access as object,
-          status: r.status,
-          end_date: r.endDate ?? null,
-          contact_preference: r.contactPreference ?? null,
-          schedule_notes: r.scheduleNotes ?? null,
-        },
-      });
+          update: {
+            role: r.role,
+            role_label: r.roleLabel,
+            responsibilities: r.responsibilities,
+            access: r.access as object,
+            status: r.status,
+            end_date: r.endDate ?? null,
+            contact_preference: r.contactPreference ?? null,
+            schedule_notes: r.scheduleNotes ?? null,
+          },
+        });
+      } catch (err) {
+        // Last-resort recovery when a stale shared id still collides on create.
+        const code =
+          err && typeof err === "object" && "code" in err
+            ? String((err as { code?: unknown }).code)
+            : "";
+        if (code !== "P2002") throw err;
+        await prisma.careRelationshipRow.upsert({
+          where: {
+            care_recipient_id_person_id: {
+              care_recipient_id: r.careRecipientId,
+              person_id: r.personId,
+            },
+          },
+          create: {
+            id: `rel-${r.careRecipientId}-${r.personId}-${Date.now().toString(36)}`,
+            care_recipient_id: r.careRecipientId,
+            person_id: r.personId,
+            role: r.role,
+            role_label: r.roleLabel,
+            responsibilities: r.responsibilities,
+            access: r.access as object,
+            status: r.status,
+            start_date: r.startDate ?? null,
+            end_date: r.endDate ?? null,
+            contact_preference: r.contactPreference ?? null,
+            schedule_notes: r.scheduleNotes ?? null,
+            product_id: PRODUCT_ID,
+          },
+          update: {
+            role: r.role,
+            role_label: r.roleLabel,
+            responsibilities: r.responsibilities,
+            access: r.access as object,
+            status: r.status,
+            end_date: r.endDate ?? null,
+            contact_preference: r.contactPreference ?? null,
+            schedule_notes: r.scheduleNotes ?? null,
+          },
+        });
+      }
     }
     for (const c of snap.consents) {
       const ck = `${c.careRecipientId}|${c.granteePersonId}`;
       if (deltaOnly && !this.dirtyConsents.has(ck) && !this.dirtyConsents.has(c.id)) continue;
-      await prisma.careConsentRow.upsert({
-        where: {
-          care_recipient_id_grantee_person_id: {
+      const durableConsentId = c.id.includes(c.careRecipientId)
+        ? c.id
+        : `consent-${c.careRecipientId}-${c.granteePersonId}`;
+      try {
+        await prisma.careConsentRow.upsert({
+          where: {
+            care_recipient_id_grantee_person_id: {
+              care_recipient_id: c.careRecipientId,
+              grantee_person_id: c.granteePersonId,
+            },
+          },
+          create: {
+            id: durableConsentId,
             care_recipient_id: c.careRecipientId,
             grantee_person_id: c.granteePersonId,
+            scope: c.scope as object,
+            status: c.status,
+            granted_at: c.grantedAt,
+            revoked_at: c.revokedAt ?? null,
+            product_id: PRODUCT_ID,
           },
-        },
-        create: {
-          id: c.id,
-          care_recipient_id: c.careRecipientId,
-          grantee_person_id: c.granteePersonId,
-          scope: c.scope as object,
-          status: c.status,
-          granted_at: c.grantedAt,
-          revoked_at: c.revokedAt ?? null,
-          product_id: PRODUCT_ID,
-        },
-        update: {
-          scope: c.scope as object,
-          status: c.status,
-          revoked_at: c.revokedAt ?? null,
-          granted_at: c.grantedAt,
-        },
-      });
+          update: {
+            scope: c.scope as object,
+            status: c.status,
+            revoked_at: c.revokedAt ?? null,
+            granted_at: c.grantedAt,
+          },
+        });
+      } catch (err) {
+        const code =
+          err && typeof err === "object" && "code" in err
+            ? String((err as { code?: unknown }).code)
+            : "";
+        if (code !== "P2002") throw err;
+        await prisma.careConsentRow.upsert({
+          where: {
+            care_recipient_id_grantee_person_id: {
+              care_recipient_id: c.careRecipientId,
+              grantee_person_id: c.granteePersonId,
+            },
+          },
+          create: {
+            id: `consent-${c.careRecipientId}-${c.granteePersonId}-${Date.now().toString(36)}`,
+            care_recipient_id: c.careRecipientId,
+            grantee_person_id: c.granteePersonId,
+            scope: c.scope as object,
+            status: c.status,
+            granted_at: c.grantedAt,
+            revoked_at: c.revokedAt ?? null,
+            product_id: PRODUCT_ID,
+          },
+          update: {
+            scope: c.scope as object,
+            status: c.status,
+            revoked_at: c.revokedAt ?? null,
+            granted_at: c.grantedAt,
+          },
+        });
+      }
     }
 
     // Events: upsert each (ETL provenance packed into source._careEtl — no schema migration)

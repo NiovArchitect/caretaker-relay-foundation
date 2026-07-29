@@ -211,7 +211,9 @@ export function approveAccessRequest(
     startDate: existingRel?.startDate ?? now.slice(0, 10),
   });
   store.upsertConsent({
-    id: existingConsent?.id ?? `consent-${req.requesterPersonId}`,
+    id:
+      existingConsent?.id ??
+      `consent-${req.careRecipientId}-${req.requesterPersonId}`,
     careRecipientId: req.careRecipientId,
     granteePersonId: req.requesterPersonId,
     scope: access,

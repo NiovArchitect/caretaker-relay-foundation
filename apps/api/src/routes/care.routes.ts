@@ -1910,8 +1910,13 @@ export async function registerCareRoutes(
       inv.careRecipientId,
       inv.inviteePersonId,
     );
+    // Relationship/consent ids MUST be unique per (recipient, person).
+    // Using only `rel-${personId}` collides across care spaces and makes
+    // Prisma flush fail with P2002 on CareRelationshipRow.id (breaks login).
     runtime.store.upsertRelationship({
-      id: existingRel?.id ?? `rel-${inv.inviteePersonId}`,
+      id:
+        existingRel?.id ??
+        `rel-${inv.careRecipientId}-${inv.inviteePersonId}`,
       careRecipientId: inv.careRecipientId,
       personId: inv.inviteePersonId,
       role: inv.role,
@@ -1925,7 +1930,9 @@ export async function registerCareRoutes(
       endDate: undefined,
     });
     runtime.store.upsertConsent({
-      id: existingConsent?.id ?? `consent-${inv.inviteePersonId}`,
+      id:
+        existingConsent?.id ??
+        `consent-${inv.careRecipientId}-${inv.inviteePersonId}`,
       careRecipientId: inv.careRecipientId,
       granteePersonId: inv.inviteePersonId,
       scope: access,
