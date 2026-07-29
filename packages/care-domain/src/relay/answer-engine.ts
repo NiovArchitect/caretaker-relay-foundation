@@ -792,12 +792,14 @@ function composeAnswer(ctx: {
     if (intents.includes("MEDICATION_CHANGE")) {
       used.add("LATEST_PROVIDER_INSTRUCTIONS");
       used.add("ACTIVE_HANDOFF");
+      used.add("RECENT_CHANGES");
       const pendingChange = [
         ...cleanHandoffChanged,
         ...cleanHandoffOpen,
         ...cleanOpen,
+        ...cleanChanges,
       ].find((c) =>
-        /allegra|medication change|waiting for medication-plan|needs verification/i.test(
+        /allegra|medication change|waiting for medication-plan|needs verification|tylenol.*verif|zyrtec.*verif|claritin.*verif/i.test(
           c,
         ),
       );
