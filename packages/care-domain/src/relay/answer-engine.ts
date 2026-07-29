@@ -144,6 +144,11 @@ function exclusiveAnswerPlan(
   ) {
     return ["PREVIOUS_SHIFT", "HANDOFF_REVIEW"];
   }
+  // Medication / Allegra before open-loop generic dump
+  if (/allegra|medication change/i.test(q) || primary.startsWith("MEDICATION_")) {
+    if (/allegra|medication change/i.test(q)) return ["MEDICATION_CHANGE"];
+    return [primary.startsWith("MEDICATION_") ? primary : "MEDICATION_CURRENT"];
+  }
   if (primary === "STATUS_SYNTHESIS") {
     return ["STATUS_SYNTHESIS"];
   }
@@ -163,10 +168,6 @@ function exclusiveAnswerPlan(
   }
   if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
     return ["CARE_TEAM", "CARE_COVERAGE"];
-  }
-  if (primary.startsWith("MEDICATION_") || /allegra|medication change/i.test(q)) {
-    if (/allegra|medication change/i.test(q)) return ["MEDICATION_CHANGE"];
-    return [primary];
   }
   if (primary.startsWith("APPOINTMENT_")) return [primary];
   // Default: primary only (blocks multi-template walls)
