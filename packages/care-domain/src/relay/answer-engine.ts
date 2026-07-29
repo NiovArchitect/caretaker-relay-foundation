@@ -140,7 +140,9 @@ function exclusiveAnswerPlan(
   if (
     primary === "PREVIOUS_SHIFT" ||
     classified.intents.includes("PREVIOUS_SHIFT") ||
-    /previous shift|last shift|during her shift|during his shift/.test(q)
+    /previous shift|last shift|during her shift|during his shift|previous caregiver report|what did (the )?previous caregiver|what did (maya|daniel|marcus) report/.test(
+      q,
+    )
   ) {
     return ["PREVIOUS_SHIFT"];
   }
@@ -383,17 +385,64 @@ function composeAnswer(ctx: {
   if (intents.includes("CHANGES_TODAY")) {
     used.add("RECENT_CHANGES");
     used.add("ACTIVE_HANDOFF");
-    // Prefer state-change style facts; exclude long-standing pending Allegra unless only signal
-    const todayish = semanticDedupeLines(
-      cleanChanges.filter(
-        (c) =>
-          !/\bprobe\b/i.test(c) &&
-          (/corrected|not administered|completed|fever|tylenol|zyrtec|reschedul|transport/i.test(
-            c,
-          ) ||
-            (!/allegra/i.test(c) && !/waiting for medication-plan/i.test(c))),
-      ),
-    ).slice(0, 5);
+    // Build human category facts for state changes — not raw domain labels.
+    // Prefer corrections/completions/new reports over long-standing pending Allegra.
+    const stripFrom = (s: string) => s.replace(/\s*\(from [^)]+\)\s*$/i, "").trim();
+    const naturalizeToday = (c: string): string | null => {
+      const s = stripFrom(c);
+      if (/\bprobe\b/i.test(s)) return null;
+      if (/allegra/i.test(s) && /waiting|verif/i.test(s)) return null; // standing, not today's delta unless only signal
+      if (/corrected|not administered/i.test(s)) {
+        return "Medication administration was corrected to not administered.";
+      }
+      if (/transport|completed/i.test(s) && /complet/i.test(s)) {
+        return "A care or transportation task was completed.";
+      }
+      if (/reschedul/i.test(s)) {
+        return "A therapy or appointment time was rescheduled.";
+      }
+      if (/tylenol|acetaminophen/i.test(s) && /verif|change/i.test(s)) {
+        return "Tylenol was reported as a proposed medication change for fever (pending review, not active plan).";
+      }
+      if (/zyrtec/i.test(s) && /verif|change/i.test(s)) {
+        return "Zyrtec was reported as a proposed medication change (pending review, not active plan).";
+      }
+      if (/claritin/i.test(s) && /verif|change/i.test(s)) {
+        return "Claritin was reported as a proposed medication change (pending review, not active plan).";
+      }
+      if (/fever/i.test(s) && !/medication change|verif/i.test(s)) {
+        return "A fever observation was recorded.";
+      }
+      if (/tired|fatigue/i.test(s)) {
+        return "A fatigue or energy note was recorded.";
+      }
+      // Drop raw label leftovers
+      if (/^caregiver reported:|^medication change needs verification:|^correction:/i.test(s)) {
+        const body = s
+          .replace(/^caregiver reported:\s*/i, "")
+          .replace(/^medication change needs verification:\s*/i, "")
+          .replace(/^correction:\s*/i, "")
+          .replace(/\.\s*not an active medication-plan instruction until authorized review\.?/i, "")
+          .trim();
+        if (!body || /allegra/i.test(body)) return null;
+        return body.charAt(0).toUpperCase() + body.slice(1);
+      }
+      return null;
+    };
+    const ranked = semanticDedupeLines(
+      cleanChanges
+        .map(naturalizeToday)
+        .filter((x): x is string => !!x),
+    );
+    // Prefer correction first, then observations, then med-change proposals (cap 5)
+    const orderScore = (s: string) => {
+      if (/corrected to not administered/i.test(s)) return 0;
+      if (/completed/i.test(s)) return 1;
+      if (/fever|fatigue|observation/i.test(s)) return 2;
+      if (/reschedul/i.test(s)) return 3;
+      return 4;
+    };
+    const todayish = [...ranked].sort((a, b) => orderScore(a) - orderScore(b)).slice(0, 5);
     if (!todayish.length) {
       return {
         answer: `I don’t have any new care changes recorded for ${recipientName} today.`,
@@ -401,7 +450,7 @@ function composeAnswer(ctx: {
         projectionsUsed: [...used],
       };
     }
-    const lines = todayish.map((c) => `• ${c.replace(/\s*\(from [^)]+\)\s*$/i, "")}`);
+    const lines = todayish.map((c) => `• ${c}`);
     return {
       answer: sanitizeHumanCareCopy(
         `Care updates recorded for ${recipientName} today:\n` + lines.join("\n"),
