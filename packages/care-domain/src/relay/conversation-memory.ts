@@ -184,39 +184,64 @@ export function extractReferentsFromAnswer(
     text.match(/\bfrom\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/)?.[1] ||
     text.match(/\b(Marcus|Maya|Daniel|Walter)\b/)?.[1];
 
-  // Capture every "Name · dose · reason" style pending change lines (multi-med)
-  const medLineRe =
-    /(?:•\s*)?([A-Za-z][A-Za-z0-9-]{2,})(?:\s+(\d+\s*(?:mg|mcg|ml|units?)))?[^\n]{0,120}?(?:reason[:\s]+([^.\n]+)|for\s+([^.\n]+)|allerg|fever|pain)?/gi;
-  let m: RegExpExecArray | null;
+  // Prefer numbered multi-med listing: "1. … Tylenol · reported dose 300mg …"
+  const numbered = [...answer.matchAll(/^\s*\d+\.\s*(.+)$/gm)].map((x) => x[1]!.trim());
   let ordinal = 0;
   const seenMed = new Set<string>();
-  while ((m = medLineRe.exec(answer)) !== null) {
-    const name = m[1];
-    if (!name || /caregiver|medication|change|waiting|active|authorized|current/i.test(name))
-      continue;
-    if (/fever|meal|probe|transport|therapy|handoff/i.test(name)) continue;
-    const key = name.toLowerCase();
-    if (seenMed.has(key)) continue;
-    // Only treat as med-change if nearby context looks like verification/pending
-    const window = answer.slice(Math.max(0, m.index - 40), m.index + 120);
+  for (const line of numbered) {
     if (
-      !/medication change|needs verification|pending|waiting|reported dose|plan verification/i.test(
-        window + answer.slice(0, 200),
-      ) &&
-      !/medication change|waiting|pending/i.test(userMessage)
+      !/medication change|needs verification|waiting for medication-plan|reported dose|allergies|fever/i.test(
+        line,
+      )
     ) {
       continue;
     }
+    const nameHit =
+      line.match(
+        /\b(Tylenol|Acetaminophen|Zyrtec|Cetirizine|Allegra|Fexofenadine|Claritin|Loratadine|Ibuprofen|Advil|Benadryl|Diphenhydramine|[A-Z][a-z]{3,})\b/,
+      )?.[1] ||
+      line.match(/([A-Za-z][A-Za-z-]{2,})\s*·\s*reported dose/i)?.[1];
+    if (!nameHit) continue;
+    const key = nameHit.toLowerCase();
+    if (seenMed.has(key)) continue;
+    if (/medication|change|needs|waiting|active|authorized|current|review/i.test(nameHit))
+      continue;
     seenMed.add(key);
     ordinal += 1;
+    const dose = line.match(/(\d+\s*(?:mg|mcg|ml|units?))/i)?.[1];
+    const reason =
+      line.match(/reason:\s*([^.\n]+)/i)?.[1]?.trim() ||
+      line.match(/for\s+([^.\n]+)/i)?.[1]?.trim();
+    const who = line.match(/\(from\s+([^)]+)\)/i)?.[1] || reporter;
     refs.push({
       kind: "medication_change",
-      label: `${name}${m[2] ? ` ${m[2]}` : ""} medication-change report`,
-      reporter,
-      dose: m[2],
-      reason: (m[3] || m[4] || "").trim() || undefined,
+      label: `${nameHit}${dose ? ` ${dose}` : ""} pending plan change`,
+      reporter: who,
+      dose,
+      reason,
       ordinal,
     });
+  }
+  // Fallback: Allegra-style prose lines
+  if (!refs.some((r) => r.kind === "medication_change")) {
+    const prose = answer.match(
+      /\b([A-Z][a-z]+)\s+(\d+\s*mg)\b[^\n]{0,80}(?:waiting|verification|pending)/gi,
+    );
+    for (const p of prose ?? []) {
+      const mm = p.match(/\b([A-Z][a-z]+)\s+(\d+\s*mg)/i);
+      if (!mm) continue;
+      const key = mm[1]!.toLowerCase();
+      if (seenMed.has(key)) continue;
+      seenMed.add(key);
+      ordinal += 1;
+      refs.push({
+        kind: "medication_change",
+        label: `${mm[1]} ${mm[2]} pending plan change`,
+        reporter,
+        dose: mm[2],
+        ordinal,
+      });
+    }
   }
 
   if (hasFever) {
