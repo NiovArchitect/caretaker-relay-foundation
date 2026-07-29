@@ -146,7 +146,7 @@ function exclusiveAnswerPlan(
   if (
     primary === "PREVIOUS_SHIFT" ||
     classified.intents.includes("PREVIOUS_SHIFT") ||
-    /previous shift|last shift|during her shift|during his shift|previous caregiver report|what did (the )?previous caregiver|what did (maya|daniel|marcus) report/.test(
+    /previous shift|last shift|during her shift|during his shift|previous caregiver report|what did (the )?previous caregiver|what did (maya|daniel|marcus) report|before my shift|before (this|the) shift|caretaker (who )?helped .{0,40}before|who (worked|helped|covered|cared).{0,40}before (me|my shift)|who was (on|with) .{0,20}before me|prior (caregiver|caretaker|shift|helper)/.test(
       q,
     )
   ) {
@@ -196,6 +196,15 @@ function exclusiveAnswerPlan(
     primary === "TASKS_REMAINING"
   ) {
     return ["TASKS_REMAINING", "OPEN_LOOP_STATUS"];
+  }
+  // "who helped before my shift" must never collapse to the full care-team wall
+  if (
+    (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") &&
+    /before my shift|before (this|the) shift|previous caregiver|prior caregiver|who worked before|who helped before|who covered before/.test(
+      q,
+    )
+  ) {
+    return ["PREVIOUS_SHIFT"];
   }
   if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
     return ["CARE_TEAM", "CARE_COVERAGE"];
@@ -302,20 +311,50 @@ function composeAnswer(ctx: {
     const pendingAllegra = [...cleanHandoffOpen, ...cleanHandoffChanged, ...cleanChanges].find(
       (c) => /allegra/i.test(c),
     );
+    const handoffTo =
+      proj.ACTIVE_HANDOFF?.toName &&
+      !/public (preshift|doc)/i.test(proj.ACTIVE_HANDOFF.toName)
+        ? proj.ACTIVE_HANDOFF.toName
+        : null;
     const who =
       /maya/i.test(question)
-        ? "Maya"
+        ? "Maya Bennett"
         : /daniel/i.test(question)
-          ? "Daniel"
+          ? "Daniel Kim"
           : /marcus/i.test(question)
-            ? "Marcus"
-            : "the prior caregiver";
+            ? "Marcus Carter"
+            : handoffTo || "the prior caregiver";
     const bits: string[] = [];
-    bits.push(`During the previous shift, ${who} reported care updates for ${recipientName}.`);
-    if (fever) bits.push(`${recipientName} had a fever reported.`);
-    else if (tired) bits.push(`${recipientName} was reported more tired than usual.`);
-    if (meal && !/\bprobe\b/i.test(meal)) {
-      bits.push(`A meal note was recorded (${strip(meal)}).`);
+    if (
+      cleanHandoffChanged.length === 0 &&
+      cleanHandoffOpen.length === 0 &&
+      cleanChanges.length === 0
+    ) {
+      return {
+        answer: sanitizeHumanCareCopy(
+          `I don't have a completed shift handoff immediately before your current coverage for ${recipientName}. Ask what needs attention now, or open Incoming handoff if one arrives.`,
+        ),
+        sourceRefs: ["previous_shift", "handoff"],
+        projectionsUsed: [...used],
+      };
+    }
+    bits.push(
+      `${who} covered ${recipientName} before your current coverage.`,
+    );
+    if (cleanHandoffChanged.length) {
+      bits.push(
+        `What they recorded: ${cleanHandoffChanged
+          .slice(0, 3)
+          .map(strip)
+          .filter(Boolean)
+          .join("; ")}.`,
+      );
+    } else {
+      if (fever) bits.push(`${recipientName} had a fever reported.`);
+      else if (tired) bits.push(`${recipientName} was reported more tired than usual.`);
+      if (meal && !/\bprobe\b/i.test(meal)) {
+        bits.push(`A meal note was recorded (${strip(meal)}).`);
+      }
     }
     if (correction) {
       bits.push(
@@ -327,13 +366,18 @@ function composeAnswer(ctx: {
         "A Tylenol dose for fever was proposed as a medication change and remains pending review — not an active plan instruction.",
       );
     }
-    if (pendingAllegra) {
+    if (pendingAllegra || cleanHandoffOpen.some((c) => /allegra/i.test(c))) {
       bits.push(
-        "The Allegra 60 mg request remained unresolved at handoff and is still waiting for medication-plan verification.",
+        "Still open for you: verify the Allegra medication-plan change.",
       );
-    }
-    if (bits.length === 1) {
-      bits.push("Limited structured shift detail is on file beyond the latest handoff.");
+    } else if (cleanHandoffOpen.length) {
+      bits.push(
+        `Still open: ${cleanHandoffOpen
+          .slice(0, 3)
+          .map(strip)
+          .filter(Boolean)
+          .join("; ")}.`,
+      );
     }
     return {
       answer: sanitizeHumanCareCopy(bits.join(" ")),

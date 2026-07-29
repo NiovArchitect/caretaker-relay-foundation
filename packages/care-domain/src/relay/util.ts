@@ -13,7 +13,7 @@ export function str(v: unknown): string {
  *   user_entered_synthetic — keep
  */
 const SMOKE_MARKER_RE =
-  /\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]|\b(?:AZms|HOLms|FMHms|S3b|PROBE|SMOKE|SEED)\w*|\bOpen list\s+\d+\b|\bs\d+-\d{10,}\b|\bRESPONSE_RECEIVED\b|\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b|\bProbe calm\b|\bTransport\s+PROBE\b|\bIdempotency campaign test\b|\bautotest\b|\bsmoke_harness\b|\bperformance_probe\b|\bautomated_test_probe\b/i;
+  /\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]|\b(?:AZms|HOLms|FMHms|S3b|PROBE|SMOKE|SEED)\w*|\bOpen list\s+\d+\b|\bs\d+-\d{10,}\b|\bRESPONSE_RECEIVED\b|\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b|\bProbe calm\b|\bTransport\s+PROBE\b|\bIdempotency campaign test\b|\bautotest\b|\bsmoke_harness\b|\bperformance_probe\b|\bautomated_test_probe\b|\bCampaign\s+ID[A-Za-z0-9]+\b|\bJudge\s+demo\b|\bJudge\s+PT\b|\bFast\s+PT\b|\bFlagship continuous\b|\bPublic smoke\b|\bPublic ownership\b|\bPublic PreShift\b|\bPublic Doc\b|\bPROBESEED\b|\bSide\s*[12]\b/i;
 
 export function isSmokeResidueLine(text: string): boolean {
   return SMOKE_MARKER_RE.test(text);
@@ -57,11 +57,36 @@ export function sanitizeHumanCareCopy(text: string): string {
     .replace(/\bOpen list\s+\d+/gi, "Open coordination item")
     .replace(/\bs\d+-\d{10,}\b/gi, "")
     .replace(/\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b/gi, "")
+    .replace(/\bCampaign\s+ID[A-Za-z0-9]+\b/gi, "")
+    .replace(/\bJudge\s+demo\s*PT\b/gi, "Physical therapy")
+    .replace(/\bJudge\s+PT\b/gi, "Physical therapy")
+    .replace(/\bFast\s+PT\b/gi, "Physical therapy")
+    .replace(/\bFlagship continuous transport check\b/gi, "Transportation check")
+    .replace(/\bPublic smoke ownership task\b/gi, "Care task")
+    .replace(/\bPublic ownership task\b/gi, "Care task")
+    .replace(/\bp-[a-z0-9-]+\b/gi, "a care helper")
     // Preserve newlines (answer structure); collapse horizontal whitespace only
     .replace(/[^\S\n]{2,}/g, " ")
     .replace(/[ \t]+([,.;:])/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Semantic key for collapsing duplicate active work cards (presentation only). */
+export function workItemSignalKey(action: string, reason?: string): string {
+  const blob = sanitizeHumanCareCopy(`${action} ${reason ?? ""}`).toLowerCase();
+  if (/allegra/.test(blob) && /verif|medication change|review/.test(blob))
+    return "work:allegra_verify";
+  if (/metformin/.test(blob) && /mismatch|verif|review/.test(blob))
+    return "work:metformin_review";
+  if (/transport|ride|pickup/.test(blob)) return "work:transport";
+  if (/needs an owner|needs a helper|follow up: needs an owner/.test(blob))
+    return "work:needs_owner";
+  if (/access request|who can access|review who can access/.test(blob))
+    return "work:access_review";
+  if (/handoff|unfinished/.test(blob)) return "work:handoff_open";
+  if (/schedule|appointment|pt\b|therapy/.test(blob)) return "work:schedule";
+  return `work:${blob.replace(/[^a-z0-9]+/g, " ").trim().slice(0, 48)}`;
 }
 
 /** Collapse near-duplicate caregiver-facing lines (Allegra pairs, repeated corrections). */

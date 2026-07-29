@@ -1507,9 +1507,51 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+    const all = runtime.store.getHandoffs(id) ?? [];
+    const pid = principal.carePersonId;
+    const fromOf = (h: { fromPersonId?: string }) => h.fromPersonId ?? "";
+    const toOf = (h: { toPersonId?: string }) => h.toPersonId ?? "";
+    // Dedupe identical from→to + summary stems (repeated campaign deliveries)
+    const seen = new Set<string>();
+    const deduped: typeof all = [];
+    for (const h of [...all].reverse()) {
+      const stem = (h.whatChanged ?? [])
+        .join("|")
+        .toLowerCase()
+        .replace(/\[[^\]]*\]/g, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .slice(0, 80);
+      const key = `${fromOf(h)}>${toOf(h)}:${stem}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(h);
+    }
+    deduped.reverse();
+    // Incoming: addressed to me, not authored by me (latest first after reverse sort)
+    const incoming = deduped.filter(
+      (h) => toOf(h) === pid && fromOf(h) !== pid,
+    );
+    const sent = deduped.filter((h) => fromOf(h) === pid);
+    // History: older duplicates removed already; keep non-incoming non-sent residual
+    // plus older incoming beyond the first 3 as history for signal-first inbox.
+    const history = [
+      ...incoming.slice(3),
+      ...deduped.filter(
+        (h) => fromOf(h) !== pid && toOf(h) !== pid && toOf(h) !== "",
+      ),
+    ];
+    const incomingActive = incoming.slice(0, 3);
     return reply.code(200).send({
       ok: true,
-      handoffs: runtime.store.getHandoffs(id),
+      // Backward compatible full list (deduped)
+      handoffs: deduped,
+      buckets: {
+        incoming: incomingActive,
+        sent,
+        history,
+        current_draft: [] as unknown[],
+      },
       correlation_id: correlationId(request),
     });
   });

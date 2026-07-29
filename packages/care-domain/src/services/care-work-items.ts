@@ -6,6 +6,10 @@
 import type { CareStore } from "../store/memory-store.js";
 import { evaluateAccess } from "./access.js";
 import { createNotificationIfNew } from "./notifications.js";
+import {
+  isSmokeResidueLine,
+  workItemSignalKey,
+} from "../relay/util.js";
 
 export type WorkItemStatus =
   | "unassigned"
@@ -111,7 +115,7 @@ function save(store: CareStore, w: CareWorkItem): CareWorkItem {
 export function listWorkItems(
   store: CareStore,
   careRecipientId: string,
-  opts?: { includeTerminal?: boolean },
+  opts?: { includeTerminal?: boolean; signalOnly?: boolean },
 ): CareWorkItem[] {
   const byId = new Map<string, CareWorkItem>();
   for (const u of store.getUpdates(careRecipientId)) {
@@ -126,6 +130,23 @@ export function listWorkItems(
       (w) =>
         !["completed", "cancelled", "expired", "missed"].includes(w.status),
     );
+  }
+  // Default active queue is signal-first: hide probe/smoke residue from caregiver UX.
+  // Full includeTerminal history still returns them for audit when explicitly requested.
+  if (opts?.signalOnly !== false && !opts?.includeTerminal) {
+    rows = rows.filter(
+      (w) => !isSmokeResidueLine(`${w.action} ${w.reason ?? ""}`),
+    );
+    // One card per real care issue (keep newest by updatedAt)
+    const byKey = new Map<string, CareWorkItem>();
+    for (const w of rows) {
+      const key = workItemSignalKey(w.action, w.reason);
+      const prev = byKey.get(key);
+      if (!prev || (w.updatedAt ?? "") > (prev.updatedAt ?? "")) {
+        byKey.set(key, w);
+      }
+    }
+    rows = [...byKey.values()];
   }
   return rows.sort((a, b) => {
     const pa = a.priority === "urgent" ? 0 : a.priority === "high" ? 1 : 2;

@@ -377,7 +377,7 @@ export function classifyIntent(
 
   // Previous shift — exclusive temporal scope (not current-status dump)
   if (
-    /previous shift|last shift|during (the )?last shift|end of (the )?shift|from the last shift|on the last shift|during her shift|during his shift|during (maya|daniel|marcus).{0,20}shift|what did (maya|daniel|marcus) report|previous caregiver report|what did (the )?previous caregiver/.test(
+    /previous shift|last shift|during (the )?last shift|end of (the )?shift|from the last shift|on the last shift|during her shift|during his shift|during (maya|daniel|marcus).{0,20}shift|what did (maya|daniel|marcus) report|previous caregiver report|what did (the )?previous caregiver|before my shift|before (this|the) shift|caretaker (who )?helped .{0,40}before|who (worked|helped|covered|cared).{0,40}before (me|my shift)|who was (on|with) .{0,20}before me|prior (caregiver|caretaker|shift|helper)/.test(
       q,
     )
   ) {
