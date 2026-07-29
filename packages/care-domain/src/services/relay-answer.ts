@@ -243,7 +243,11 @@ function persistDeterministicAnswer(
       .filter((line) => {
         const t = line.trim();
         if (!t) return true;
-        if (/RESPONSE_RECEIVED|Open list\s+\d+|s\d+-\d{10,}/i.test(t))
+        if (
+          /RESPONSE_RECEIVED|Open list\s+\d+|s\d+-\d{10,}|Open loop probe|probe \d{10,}/i.test(
+            t,
+          )
+        )
           return false;
         return true;
       })

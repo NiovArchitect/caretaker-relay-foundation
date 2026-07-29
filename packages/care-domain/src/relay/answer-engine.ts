@@ -234,10 +234,18 @@ function composeAnswer(ctx: {
     } else {
       parts.push("No completed previous-shift handoff is on file yet.");
     }
-    if (cleanHandoffOpen.length) {
+    const openOnly = cleanHandoffOpen.filter(
+      (o) =>
+        !cleanHandoffChanged.some(
+          (c) =>
+            c.toLowerCase().slice(0, 48) === o.toLowerCase().slice(0, 48) ||
+            (/allegra/i.test(c) && /allegra/i.test(o)),
+        ),
+    );
+    if (openOnly.length) {
       parts.push(
         `Left unfinished after that shift:\n` +
-          cleanHandoffOpen.slice(0, 4).map((w) => `• ${w}`).join("\n"),
+          openOnly.slice(0, 4).map((w) => `• ${w}`).join("\n"),
       );
     }
     parts.push(
