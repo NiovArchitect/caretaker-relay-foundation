@@ -421,17 +421,27 @@ export function resolveContextualFollowUp(
 
   // Has she taken it / did she take it
   if (/has she taken it|did she take it/.test(q)) {
+    // Prefer pending medication-change referents over standing plan med names
+    const pendingRef = referents.find((r) => r.kind === "medication_change");
     const med =
-      focus?.medicationName ||
-      referents.find((r) => r.kind === "medication_change" || r.kind === "medication")
-        ?.label;
-    if (med && /allegra|pending|not an active|waiting/i.test(med + lastAnswer)) {
+      pendingRef?.label ||
+      (focus?.medicationName &&
+      !/^metformin$/i.test(focus.medicationName) &&
+      /pending|change|allegra|tylenol|zyrtec/i.test(lastAnswer)
+        ? focus.medicationName
+        : undefined) ||
+      referents.find((r) => r.kind === "medication")?.label;
+    if (
+      pendingRef ||
+      (med && /allegra|pending|not an active|waiting|medication.change|tylenol|zyrtec/i.test(med + lastAnswer))
+    ) {
+      const label = pendingRef?.label || med || "that medication change";
       return {
         handled: true,
         confidence: "high",
-        selectedReferent: med,
+        selectedReferent: label,
         modelPath: "deterministic",
-        answer: `${med} is a pending medication-change request for ${recipientDisplayName}, not an authorized administration instruction. Relay does not treat it as something already given.`,
+        answer: `${label} is a pending medication-change request for ${recipientDisplayName}, not an authorized administration instruction. Relay does not treat it as something already given.`,
       };
     }
     if (/not administered|corrected/i.test(lastAnswer)) {
