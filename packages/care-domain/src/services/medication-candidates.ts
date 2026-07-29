@@ -21,13 +21,20 @@ export type OrderedMedicationCandidate = {
 function extractNameDose(line: string): { medication: string; dose: string } {
   const m =
     line.match(
-      /\b(Tylenol|Acetaminophen|Zyrtec|Cetirizine|Allegra|Fexofenadine|Claritin|Loratadine|Ibuprofen|Naproxen|Benadryl|Diphenhydramine|Metformin|[A-Z][a-z]{3,})\b(?:\s*[·,]?\s*reported dose\s*)?(\d+\s*(?:mg|mcg|ml|units?))?/i,
+      /\b(Tylenol|Acetaminophen|Zyrtec|Cetirizine|Allegra|Fexofenadine|Claritin|Loratadine|Ibuprofen|Naproxen|Benadryl|Diphenhydramine|Metformin)\b/i,
     ) ||
+    line.match(
+      /(?:medication change needs verification:\s*)([A-Za-z][A-Za-z-]{2,})/i,
+    ) ||
+    line.match(/\b([A-Z][a-z]{3,})\s*[·]\s*reported dose/i) ||
     line.match(/\b([A-Z][a-z]+)\s+(\d+\s*mg)\b/i);
   if (m) {
+    const dose =
+      line.match(/(\d+\s*(?:mg|mcg|ml|units?))/i)?.[1]?.trim() ||
+      (m[2] || "").trim();
     return {
       medication: m[1]!,
-      dose: (m[2] || "").trim(),
+      dose,
     };
   }
   return { medication: "Medication", dose: "" };
