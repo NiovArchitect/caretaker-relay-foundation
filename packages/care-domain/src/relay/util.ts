@@ -64,7 +64,34 @@ export function sanitizeHumanCareCopy(text: string): string {
     .replace(/\bFlagship continuous transport check\b/gi, "Transportation check")
     .replace(/\bPublic smoke ownership task\b/gi, "Care task")
     .replace(/\bPublic ownership task\b/gi, "Care task")
+    .replace(/\bALPHA-ONLY:\s*/gi, "")
+    .replace(/\bBETA-ONLY:\s*/gi, "")
+    .replace(/\bPROBE_[A-Z0-9_]+\b/gi, "")
     .replace(/\bp-[a-z0-9-]+\b/gi, "a care helper")
+    .replace(/\bcr-[a-z0-9-]+\b/gi, "this care recipient")
+    .replace(/\bwork-[a-z0-9-]+\b/gi, "a care task")
+    .replace(/\bho-[a-z0-9-]+\b/gi, "a care handoff")
+    .replace(/\bapt-[a-z0-9-]+\b/gi, "an appointment")
+    .replace(/\bavailable_to_claim\b/gi, "needs a helper")
+    .replace(/\bwork_item\b/gi, "open work")
+    .replace(/\bcare_event\b/gi, "care update")
+    .replace(/\bsource_type\b/gi, "source")
+    // Raw ISO → short human fallback (full TZ formatting happens in layers above)
+    .replace(
+      /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/g,
+      "recently",
+    )
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, (d) => {
+      try {
+        return new Date(d + "T12:00:00").toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+      } catch {
+        return d;
+      }
+    })
     // Preserve newlines (answer structure); collapse horizontal whitespace only
     .replace(/[^\S\n]{2,}/g, " ")
     .replace(/[ \t]+([,.;:])/g, "$1")

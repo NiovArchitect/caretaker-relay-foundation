@@ -170,6 +170,16 @@ function exclusiveAnswerPlan(
   ) {
     return ["CHANGES_SINCE_YESTERDAY"];
   }
+  // Operating plan ("what am I doing today / on my shift") must not collapse
+  // to CHANGES_TODAY alone — that path can empty-out and yield no-match.
+  if (
+    classified.intents.includes("TASKS_NOW") ||
+    /\bwhat am i (doing|handling|working on)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift today\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b/.test(
+      q,
+    )
+  ) {
+    return ["TASKS_NOW", "TASKS_REMAINING", "CHANGES_TODAY"];
+  }
   if (
     primary === "CHANGES_TODAY" ||
     classified.intents.includes("CHANGES_TODAY") ||
