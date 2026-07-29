@@ -407,6 +407,33 @@ export interface CareHandoff {
   sources: SourceRef[];
   createdAt: string;
   evidenceMode: EvidenceMode;
+  /**
+   * First-class lifecycle (projected from CARE_HANDOFF_LC_V1).
+   * draft → ready_for_review → ready_to_send → sent → delivered → opened →
+   * acknowledged → amended → completed → archived
+   */
+  lifecycleStatus?:
+    | "draft"
+    | "ready_for_review"
+    | "ready_to_send"
+    | "sent"
+    | "delivered"
+    | "opened"
+    | "acknowledged"
+    | "amended"
+    | "completed"
+    | "archived"
+    | "correction_required"
+    | "expired"
+    | "escalated";
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  openedAt?: string | null;
+  acknowledgedAt?: string | null;
+  amendedAt?: string | null;
+  completedAt?: string | null;
+  amendmentOfId?: string | null;
+  coverageId?: string | null;
 }
 
 export interface CareUpdate {

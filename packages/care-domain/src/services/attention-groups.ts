@@ -232,6 +232,20 @@ export function buildAttentionGroups(
 
   return [...byKey.values()]
     .filter((g) => g.badge_eligible && g.resolution_state === "open")
+    // Role/coverage care value: hide pure internal probe semantics and empty titles
+    .filter((g) => {
+      const blob = `${g.display_title} ${g.display_body} ${g.semantic_issue}`;
+      if (/probe|smoke|campaign|judge demo|flagship|public ownership/i.test(blob))
+        return false;
+      // Clinician-only medication_review still shown to family primary (care value)
+      // but "Needs an owner" without domain body is low value if category is other
+      if (
+        g.category === "other" &&
+        /^needs an owner$/i.test(g.display_title || "")
+      )
+        return false;
+      return true;
+    })
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 

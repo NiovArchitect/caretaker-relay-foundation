@@ -113,6 +113,8 @@ export type CareProjections = {
   }>;
   DEMENTIA_WATCH: string[];
   DSP_SUPPORT_NOTES: string[];
+  /** Server-owned previous/current/next coverage (optional). */
+  CARE_COVERAGE_TIMELINE?: Record<string, unknown> | null;
 };
 
 export const SYNTHETIC_FACILITIES = {
@@ -135,6 +137,7 @@ export const SYNTHETIC_FACILITIES = {
 } as const;
 
 export function buildProjections(input: {
+  coverageTimeline?: Record<string, unknown> | null;
   state: CareStateBag;
   recipientName: string;
   recipientId: string;
@@ -368,6 +371,7 @@ export function buildProjections(input: {
           ),
         }
       : null,
+    CARE_COVERAGE_TIMELINE: input.coverageTimeline ?? null,
     REMINDERS,
     FACILITY_CONTEXT: [
       {

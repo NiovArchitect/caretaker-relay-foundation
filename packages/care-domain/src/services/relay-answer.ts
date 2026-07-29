@@ -45,6 +45,7 @@ import {
   listCoverage,
   seedDefaultCoverage,
 } from "./care-coverage.js";
+import { buildCareCoverageTimeline } from "./care-coverage-timeline.js";
 import { roleAwareRelayState } from "./role-projection.js";
 import {
   authorizeRelayQuestion,
@@ -1186,6 +1187,11 @@ function answerWithState(
     };
   }
 
+  const coverageTimeline = buildCareCoverageTimeline(
+    store,
+    req.careRecipientId,
+    req.principalId,
+  ) as unknown as Record<string, unknown>;
   const result = runAnswerEngine({
     question: req.question,
     principalId: req.principalId,
@@ -1206,6 +1212,7 @@ function answerWithState(
     conversationId,
     careTeam: careTeamFromStore(store, req.careRecipientId),
     personNameMap: personNameMapFromStore(store),
+    coverageTimeline,
     resolveMemory: (classified, q) =>
       resolveWithDurableMemory(
         store,

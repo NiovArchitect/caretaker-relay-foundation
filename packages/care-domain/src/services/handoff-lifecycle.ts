@@ -13,14 +13,67 @@ import { listConflicts } from "./conflict-center.js";
 export type HandoffLifecycleStatus =
   | "draft"
   | "ready"
+  | "ready_for_review"
+  | "ready_to_send"
   | "sent"
   | "delivered"
   | "seen"
+  | "opened"
   | "acknowledged"
+  | "amended"
   | "correction_required"
   | "completed"
+  | "archived"
   | "expired"
   | "escalated";
+
+/** Map internal LC status → public first-class CareHandoff.lifecycleStatus */
+export function toPublicHandoffStatus(
+  s: HandoffLifecycleStatus | string | undefined,
+): NonNullable<CareHandoff["lifecycleStatus"]> {
+  switch (s) {
+    case "ready":
+      return "ready_for_review";
+    case "seen":
+      return "opened";
+    case "draft":
+    case "ready_for_review":
+    case "ready_to_send":
+    case "sent":
+    case "delivered":
+    case "opened":
+    case "acknowledged":
+    case "amended":
+    case "correction_required":
+    case "completed":
+    case "archived":
+    case "expired":
+    case "escalated":
+      return s;
+    default:
+      return "ready_for_review";
+  }
+}
+
+/** Project CareHandoff with first-class lifecycle fields for API/UI. */
+export function projectHandoffWithLifecycle(
+  store: CareStore,
+  handoff: CareHandoff,
+  actorPersonId: string,
+): CareHandoff {
+  const lc =
+    getHandoffLifecycle(store, handoff.careRecipientId, handoff.id) ??
+    ensureHandoffLifecycle(store, handoff, actorPersonId);
+  return {
+    ...handoff,
+    lifecycleStatus: toPublicHandoffStatus(lc.status),
+    sentAt: lc.sentAt ?? null,
+    deliveredAt: lc.status === "delivered" || lc.sentAt ? lc.sentAt ?? null : null,
+    openedAt: lc.seenAt ?? null,
+    acknowledgedAt: lc.acknowledgedAt ?? null,
+    completedAt: lc.status === "completed" || lc.status === "archived" ? lc.updatedAt : null,
+  };
+}
 
 export type HandoffLifecycle = {
   handoffId: string;

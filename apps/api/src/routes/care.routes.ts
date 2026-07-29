@@ -143,6 +143,13 @@ import {
   listCoverage,
   seedDefaultCoverage,
   formatCoverageHuman,
+  buildCareCoverageTimeline,
+  formatPreviousCoverageAnswer,
+  formatNextCoverageAnswer,
+  buildAppointmentLineage,
+  projectHandoffWithLifecycle,
+  resolvePersonDisplayName,
+  redactSystemIds,
   buildCareHistory,
   type VerificationBundle,
   type CareInvitation,
@@ -670,6 +677,75 @@ export async function registerCareRoutes(
       correlation_id: correlationId(request),
     });
   });
+
+  /** Canonical previous / current / next coverage — sole source of truth. */
+  app.get(
+    "/api/v1/care/recipients/:id/coverage-timeline",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const id = (request.params as { id: string }).id;
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      seedDefaultCoverage(runtime.store, id);
+      const timeline = buildCareCoverageTimeline(
+        runtime.store,
+        id,
+        principal.carePersonId,
+      );
+      // View-model: never leak raw principal IDs in public labels
+      const scrub = (party: typeof timeline.previous) => ({
+        ...party,
+        caregiver_name: party.caregiver_id
+          ? resolvePersonDisplayName(runtime.store, party.caregiver_id)
+          : party.caregiver_name,
+        // Keep IDs for machine consumers; UI must use caregiver_name only
+      });
+      return reply.code(200).send({
+        ok: true,
+        coverage_timeline: {
+          ...timeline,
+          previous: scrub(timeline.previous),
+          current: scrub(timeline.current),
+          next: scrub(timeline.next),
+        },
+        authority: "server",
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.get(
+    "/api/v1/care/recipients/:id/appointments",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const id = (request.params as { id: string }).id;
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const lineage = buildAppointmentLineage(runtime.store, id);
+      return reply.code(200).send({
+        ok: true,
+        active: lineage.active,
+        history: lineage.history,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
 
   app.get("/api/v1/care/recipients/:id/notes", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
@@ -1511,10 +1587,14 @@ export async function registerCareRoutes(
     const pid = principal.carePersonId;
     const fromOf = (h: { fromPersonId?: string }) => h.fromPersonId ?? "";
     const toOf = (h: { toPersonId?: string }) => h.toPersonId ?? "";
+    // Project first-class lifecycle onto every handoff
+    const projected = all.map((h) =>
+      projectHandoffWithLifecycle(runtime.store, h, pid),
+    );
     // Dedupe identical from→to + summary stems (repeated campaign deliveries)
     const seen = new Set<string>();
-    const deduped: typeof all = [];
-    for (const h of [...all].reverse()) {
+    const deduped: typeof projected = [];
+    for (const h of [...projected].reverse()) {
       const stem = (h.whatChanged ?? [])
         .join("|")
         .toLowerCase()
@@ -1528,30 +1608,63 @@ export async function registerCareRoutes(
       deduped.push(h);
     }
     deduped.reverse();
-    // Incoming: addressed to me, not authored by me (latest first after reverse sort)
-    const incoming = deduped.filter(
+    const terminal = new Set([
+      "acknowledged",
+      "completed",
+      "archived",
+      "expired",
+    ]);
+    const incomingAll = deduped.filter(
       (h) => toOf(h) === pid && fromOf(h) !== pid,
     );
-    const sent = deduped.filter((h) => fromOf(h) === pid);
-    // History: older duplicates removed already; keep non-incoming non-sent residual
-    // plus older incoming beyond the first 3 as history for signal-first inbox.
-    const history = [
-      ...incoming.slice(3),
-      ...deduped.filter(
-        (h) => fromOf(h) !== pid && toOf(h) !== pid && toOf(h) !== "",
-      ),
+    const incomingActive = incomingAll
+      .filter((h) => !terminal.has(String(h.lifecycleStatus ?? "")))
+      .slice(0, 2);
+    const sentAwaiting = deduped
+      .filter(
+        (h) =>
+          fromOf(h) === pid &&
+          !terminal.has(String(h.lifecycleStatus ?? "sent")),
+      )
+      .slice(0, 2);
+    const sentAll = deduped.filter((h) => fromOf(h) === pid);
+    const history = deduped.filter(
+      (h) =>
+        terminal.has(String(h.lifecycleStatus ?? "")) ||
+        (toOf(h) === pid &&
+          !incomingActive.some((x) => x.id === h.id) &&
+          fromOf(h) !== pid),
+    );
+    const primary_relevant = [
+      ...incomingActive.slice(0, 1),
+      ...sentAwaiting.slice(0, 1),
     ];
-    const incomingActive = incoming.slice(0, 3);
+    // Human labels only for UI (IDs retained for machine actions)
+    const label = (h: (typeof deduped)[0]) => ({
+      ...h,
+      from_display_name: resolvePersonDisplayName(
+        runtime.store,
+        h.fromPersonId,
+      ),
+      to_display_name: resolvePersonDisplayName(runtime.store, h.toPersonId),
+      whatChanged: (h.whatChanged ?? []).map((x) => redactSystemIds(x)),
+      stillNeedsAttention: (h.stillNeedsAttention ?? []).map((x) =>
+        redactSystemIds(x),
+      ),
+    });
     return reply.code(200).send({
       ok: true,
-      // Backward compatible full list (deduped)
-      handoffs: deduped,
+      handoffs: deduped.map(label),
       buckets: {
-        incoming: incomingActive,
-        sent,
-        history,
-        current_draft: [] as unknown[],
+        incoming: incomingActive.map(label),
+        sent: sentAll.map(label),
+        history: history.map(label),
+        current_draft: deduped
+          .filter((h) => h.lifecycleStatus === "draft" && fromOf(h) === pid)
+          .map(label),
+        primary_relevant: primary_relevant.map(label),
       },
+      primary_count: primary_relevant.length,
       correlation_id: correlationId(request),
     });
   });

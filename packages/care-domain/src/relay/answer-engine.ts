@@ -50,6 +50,7 @@ export type AnswerEngineInput = {
   conversationId?: string;
   careTeam?: Array<{ name: string; role: string; phone?: string }>;
   personNameMap?: Record<string, string>;
+  coverageTimeline?: Record<string, unknown> | null;
 };
 
 export type AnswerEngineResult = {
@@ -88,6 +89,7 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
     careTeam: input.careTeam,
     personNameMap: input.personNameMap,
     handoff: input.handoff,
+    coverageTimeline: input.coverageTimeline ?? null,
   });
 
   if (classified.needsClarification && classified.clarificationPrompt) {
@@ -288,100 +290,115 @@ function composeAnswer(ctx: {
   }
 
   if (intents.includes("PREVIOUS_SHIFT")) {
+    used.add("CARE_COVERAGE_TIMELINE");
     used.add("ACTIVE_HANDOFF");
     used.add("RECENT_CHANGES");
-    used.add("RECENT_OBSERVATION_CLUSTERS");
     const strip = (s: string) =>
       sanitizeHumanCareCopy(s)
         .replace(/\s*\(from [^)]+\)\s*$/i, "")
         .replace(/^caregiver reported:\s*/i, "")
         .replace(/^medication change needs verification:\s*/i, "")
-        .replace(/\.\s*not an active medication-plan instruction until authorized review\.?/i, "")
+        .replace(
+          /\.\s*not an active medication-plan instruction until authorized review\.?/i,
+          "",
+        )
         .replace(/^correction:\s*/i, "")
         .trim();
-    const fever = cleanChanges.find((c) => /fever/i.test(c));
-    const tired = cleanChanges.find((c) => /tired|fatigue/i.test(c));
-    const meal = cleanChanges.find((c) => /lunch|breakfast|refused|ate|meal/i.test(c));
-    const tyenol = cleanChanges.find(
-      (c) => /tylenol|acetaminophen/i.test(c) && /verif|change/i.test(c),
-    );
-    const correction =
-      cleanChanges.some((c) => /not administered|corrected/i.test(c)) ||
-      cleanHandoffChanged.some((c) => /not administered|corrected/i.test(c));
-    const pendingAllegra = [...cleanHandoffOpen, ...cleanHandoffChanged, ...cleanChanges].find(
-      (c) => /allegra/i.test(c),
-    );
-    const handoffTo =
-      proj.ACTIVE_HANDOFF?.toName &&
-      !/public (preshift|doc)/i.test(proj.ACTIVE_HANDOFF.toName)
-        ? proj.ACTIVE_HANDOFF.toName
-        : null;
-    const who =
-      /maya/i.test(question)
-        ? "Maya Bennett"
-        : /daniel/i.test(question)
-          ? "Daniel Kim"
-          : /marcus/i.test(question)
-            ? "Marcus Carter"
-            : handoffTo || "the prior caregiver";
-    const bits: string[] = [];
-    if (
-      cleanHandoffChanged.length === 0 &&
-      cleanHandoffOpen.length === 0 &&
-      cleanChanges.length === 0
-    ) {
+    // Prefer server timeline when attached on projections
+    const tl = (
+      proj as {
+        CARE_COVERAGE_TIMELINE?: {
+          previous?: {
+            caregiver_name?: string | null;
+            start?: string | null;
+            end?: string | null;
+            handoff_status?: string | null;
+          };
+        };
+      }
+    ).CARE_COVERAGE_TIMELINE;
+    const p = tl?.previous;
+    const who = p?.caregiver_name || "The prior caregiver";
+    if (!p?.caregiver_name && cleanHandoffChanged.length === 0 && cleanChanges.length === 0) {
       return {
         answer: sanitizeHumanCareCopy(
-          `I don't have a completed shift handoff immediately before your current coverage for ${recipientName}. Ask what needs attention now, or open Incoming handoff if one arrives.`,
+          `I do not have a completed coverage period immediately before yours for ${recipientName}.`,
         ),
-        sourceRefs: ["previous_shift", "handoff"],
+        sourceRefs: ["coverage_timeline", "handoff"],
         projectionsUsed: [...used],
       };
     }
-    bits.push(
-      `${who} covered ${recipientName} before your current coverage.`,
-    );
+    const hours =
+      p?.start && p?.end
+        ? ` from ${p.start} to ${p.end}`
+        : p?.end
+          ? ` ending around ${p.end}`
+          : "";
+    const bits: string[] = [
+      `${who} covered ${recipientName} before you${hours}.`,
+    ];
     if (cleanHandoffChanged.length) {
       bits.push(
-        `What they recorded: ${cleanHandoffChanged
+        `They completed or recorded: ${cleanHandoffChanged
           .slice(0, 3)
           .map(strip)
           .filter(Boolean)
           .join("; ")}.`,
       );
-    } else {
-      if (fever) bits.push(`${recipientName} had a fever reported.`);
-      else if (tired) bits.push(`${recipientName} was reported more tired than usual.`);
-      if (meal && !/\bprobe\b/i.test(meal)) {
-        bits.push(`A meal note was recorded (${strip(meal)}).`);
-      }
     }
-    if (correction) {
+    if (cleanHandoffOpen.length) {
       bits.push(
-        "A medication-administration entry was later corrected to show the medication was not given.",
-      );
-    }
-    if (tyenol) {
-      bits.push(
-        "A Tylenol dose for fever was proposed as a medication change and remains pending review — not an active plan instruction.",
-      );
-    }
-    if (pendingAllegra || cleanHandoffOpen.some((c) => /allegra/i.test(c))) {
-      bits.push(
-        "Still open for you: verify the Allegra medication-plan change.",
-      );
-    } else if (cleanHandoffOpen.length) {
-      bits.push(
-        `Still open: ${cleanHandoffOpen
+        `They left open: ${cleanHandoffOpen
           .slice(0, 3)
           .map(strip)
           .filter(Boolean)
           .join("; ")}.`,
       );
+    } else if (cleanChanges.some((c) => /allegra/i.test(c))) {
+      bits.push("Still open for you: verify the Allegra medication-plan change.");
+    }
+    if (p?.handoff_status) {
+      bits.push(`Their handoff is ${String(p.handoff_status).replace(/_/g, " ")}.`);
     }
     return {
       answer: sanitizeHumanCareCopy(bits.join(" ")),
-      sourceRefs: ["previous_shift", "handoff", "recent_changes"],
+      sourceRefs: ["coverage_timeline", "previous_shift", "handoff"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  if (
+    /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
+      question,
+    )
+  ) {
+    used.add("CARE_COVERAGE_TIMELINE");
+    const tl = (
+      proj as {
+        CARE_COVERAGE_TIMELINE?: {
+          next?: {
+            caregiver_name?: string | null;
+            start?: string | null;
+          };
+        };
+      }
+    ).CARE_COVERAGE_TIMELINE;
+    const n = tl?.next;
+    if (!n?.caregiver_name) {
+      return {
+        answer: sanitizeHumanCareCopy(
+          `No next caregiver is scheduled yet for ${recipientName}. Relay can help request coverage.`,
+        ),
+        sourceRefs: ["coverage_timeline"],
+        projectionsUsed: [...used],
+      };
+    }
+    const when = n.start ? ` at ${n.start}` : "";
+    return {
+      answer: sanitizeHumanCareCopy(
+        `${n.caregiver_name} is scheduled to begin${when || " as next coverage"}.`,
+      ),
+      sourceRefs: ["coverage_timeline"],
       projectionsUsed: [...used],
     };
   }
