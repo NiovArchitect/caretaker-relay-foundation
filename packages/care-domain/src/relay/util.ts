@@ -4,12 +4,45 @@ export function str(v: unknown): string {
   return v == null ? "" : String(v);
 }
 
-/** Development / smoke correlation residue that must never reach caregivers. */
+/**
+ * Development / smoke / harness residue that must never reach ordinary care UI.
+ * Trusted lineage classes (documented):
+ *   intentional_demo_story — keep in demo projections
+ *   automated_test_probe / smoke_harness / performance_probe — exclude from primary
+ *   developer_seed — exclude unless intentional demo
+ *   user_entered_synthetic — keep
+ */
 const SMOKE_MARKER_RE =
-  /\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]|\b(?:AZms|HOLms|FMHms|S3b|PROBE|SMOKE|SEED)\w*|\bOpen list\s+\d+\b|\bs\d+-\d{10,}\b|\bRESPONSE_RECEIVED\b|\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b/i;
+  /\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]|\b(?:AZms|HOLms|FMHms|S3b|PROBE|SMOKE|SEED)\w*|\bOpen list\s+\d+\b|\bs\d+-\d{10,}\b|\bRESPONSE_RECEIVED\b|\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b|\bProbe calm\b|\bTransport\s+PROBE\b|\bIdempotency campaign test\b|\bautotest\b|\bsmoke_harness\b|\bperformance_probe\b|\bautomated_test_probe\b/i;
 
 export function isSmokeResidueLine(text: string): boolean {
   return SMOKE_MARKER_RE.test(text);
+}
+
+/** True when an event should be excluded from ordinary caregiver projections. */
+export function isProbeExcludedEvent(e: {
+  statement?: string;
+  title?: string;
+  evidenceMode?: string;
+  notes?: string;
+  source?: { label?: string; rawExcerpt?: string; whyVisible?: string };
+}): boolean {
+  const blob = [
+    e.statement,
+    e.title,
+    e.notes,
+    e.evidenceMode,
+    e.source?.label,
+    e.source?.rawExcerpt,
+    e.source?.whyVisible,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (isSmokeResidueLine(blob)) return true;
+  if (/automated_test_probe|smoke_harness|performance_probe|developer_seed/i.test(blob))
+    return true;
+  // Intentional demo story and user_entered_synthetic stay
+  return false;
 }
 
 /**

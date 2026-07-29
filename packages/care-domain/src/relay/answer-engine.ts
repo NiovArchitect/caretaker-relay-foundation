@@ -813,22 +813,43 @@ function composeAnswer(ctx: {
             `Allegra is not listed as an active authorized medication for ${recipientName} on the care plan.`,
           );
         }
-      } else if (pendingChange) {
-        parts.push(
-          `One medication change is waiting for review: ${pendingChange}. It is not active plan instruction until authorized.`,
-        );
-        if (primaryMed) {
+      } else {
+        // List every distinct pending medication-change candidate (multi-med proof)
+        const pendingAll = semanticDedupeLines(
+          [
+            ...cleanHandoffChanged,
+            ...cleanHandoffOpen,
+            ...cleanOpen,
+            ...cleanChanges,
+          ].filter((c) =>
+            /medication change|waiting for medication-plan|needs verification|reported dose/i.test(
+              c,
+            ),
+          ),
+        ).slice(0, 5);
+        if (pendingAll.length > 1) {
+          parts.push(
+            `${pendingAll.length} medication changes are waiting for review for ${recipientName}:\n` +
+              pendingAll.map((c, i) => `${i + 1}. ${c.replace(/\s*\(from [^)]+\)\s*$/i, "")}`).join("\n") +
+              `\nNone of these is active plan instruction until authorized.`,
+          );
+        } else if (pendingChange) {
+          parts.push(
+            `One medication change is waiting for review: ${pendingChange}. It is not active plan instruction until authorized.`,
+          );
+        } else {
+          parts.push(
+            `Current authorized instruction (not a new change from Relay):\n${proj.LATEST_PROVIDER_INSTRUCTIONS.join("\n") || "None on file."}`,
+          );
+          parts.push(
+            "I only report what is on the care plan. I do not invent medication changes.",
+          );
+        }
+        if (primaryMed && pendingAll.length) {
           parts.push(
             `Active authorized medication remains ${str(primaryMed.name)} ${str(primaryMed.dose)}.`,
           );
         }
-      } else {
-        parts.push(
-          `Current authorized instruction (not a new change from Relay):\n${proj.LATEST_PROVIDER_INSTRUCTIONS.join("\n") || "None on file."}`,
-        );
-        parts.push(
-          "I only report what is on the care plan. I do not invent medication changes.",
-        );
       }
     }
   }

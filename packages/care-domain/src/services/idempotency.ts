@@ -70,17 +70,60 @@ export function medAdminHash(args: {
   doseRecorded: string;
   administeredByPersonId: string;
   administeredAt?: string;
+  /** administered | not_administered | needs_review */
+  requestedState?: string;
 }): string {
   return semanticContentHash({
     careRecipientId: args.careRecipientId,
     actionType: "medication_administration",
     effectiveDay: dayBucket(args.administeredAt),
     payload: {
-      name: args.name,
-      dose: args.doseRecorded,
+      name: normalizeMedName(args.name),
+      dose: String(args.doseRecorded ?? "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim(),
       by: args.administeredByPersonId,
+      state: args.requestedState ?? "administered",
     },
   });
+}
+
+/** Stable med name for occurrence keys (no hard-coded product names). */
+export function normalizeMedName(name: string): string {
+  return String(name ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9 .%-]/g, "")
+    .trim()
+    .slice(0, 64);
+}
+
+/** Extract medication name from free-text caregiver statement when present. */
+export function extractMedNameFromStatement(statement: string): string | null {
+  const s = String(statement ?? "");
+  const m =
+    s.match(
+      /\b((?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)|(?:[A-Za-z]{4,}))\s+\d+\s*(?:mg|mcg|ml|units?)\b/i,
+    ) ||
+    s.match(
+      /\b(medication|lunch medication|morning medication|evening medication)\b/i,
+    );
+  if (m?.[1]) return m[1].trim();
+  if (/lunch/i.test(s) && /med/i.test(s)) return "Lunch medication";
+  return null;
+}
+
+/** Durable occurrence key for one med admin truth per recipient×day×actor×state. */
+export function medOccurrenceKey(args: {
+  careRecipientId: string;
+  name: string;
+  doseRecorded: string;
+  administeredByPersonId: string;
+  administeredAt?: string;
+  requestedState?: string;
+}): string {
+  return `mar-occ:${medAdminHash(args)}`;
 }
 
 export function appointmentChangeHash(args: {

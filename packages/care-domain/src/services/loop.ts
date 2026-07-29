@@ -44,8 +44,11 @@ import {
 import {
   appointmentChangeHash,
   communicationHash,
+  extractMedNameFromStatement,
   handoffHash,
   medAdminHash,
+  medOccurrenceKey,
+  normalizeMedName,
 } from "./idempotency.js";
 import {
   composeCareNote,
@@ -60,6 +63,13 @@ export interface CareLoopServiceConfig {
   defaultMode: "fixture" | "llm";
   provider?: LLMProvider;
   careRecipientNameResolver?: (id: string) => string;
+}
+
+function daySame(a?: string, b?: string): boolean {
+  const da = (a ?? "").slice(0, 10);
+  const db = (b ?? new Date().toISOString()).slice(0, 10);
+  if (!da || !db) return false;
+  return da === db;
 }
 
 export class CareLoopService {
@@ -270,33 +280,91 @@ export class CareLoopService {
       if (candidate.eventType === "medication_administration") {
         // Negation path already stored as note candidates only
         const doseRecorded = candidate.recordedDose ?? "as scheduled";
+        const medName =
+          extractMedNameFromStatement(candidate.statement) ||
+          extractMedNameFromStatement(bundle.understood.rawText ?? "") ||
+          "Lunch medication";
+        const requestedState = /not administered|was not given|not given/i.test(
+          candidate.statement + (bundle.understood.rawText ?? ""),
+        )
+          ? "not_administered"
+          : "administered";
         const hash = medAdminHash({
           careRecipientId: ctx.careRecipientId,
-          name: "Lunch medication",
+          name: medName,
           doseRecorded,
           administeredByPersonId: ctx.actorPersonId,
           administeredAt: now,
+          requestedState,
+        });
+        const occKey = medOccurrenceKey({
+          careRecipientId: ctx.careRecipientId,
+          name: medName,
+          doseRecorded,
+          administeredByPersonId: ctx.actorPersonId,
+          administeredAt: now,
+          requestedState,
         });
         const existingMed = this.config.store
           .getMedRecords(ctx.careRecipientId)
-          .find(
-            (m) =>
-              m.status === "recorded" &&
+          .find((m) => {
+            if (m.status !== "recorded" && m.status !== "needs_review") return false;
+            if (/not administered/i.test(m.doseRecorded ?? "")) return false;
+            const sameHash =
               medAdminHash({
                 careRecipientId: m.careRecipientId,
                 name: m.name,
                 doseRecorded: m.doseRecorded,
                 administeredByPersonId: m.administeredByPersonId,
                 administeredAt: m.administeredAt,
-              }) === hash,
-          );
-        if (existingMed) {
+                requestedState: "administered",
+              }) === hash;
+            const sameOccurrence =
+              normalizeMedName(m.name) === normalizeMedName(medName) &&
+              m.administeredByPersonId === ctx.actorPersonId &&
+              daySame(m.administeredAt, now);
+            return sameHash || sameOccurrence;
+          });
+        if (existingMed && requestedState === "administered") {
           medIds.push(existingMed.id);
+          // Mark candidate so event path can reuse durable occurrence
+          (candidate as { _medIdempotent?: string })._medIdempotent = occKey;
+          (candidate as { _existingMedId?: string })._existingMedId =
+            existingMed.id;
+        } else if (requestedState === "not_administered") {
+          // Correction: void prior same-day recorded admin for this med+actor
+          for (const m of this.config.store.getMedRecords(ctx.careRecipientId)) {
+            if (
+              m.status === "recorded" &&
+              normalizeMedName(m.name) === normalizeMedName(medName) &&
+              daySame(m.administeredAt, now)
+            ) {
+              this.config.store.addMedRecord({
+                ...m,
+                status: "voided",
+                epistemicStatus: "SUPERSEDED",
+              });
+            }
+          }
+          const mar: MedicationAdministrationRecord = {
+            id: this.config.store.newId("mar"),
+            careRecipientId: ctx.careRecipientId,
+            name: medName,
+            doseRecorded: "not administered",
+            administeredAt: now,
+            administeredByPersonId: ctx.actorPersonId,
+            status: "recorded",
+            epistemicStatus: "CONFIRMED",
+            source: candidate.sourceReference,
+          };
+          const saved = this.config.store.addMedRecord(mar);
+          medIds.push(saved.id);
+          (candidate as { _medIdempotent?: string })._medIdempotent = occKey;
         } else {
           const mar: MedicationAdministrationRecord = {
             id: this.config.store.newId("mar"),
             careRecipientId: ctx.careRecipientId,
-            name: "Lunch medication",
+            name: medName,
             doseRecorded,
             administeredAt: now,
             administeredByPersonId: ctx.actorPersonId,
@@ -304,8 +372,9 @@ export class CareLoopService {
             epistemicStatus: "CONFIRMED",
             source: candidate.sourceReference,
           };
-          this.config.store.addMedRecord(mar);
-          medIds.push(mar.id);
+          const saved = this.config.store.addMedRecord(mar);
+          medIds.push(saved.id);
+          (candidate as { _medIdempotent?: string })._medIdempotent = occKey;
         }
       }
 
@@ -705,6 +774,12 @@ export class CareLoopService {
           : candidate.epistemicStatus === "UNCERTAIN"
             ? "UNCERTAIN"
             : "CONFIRMED";
+      // Medication administration: durable occurrence dedupe for events too
+      if (candidate.eventType === "medication_administration") {
+        const evt = this.persistEvent(candidate, ctx, now, evidenceMode, status);
+        eventIds.push(evt.id);
+        continue;
+      }
       const evt = this.persistEvent(candidate, ctx, now, evidenceMode, status);
       eventIds.push(evt.id);
     }
@@ -1032,17 +1107,45 @@ export class CareLoopService {
           : truthState === "disputed"
             ? "unknown"
             : "reported",
-      dedupeKey: [
-        ctx.careRecipientId,
-        candidate.eventType,
-        eventAt,
-        ctx.actorPersonId,
-        candidate.statement.trim().toLowerCase().slice(0, 80),
-      ].join("|"),
+      dedupeKey: (() => {
+        if (candidate.eventType === "medication_administration") {
+          const medName =
+            extractMedNameFromStatement(candidate.statement) || "Lunch medication";
+          const dose = candidate.recordedDose ?? "as scheduled";
+          const state = /not administered|not given/i.test(candidate.statement)
+            ? "not_administered"
+            : "administered";
+          return medOccurrenceKey({
+            careRecipientId: ctx.careRecipientId,
+            name: medName,
+            doseRecorded: dose,
+            administeredByPersonId: ctx.actorPersonId,
+            administeredAt: now,
+            requestedState: state,
+          });
+        }
+        return [
+          ctx.careRecipientId,
+          candidate.eventType,
+          eventAt,
+          ctx.actorPersonId,
+          candidate.statement.trim().toLowerCase().slice(0, 80),
+        ].join("|");
+      })(),
       approvalState: "none",
       executionState: "none",
       correlationId: this.config.store.newId("corr"),
     };
+    // Durable event-level compare-and-set: reuse existing same occurrence
+    if (evt.dedupeKey) {
+      const prior = this.config.store
+        .getEvents(ctx.careRecipientId)
+        .find(
+          (e) =>
+            e.dedupeKey === evt.dedupeKey && e.epistemicStatus !== "SUPERSEDED",
+        );
+      if (prior) return prior;
+    }
     return this.config.store.addEvent(evt);
   }
 

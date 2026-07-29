@@ -5,6 +5,7 @@
 
 import {
   clusterObservations,
+  isProbeExcludedEvent,
   isSmokeResidueLine,
   plainDiscrepancyMessage,
   resolvePersonName,
@@ -194,8 +195,17 @@ export function buildProjections(input: {
       .reverse()
       .filter((e) => {
         const statement = str(e.statement ?? e.title);
-        // Keep audit events in store; exclude pure smoke residue from primary projection
-        if (isSmokeResidueLine(statement) && /\[(?:AZ|HOL|FMH)/i.test(statement)) {
+        // Keep audit events in store; exclude probes from primary projection
+        if (
+          isSmokeResidueLine(statement) ||
+          isProbeExcludedEvent({
+            statement,
+            title: str(e.title),
+            evidenceMode: str(e.evidenceMode),
+            notes: str((e as { notes?: string }).notes),
+            source: e.source as { label?: string; rawExcerpt?: string },
+          })
+        ) {
           return false;
         }
         return true;
