@@ -208,6 +208,14 @@ function exclusiveAnswerPlan(
   ) {
     return ["PREVIOUS_SHIFT"];
   }
+  // Next coverage must use timeline, not generic CARE_COVERAGE seed dump
+  if (
+    /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
+      q,
+    )
+  ) {
+    return ["NEXT_COVERAGE" as RelayIntent];
+  }
   if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
     return ["CARE_TEAM", "CARE_COVERAGE"];
   }
@@ -368,6 +376,7 @@ function composeAnswer(ctx: {
   }
 
   if (
+    intents.includes("NEXT_COVERAGE" as RelayIntent) ||
     /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
       question,
     )
