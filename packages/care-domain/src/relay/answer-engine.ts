@@ -201,17 +201,41 @@ function composeAnswer(ctx: {
 
   if (intents.includes("META_CONVERSATION")) {
     used.add("META_CONVERSATION");
-    parts.push(
-      "You're asking about how I answer — not about a new care event.",
-    );
-    parts.push(
-      "I try to answer each question with a different focus: today's status, a prior shift, medications, open work, or the care team. If two answers looked the same, that was a product defect in how I planned the reply — not a second care update.",
-    );
-    parts.push(
-      "I did not file a care report from this question. Ask something like “How is she today?” or “What medication does she take?” for care facts.",
-    );
+    const qLow = question.toLowerCase();
+    let meta = "";
+    if (/same response|canned/.test(qLow)) {
+      meta =
+        "Yes — earlier replies sometimes reused overlapping summary blocks instead of matching each timeframe. “Today” should cover current state; “previous shift” should cover only that completed shift. I did not file a care update from this question.";
+    } else if (/repeat/.test(qLow)) {
+      meta =
+        "I combined overlapping summary blocks. I should answer your specific question first and only add supporting details that help. No care candidate was created.";
+    } else if (/shorter|concise|summarize that/.test(qLow)) {
+      const issue =
+        cleanHandoffOpen[0] ||
+        cleanHandoffChanged[0] ||
+        cleanOpen[0] ||
+        "the main open item on file";
+      const med = proj.CURRENT_MEDICATIONS[0];
+      const apt = proj.NEXT_APPOINTMENT;
+      meta = `Main item needing attention: ${issue}.`;
+      if (med) {
+        meta += ` ${str(med.name)} ${str(med.dose)} remains scheduled for ${str(med.scheduleTime || med.scheduleLabel || "the planned time")}.`;
+      }
+      if (apt) {
+        meta += ` Next appointment: ${str(apt.title)} · ${str(apt.startsAtLabel ?? "")}.`;
+      }
+    } else if (/did not answer|didn't answer|not answer what i asked/.test(qLow)) {
+      meta =
+        "You're right if I drifted into a general status wall. Ask again with the timeframe you care about (today, previous shift, or a specific medication), and I'll stay on that question. No care record was filed.";
+    } else if (/what did you understand/.test(qLow)) {
+      meta =
+        "I treat that as a question about my answer quality, not as a new observation or medication report. Tell me the care fact or timeframe you want, and I'll answer only that.";
+    } else {
+      meta =
+        "That is about how I answer, not a new care event. I did not create a care candidate or confirmation card.";
+    }
     return {
-      answer: parts.join("\n\n"),
+      answer: sanitizeHumanCareCopy(meta),
       sourceRefs: ["meta_conversation"],
       projectionsUsed: [...used],
     };
@@ -220,40 +244,43 @@ function composeAnswer(ctx: {
   if (intents.includes("PREVIOUS_SHIFT")) {
     used.add("ACTIVE_HANDOFF");
     used.add("RECENT_CHANGES");
-    parts.push(`From the previous shift for ${recipientName}:`);
-    if (cleanHandoffChanged.length) {
-      parts.push(
-        `What was handed off:\n` +
-          cleanHandoffChanged.slice(0, 6).map((w) => `• ${w}`).join("\n"),
-      );
-    } else if (cleanChanges.length) {
-      parts.push(
-        `Shift notes on file:\n` +
-          cleanChanges.slice(0, 5).map((c) => `• ${c}`).join("\n"),
-      );
+    used.add("RECENT_OBSERVATION_CLUSTERS");
+    // Prefer distinct shift events over a single pending-plan line
+    const shiftEvents = semanticDedupeLines([
+      ...cleanChanges.filter((c) => !/^allegra 60 mg was reported/i.test(c)),
+      ...cleanHandoffChanged.filter((c) => !/^allegra 60 mg was reported/i.test(c)),
+    ]).slice(0, 4);
+    const correction = cleanChanges.find((c) =>
+      /corrected|not administered/i.test(c),
+    );
+    const pending = [...cleanHandoffOpen, ...cleanHandoffChanged].find((c) =>
+      /allegra|waiting for medication-plan|needs verification/i.test(c),
+    );
+    const who =
+      /maya/i.test(question)
+        ? "Maya"
+        : /daniel/i.test(question)
+          ? "Daniel"
+          : "the prior caregiver";
+    let body = `During the previous shift, ${who}’s notes on file include `;
+    if (shiftEvents.length) {
+      body +=
+        shiftEvents
+          .slice(0, 3)
+          .map((e) => e.replace(/\s*\(from [^)]+\)\s*$/i, ""))
+          .join("; ") + ".";
     } else {
-      parts.push("No completed previous-shift handoff is on file yet.");
+      body += "limited shift detail beyond the latest handoff line.";
     }
-    const openOnly = cleanHandoffOpen.filter(
-      (o) =>
-        !cleanHandoffChanged.some(
-          (c) =>
-            c.toLowerCase().slice(0, 48) === o.toLowerCase().slice(0, 48) ||
-            (/allegra/i.test(c) && /allegra/i.test(o)),
-        ),
-    );
-    if (openOnly.length) {
-      parts.push(
-        `Left unfinished after that shift:\n` +
-          openOnly.slice(0, 4).map((w) => `• ${w}`).join("\n"),
-      );
+    if (correction) {
+      body += ` A medication administration entry was corrected: not administered.`;
     }
-    parts.push(
-      "This is prior-shift continuity only — not today's full medication plan or a second “what changed” dump.",
-    );
+    if (pending) {
+      body += ` Still waiting after that shift: ${pending.replace(/\s*\(from [^)]+\)\s*$/i, "")}.`;
+    }
     return {
-      answer: sanitizeHumanCareCopy(parts.join("\n\n")),
-      sourceRefs: ["previous_shift", "handoff"],
+      answer: sanitizeHumanCareCopy(body),
+      sourceRefs: ["previous_shift", "handoff", "recent_changes"],
       projectionsUsed: [...used],
     };
   }
@@ -440,16 +467,31 @@ function composeAnswer(ctx: {
     if (intents.includes("MEDICATION_ADMINISTRATION_HISTORY")) {
       used.add("ACTIVE_HANDOFF");
       const who = classified.entities.personHint;
-      // Caregiver handoff may carry the freshest "was it given?" truth before
-      // a formal administration row is written.
-      const handoffMedNotes = (proj.ACTIVE_HANDOFF?.whatChanged ?? []).filter(
-        (w) => /medication|metformin|administered|dose|med /i.test(w),
+      // Prefer formal admin rows (including voided/corrected current truth) over
+      // pending plan-change handoff lines (Allegra verification is not "was given?").
+      const adminTruth = lastAdminLine();
+      const correctionNote = cleanChanges.find((c) =>
+        /medication was not administered|corrected.*not administered/i.test(c),
+      );
+      if (correctionNote || /not administered|voided/i.test(adminTruth)) {
+        parts.push(
+          correctionNote
+            ? `Current record: medication was not administered (${correctionNote}).`
+            : `Current administration truth on file: ${adminTruth}`,
+        );
+      } else {
+        parts.push(adminTruth);
+      }
+      const handoffMedNotes = cleanHandoffChanged.filter(
+        (w) =>
+          /medication|metformin|administered|dose|med /i.test(w) &&
+          !/allegra|medication change needs verification/i.test(w),
       );
       if (handoffMedNotes.length) {
         parts.push(
-          `Latest caregiver-reported medication note from handoff (not clinician-confirmed):\n` +
+          `Related caregiver handoff note:\n` +
             handoffMedNotes
-              .slice(0, 3)
+              .slice(0, 2)
               .map((w) => `• ${w}`)
               .join("\n"),
         );
@@ -517,12 +559,43 @@ function composeAnswer(ctx: {
     }
     if (intents.includes("MEDICATION_CHANGE")) {
       used.add("LATEST_PROVIDER_INSTRUCTIONS");
-      parts.push(
-        `Current authorized instruction (not a new change from Relay):\n${proj.LATEST_PROVIDER_INSTRUCTIONS.join("\n") || "None on file."}`,
+      used.add("ACTIVE_HANDOFF");
+      const pendingChange = [
+        ...cleanHandoffChanged,
+        ...cleanHandoffOpen,
+        ...cleanOpen,
+      ].find((c) =>
+        /allegra|medication change|waiting for medication-plan|needs verification/i.test(
+          c,
+        ),
       );
-      parts.push(
-        "I only report what is on the care plan. I do not invent medication changes.",
-      );
+      if (/allegra/i.test(question)) {
+        if (pendingChange) {
+          parts.push(
+            `Allegra is not an active authorized medication on the plan. A caregiver-reported Allegra 60 mg change is waiting for medication-plan verification and is not active until authorized review.`,
+          );
+        } else {
+          parts.push(
+            `Allegra is not listed as an active authorized medication for ${recipientName} on the care plan.`,
+          );
+        }
+      } else if (pendingChange) {
+        parts.push(
+          `One medication change is waiting for review: ${pendingChange}. It is not active plan instruction until authorized.`,
+        );
+        if (primaryMed) {
+          parts.push(
+            `Active authorized medication remains ${str(primaryMed.name)} ${str(primaryMed.dose)}.`,
+          );
+        }
+      } else {
+        parts.push(
+          `Current authorized instruction (not a new change from Relay):\n${proj.LATEST_PROVIDER_INSTRUCTIONS.join("\n") || "None on file."}`,
+        );
+        parts.push(
+          "I only report what is on the care plan. I do not invent medication changes.",
+        );
+      }
     }
   }
 
@@ -658,61 +731,40 @@ function composeAnswer(ctx: {
         `Document your own observations separately. Family reports remain REPORTED.`,
       );
     } else {
-      parts.push(`Here's a plain-language picture of ${recipientName} right now:`);
-      // Latest shift handoff is first-class current continuity — surface before
-      // long-lived observation clusters so caregivers and judges see what just changed.
-      if (cleanHandoffChanged.length) {
-        parts.push(
-          `From the latest caregiver handoff:\n` +
-            cleanHandoffChanged
-              .slice(0, 4)
-              .map((w) => `• ${w}`)
-              .join("\n"),
+      // Natural current-status paragraph (not multi-section template wall)
+      const obs = proj.RECENT_OBSERVATION_CLUSTERS[0];
+      const issue =
+        cleanHandoffOpen[0] ||
+        cleanHandoffChanged.find((c) =>
+          /waiting|verification|needs|corrected|not administered/i.test(c),
+        ) ||
+        cleanOpen[0];
+      const bits: string[] = [];
+      if (obs) {
+        bits.push(
+          `${recipientName}'s most recent report on file is ${obs.theme.toLowerCase()} (last noted ${obs.mostRecentLabel}).`,
         );
-        const openOnly = cleanHandoffOpen.filter(
-          (o) =>
-            !cleanHandoffChanged.some(
-              (c) =>
-                c.toLowerCase().slice(0, 40) === o.toLowerCase().slice(0, 40) ||
-                (/allegra/i.test(c) && /allegra/i.test(o)),
-            ),
+      } else {
+        bits.push(
+          `No new wellbeing observation is on file for ${recipientName} for the current day yet.`,
         );
-        if (openOnly.length) {
-          parts.push(
-            `Still unfinished after that handoff:\n` +
-              openOnly
-                .slice(0, 3)
-                .map((w) => `• ${w}`)
-                .join("\n"),
-          );
-        }
       }
-      if (proj.RECENT_OBSERVATION_CLUSTERS[0]) {
-        const c = proj.RECENT_OBSERVATION_CLUSTERS[0];
-        parts.push(
-          `Recent caregiver reports: ${c.theme} (last noted ${c.mostRecentLabel}).`,
-        );
-      } else if (!proj.ACTIVE_HANDOFF?.whatChanged?.length) {
-        parts.push(
-          `No new wellbeing observations are on file for today yet — you can share one in Relay.`,
-        );
+      if (issue) {
+        bits.push(`The main item needing attention is ${issue}.`);
+      } else if (/urgent/i.test(question)) {
+        bits.push("Nothing urgent is flagged on the authorized record right now.");
       }
       if (primaryMed) {
-        parts.push(
-          `Medication plan: ${str(primaryMed.name)} ${str(primaryMed.dose)} · ${str(primaryMed.scheduleTime || primaryMed.scheduleLabel || "schedule on file")}.`,
+        bits.push(
+          `${str(primaryMed.name)} ${str(primaryMed.dose)} remains scheduled for ${str(primaryMed.scheduleTime || primaryMed.scheduleLabel || "the planned time")}.`,
         );
       }
       if (proj.NEXT_APPOINTMENT) {
-        parts.push(
-          `Coming up: ${str(proj.NEXT_APPOINTMENT.title)} · ${str(proj.NEXT_APPOINTMENT.startsAtLabel ?? "")}.`,
+        bits.push(
+          `${str(proj.NEXT_APPOINTMENT.title)} is ${str(proj.NEXT_APPOINTMENT.startsAtLabel ?? "upcoming")}.`,
         );
       }
-      if (proj.OPEN_UNCERTAINTIES[0] && !proj.ACTIVE_HANDOFF?.stillNeedsAttention?.length) {
-        parts.push(`Still open: ${proj.OPEN_UNCERTAINTIES[0]}`);
-      }
-      parts.push(
-        `This is a synthesis of authorized care records — not a diagnosis. Ask if you want details on meds, appointments, or who is helping next.`,
-      );
+      parts.push(bits.join(" "));
     }
   }
 

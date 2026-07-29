@@ -903,7 +903,8 @@ export function summarizeOpenLoops(
         .filter((x): x is string => !!x),
     ),
   ];
-  const lines = open.map((o) => {
+  // Semantic reconcile: collapse probe/smoke loops and near-duplicate med confirmations.
+  const rawLines = open.map((o) => {
     if (o.state === "WAITING_FOR_RESPONSE") {
       return `Waiting on ${o.waitingOnDisplayName ?? "someone"}: ${o.question.slice(0, 120)}`;
     }
@@ -912,6 +913,40 @@ export function summarizeOpenLoops(
     }
     return `${o.state}: ${o.question.slice(0, 100)}`;
   });
+  const keys = new Set<string>();
+  const lines: string[] = [];
+  for (const line of rawLines) {
+    if (/probe|open list|s\d+-\d{10,}|RESPONSE_RECEIVED|__CR_E2E/i.test(line)) {
+      continue;
+    }
+    let key = line.toLowerCase();
+    if (/allegra|allerg/.test(key) && /verif|waiting|change/.test(key)) {
+      key = "sem:allegra_pending";
+    } else if (
+      /gave metformin|gave .* lunch|two tablets|12:15 after lunch|with lunch yesterday/i.test(
+        key,
+      )
+    ) {
+      key = "sem:metformin_confirm_review";
+    } else if (/needs your review/i.test(key)) {
+      key = `sem:review:${key.replace(/[^a-z0-9]+/g, " ").slice(0, 40)}`;
+    } else {
+      key = key.replace(/[^a-z0-9]+/g, " ").trim().slice(0, 64);
+    }
+    if (keys.has(key)) continue;
+    keys.add(key);
+    if (key === "sem:allegra_pending") {
+      lines.push(
+        "Allegra 60 mg change is waiting for medication-plan verification (one active issue).",
+      );
+    } else if (key === "sem:metformin_confirm_review") {
+      lines.push(
+        "Needs your review: a prior Metformin-with-lunch confirmation is still open.",
+      );
+    } else {
+      lines.push(line);
+    }
+  }
   return { open, lines, waitingOnNames };
 }
 

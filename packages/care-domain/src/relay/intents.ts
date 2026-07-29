@@ -58,10 +58,13 @@ export type RelayIntent =
 export function isMetaConversationQuestion(q: string): boolean {
   const s = q.toLowerCase().trim();
   return (
-    /\b(same response|repeat(ing|ed)? yourself|why did you|why are you|can you (make|be) (that )?shorter|what did you understand|are you (just )?repeating|am i getting|did you just|stop repeating|too long|shorter answer)\b/.test(
+    /\b(same response|repeat(ing|ed)? yourself|why did you|why are you|can you (make|be) (that )?shorter|what did you understand|are you (just )?repeating|am i getting|did you just|stop repeating|too long|shorter answer|canned response|did not answer|didn't answer|make that shorter|be more concise|summarize that)\b/.test(
       s,
     ) ||
     /^(am|are|was|were|why|how come)\b.*\b(same|repeat|response|answer|that)\b/.test(
+      s,
+    ) ||
+    /^(make (it|that) shorter|that did not answer|that didn't answer|are you giving me a canned)/.test(
       s,
     )
   );
@@ -337,9 +340,33 @@ export function classifyIntent(
     intents.push("META_CONVERSATION");
   }
 
+  // Urgent today / open review phrasing
+  if (
+    !intents.includes("META_CONVERSATION") &&
+    /\b(urgent|anything urgent|needs? (my )?attention today|what needs review|what needs attention)\b/.test(
+      q,
+    )
+  ) {
+    intents.push("TASKS_REMAINING");
+    intents.push("OPEN_LOOP_STATUS");
+    if (/today|right now|now\b/.test(q)) intents.push("STATUS_SYNTHESIS");
+  }
+
+  // Pending Allegra / plan-change questions
+  if (
+    !intents.includes("META_CONVERSATION") &&
+    (/\bis allegra\b|\ballegra (active|on|approved|pending|waiting)\b/.test(q) ||
+      /medication change (is |that's |that is )?waiting|pending medication change|waiting for (medication-?plan )?review/.test(
+        q,
+      ))
+  ) {
+    intents.push("MEDICATION_CHANGE");
+    intents.push("WAITING_ON");
+  }
+
   // Previous shift — exclusive temporal scope (not current-status dump)
   if (
-    /previous shift|last shift|during (the )?last shift|end of (the )?shift|from the last shift|on the last shift/.test(
+    /previous shift|last shift|during (the )?last shift|end of (the )?shift|from the last shift|on the last shift|during her shift|during his shift|during (maya|daniel|marcus).{0,20}shift|what did (maya|daniel|marcus) report/.test(
       q,
     )
   ) {

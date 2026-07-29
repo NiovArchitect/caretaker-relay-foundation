@@ -22,6 +22,7 @@ import {
   defaultInviteAccess,
   newInviteToken,
   answerRelayQuestion,
+  isMetaConversationQuestion,
   encodeAccessRequestUpdate,
   listAccessRequestsForRecipient,
   listAccessRequestsForRequester,
@@ -975,6 +976,23 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
+
+    // Server-side meta-conversation: never create care candidates / confirmation cards.
+    // Client assist is not sufficient — classification must live on the shared path.
+    if (isMetaConversationQuestion(text)) {
+      return reply.code(200).send({
+        ok: true,
+        kind: "refusal",
+        request_class: "META_CONVERSATION",
+        message:
+          "That is a conversation about how Relay answered — not a new care update. " +
+          "I did not create a care candidate or confirmation card. " +
+          "Ask a care question (status, previous shift, medications, open work) if you want care facts.",
+        evidence_mode: "SYNTHETIC_FOUNDATION_BACKED",
+        correlation_id: correlationId(request),
+      });
+    }
+
     // Low-confidence STT involving medication → force review note
     const stt = body.transcript_meta;
     const medLike = /medication|meds|dose|mg/i.test(text);
