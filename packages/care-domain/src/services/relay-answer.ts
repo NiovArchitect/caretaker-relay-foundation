@@ -6,8 +6,12 @@
 
 import type { CareStore } from "../store/memory-store.js";
 import type { CurrentCareState } from "../types.js";
-import { classifyIntent } from "../relay/intents.js";
+import { classifyIntent, type RelayIntent } from "../relay/intents.js";
 import { runAnswerEngine, type AnswerEngineResult } from "../relay/answer-engine.js";
+import {
+  sanitizeHumanCareCopy,
+  semanticDedupeLines,
+} from "../relay/util.js";
 import {
   conversationIdFor,
   listTurns,
@@ -197,6 +201,31 @@ export function canAnswerDeterministically(primary: string): boolean {
 }
 
 /** Shared path for guard / meta answers that already have full text. */
+function intentForProjection(projection: string): {
+  primary: RelayIntent;
+  intents: RelayIntent[];
+} {
+  switch (projection) {
+    case "OPEN_LOOPS":
+      return {
+        primary: "TASKS_REMAINING",
+        intents: ["TASKS_REMAINING", "OPEN_LOOP_STATUS", "WAITING_ON"],
+      };
+    case "CONTINUITY":
+      return {
+        primary: "CARE_COVERAGE",
+        intents: ["CARE_COVERAGE", "CARE_TEAM"],
+      };
+    case "SCHEDULING":
+      return {
+        primary: "APPOINTMENT_NEXT",
+        intents: ["APPOINTMENT_NEXT"],
+      };
+    default:
+      return { primary: "UNKNOWN_QUESTION", intents: ["UNKNOWN_QUESTION"] };
+  }
+}
+
 function persistDeterministicAnswer(
   req: RelayAnswerRequest,
   answer: string,
@@ -207,9 +236,35 @@ function persistDeterministicAnswer(
     req.principalId,
     req.careRecipientId,
   );
+  // Sanitize smoke/run residue from all special-path answers
+  const cleanedAnswer = sanitizeHumanCareCopy(
+    answer
+      .split("\n")
+      .filter((line) => {
+        const t = line.trim();
+        if (!t) return true;
+        if (/RESPONSE_RECEIVED|Open list\s+\d+|s\d+-\d{10,}/i.test(t))
+          return false;
+        return true;
+      })
+      .join("\n"),
+  );
+  // Collapse duplicate bullets after filter
+  const lines = cleanedAnswer.split("\n");
+  const bullets = lines.filter((l) => l.trim().startsWith("•"));
+  const nonBullets = lines.filter((l) => !l.trim().startsWith("•"));
+  const dedupedBullets = semanticDedupeLines(
+    bullets.map((b) => b.replace(/^•\s*/, "")),
+  ).map((b) => `• ${b}`);
+  const finalAnswer = [...nonBullets, ...dedupedBullets]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const mapped = intentForProjection(projection);
   const classified = {
-    intents: ["SAFETY_CONCERN" as const],
-    primary: "SAFETY_CONCERN" as const,
+    intents: mapped.intents,
+    primary: mapped.primary,
     decisionContext: "information" as const,
     entities: { references: [] as string[] },
     isQuestion: true,
@@ -223,14 +278,14 @@ function persistDeterministicAnswer(
     roleLabel: req.roleLabel,
     userMessage: req.question,
     classified: { ...classified, intents: [...classified.intents] },
-    answer,
+    answer: finalAnswer,
     sourceRefs,
     modelPath: "deterministic",
   });
   return {
-    answer,
-    intent: "SAFETY_CONCERN",
-    intents: ["SAFETY_CONCERN"],
+    answer: finalAnswer,
+    intent: mapped.primary,
+    intents: mapped.intents,
     persona: "family",
     sourceRefs,
     needsClarification: false,

@@ -661,10 +661,18 @@ function composeAnswer(ctx: {
               .map((w) => `• ${w}`)
               .join("\n"),
         );
-        if (cleanHandoffOpen.length) {
+        const openOnly = cleanHandoffOpen.filter(
+          (o) =>
+            !cleanHandoffChanged.some(
+              (c) =>
+                c.toLowerCase().slice(0, 40) === o.toLowerCase().slice(0, 40) ||
+                (/allegra/i.test(c) && /allegra/i.test(o)),
+            ),
+        );
+        if (openOnly.length) {
           parts.push(
             `Still unfinished after that handoff:\n` +
-              cleanHandoffOpen
+              openOnly
                 .slice(0, 3)
                 .map((w) => `• ${w}`)
                 .join("\n"),

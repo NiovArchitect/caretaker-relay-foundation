@@ -19,13 +19,15 @@ export function isSmokeResidueLine(text: string): boolean {
 export function sanitizeHumanCareCopy(text: string): string {
   return String(text ?? "")
     .replace(/\s*\[(?:AZ|HOL|FMH|S\d|PROBE|SMOKE|SEED)[^\]]*\]/gi, "")
-    .replace(/\b(?:AZms|HOLms|FMHms|S3b)\w*/gi, "")
+    .replace(/\b(?:AZms|HOLms|FMHms|S3b|PROBESEED)\w*/gi, "")
     .replace(/\bRESPONSE_RECEIVED:\s*/gi, "")
     .replace(/\bOpen list\s+\d+/gi, "Open coordination item")
     .replace(/\bs\d+-\d{10,}\b/gi, "")
     .replace(/\b__CR_E2E\b|\bJL-SMOKE\b|\bTORTURE\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .replace(/\s+([,.;:])/g, "$1")
+    // Preserve newlines (answer structure); collapse horizontal whitespace only
+    .replace(/[^\S\n]{2,}/g, " ")
+    .replace(/[ \t]+([,.;:])/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
