@@ -137,6 +137,14 @@ export function listWorkItems(
     rows = rows.filter(
       (w) => !isSmokeResidueLine(`${w.action} ${w.reason ?? ""}`),
     );
+    // Drop generic low-value “Needs an owner” shells without domain content
+    rows = rows.filter((w) => {
+      const a = `${w.action} ${w.reason ?? ""}`.trim();
+      if (/^follow up:\s*needs an owner$/i.test(w.action.trim())) return false;
+      if (/^needs an owner$/i.test(w.action.trim()) && !/medication|transport|access|appointment|handoff/i.test(a))
+        return false;
+      return true;
+    });
     // One card per real care issue (keep newest by updatedAt)
     const byKey = new Map<string, CareWorkItem>();
     for (const w of rows) {

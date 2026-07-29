@@ -45,7 +45,11 @@ import {
   listCoverage,
   seedDefaultCoverage,
 } from "./care-coverage.js";
-import { buildCareCoverageTimeline } from "./care-coverage-timeline.js";
+import {
+  buildCareCoverageTimeline,
+  formatNextCoverageAnswer,
+  formatPreviousCoverageAnswer,
+} from "./care-coverage-timeline.js";
 import { roleAwareRelayState } from "./role-projection.js";
 import {
   authorizeRelayQuestion,
@@ -212,6 +216,11 @@ function intentForProjection(projection: string): {
       return {
         primary: "TASKS_REMAINING",
         intents: ["TASKS_REMAINING", "OPEN_LOOP_STATUS", "WAITING_ON"],
+      };
+    case "COVERAGE_TIMELINE":
+      return {
+        primary: "CARE_COVERAGE",
+        intents: ["CARE_COVERAGE"],
       };
     case "CONTINUITY":
       return {
@@ -780,6 +789,64 @@ function answerWithState(
     );
   }
 
+  // Next / previous coverage questions MUST use CareCoverageTimeline — never
+  // the seed CARE_COVER_V1 "Helping now / Next" prose short-circuit.
+  const qCov = req.question.toLowerCase();
+  const isNextCaregiverQ =
+    /who works after me|who is (taking over|next|after me)|when does (the )?next (caregiver|helper|person)|next (caregiver|shift|helper)|who should receive my handoff|is anyone covering|has the next (caregiver|helper) accepted|covering tonight|who takes over|handoff target|who (do i|should i) hand (off|over)/i.test(
+      qCov,
+    );
+  const isPreviousCaregiverQ =
+    /before my shift|previous (caregiver|caretaker|shift)|who (worked|helped|covered).{0,40}before|prior (caregiver|shift)/i.test(
+      qCov,
+    );
+  if (isNextCaregiverQ || isPreviousCaregiverQ) {
+    const timeline = buildCareCoverageTimeline(
+      store,
+      req.careRecipientId,
+      req.principalId,
+    );
+    let answer: string;
+    if (isPreviousCaregiverQ) {
+      answer = formatPreviousCoverageAnswer(timeline, req.recipientDisplayName);
+      if (latest?.stillNeedsAttention?.length) {
+        answer +=
+          ` They left open: ` +
+          latest.stillNeedsAttention
+            .slice(0, 3)
+            .map((w) => sanitizeHumanCareCopy(w))
+            .filter(Boolean)
+            .join("; ") +
+          ".";
+      }
+    } else {
+      // Next caregiver / handoff target / acceptance
+      answer = formatNextCoverageAnswer(timeline, req.recipientDisplayName);
+      const n = timeline.next;
+      if (n.caregiver_name) {
+        if (/accept/i.test(qCov)) {
+          answer =
+            n.status && /accepted|active|scheduled|planned/i.test(n.status)
+              ? `${n.caregiver_name}'s next coverage is ${String(n.status).replace(/_/g, " ")}.`
+              : `I do not have an accepted next-caregiver assignment on file for ${req.recipientDisplayName}.`;
+        } else if (/handoff|receive/i.test(qCov)) {
+          answer = `Your handoff should go to ${n.caregiver_name}${
+            n.start ? ` (scheduled to begin when coverage starts)` : ""
+          }.`;
+        }
+      } else if (/handoff|receive/i.test(qCov)) {
+        answer =
+          "No next caregiver is scheduled yet. Your current handoff will remain a draft until coverage is assigned.";
+      }
+    }
+    return persistDeterministicAnswer(
+      req,
+      answer,
+      ["coverage_timeline", isPreviousCaregiverQ ? "previous" : "next"],
+      "COVERAGE_TIMELINE",
+    );
+  }
+
   const personIntent = preClassified.intents.find((i) =>
     [
       "CARE_COVERAGE",
@@ -801,31 +868,47 @@ function answerWithState(
     const recipient = store.getRecipient(req.careRecipientId);
     let answer = "";
     if (personIntent === "CARE_COVERAGE") {
-      seedDefaultCoverage(store, req.careRecipientId);
-      const slots = listCoverage(store, req.careRecipientId);
-      answer =
-        formatCoverageHuman(slots) +
-        (slots.some((s) => s.phase === "next")
-          ? `\n\nI can prepare a handoff for the next helper before they arrive.`
-          : "");
-      // Append latest handoff so "what should the next caregiver know?" evolves
-      // with real shift data instead of static coverage alone.
-      if (latest?.whatChanged?.length) {
-        answer +=
-          `\n\nWhat the next caregiver should know (latest handoff):\n` +
-          latest.whatChanged
-            .slice(0, 6)
-            .map((w) => `• ${w}`)
-            .join("\n");
-        if (latest.stillNeedsAttention?.length) {
-          answer +=
-            `\n\nStill open:\n` +
-            latest.stillNeedsAttention
-              .slice(0, 4)
-              .map((w) => `• ${w}`)
-              .join("\n");
+      // Generic coverage overview still uses timeline (not seed-only prose)
+      const timeline = buildCareCoverageTimeline(
+        store,
+        req.careRecipientId,
+        req.principalId,
+      );
+      const parts: string[] = [];
+      if (timeline.current.caregiver_name) {
+        const ct = timeline.current.coverage_type?.replace(/_/g, " ") ?? "coverage";
+        parts.push(
+          `Current ${ct}: ${timeline.current.caregiver_name}` +
+            (timeline.current.role ? ` · ${timeline.current.role}` : "") +
+            (timeline.current.is_ongoing_primary_coverage
+              ? " (ongoing primary family coverage)"
+              : ""),
+        );
+        if (timeline.current.start && timeline.current.end) {
+          parts.push(
+            `Hours: ${timeline.current.start} – ${timeline.current.end}`,
+          );
         }
       }
+      if (timeline.previous.caregiver_name) {
+        parts.push(
+          `Previous: ${timeline.previous.caregiver_name}` +
+            (timeline.previous.start && timeline.previous.end
+              ? ` (${timeline.previous.start} – ${timeline.previous.end})`
+              : ""),
+        );
+      }
+      if (timeline.next.caregiver_name) {
+        parts.push(
+          `Next: ${timeline.next.caregiver_name}` +
+            (timeline.next.start ? ` starts ${timeline.next.start}` : ""),
+        );
+      } else {
+        parts.push(
+          "No next caregiver is scheduled yet. A handoff can stay as a draft until coverage is assigned.",
+        );
+      }
+      answer = parts.join("\n");
     } else if (personIntent === "TRANSPORTATION") {
       const notes = recipient?.profile?.transportationNotes;
       const apts = store.getAppointments(req.careRecipientId);

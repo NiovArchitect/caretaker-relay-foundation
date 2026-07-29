@@ -20,6 +20,10 @@ export type CoverageType =
   | "temporary_family_coverage"
   | "professional_assignment"
   | "documentation_window"
+  | "clinical_oversight"
+  | "review_authority"
+  | "care_team_membership"
+  | "access_only"
   | "no_current_coverage";
 
 export type CareCoverageParty = {
@@ -157,31 +161,62 @@ export function buildCareCoverageTimeline(
     .sort((a, b) => Date.parse(b.shiftStart) - Date.parse(a.shiftStart));
 
   const rel = store.getRelationship(careRecipientId, principalId);
+  const roleBlob = `${rel?.role ?? ""} ${rel?.roleLabel ?? ""} ${principalId}`;
+  const isClinician =
+    /physician|provider|clinician|doctor|reviewer|md\b|np\b/i.test(roleBlob) ||
+    principalId === "p-dr-shah";
+  const isProfessional =
+    /professional|paid_caregiver|dsp|direct support/i.test(roleBlob) ||
+    principalId === "p-walter";
   const isPrimaryFamily =
     !!rel &&
     rel.status === "active" &&
+    !isClinician &&
     (/primary|family/i.test(`${rel.role} ${rel.roleLabel}`) ||
       (rel.access?.allowedActions ?? []).includes("*") ||
       (rel.access?.allowedActions ?? []).includes("control"));
+  const isFamilyHelper =
+    !!rel &&
+    rel.status === "active" &&
+    !isClinician &&
+    !isProfessional &&
+    /family|friend|adult_child/i.test(`${rel.role} ${rel.roleLabel}`);
 
   const slots = listCoverage(store, careRecipientId);
-  const slotNow = slots.find((s) => s.phase === "helping_now");
-  const slotNext = slots.find((s) => s.phase === "next");
+  // Next coverage slots must be direct-care helpers, never clinicians
+  const slotNext = slots.find(
+    (s) =>
+      s.phase === "next" &&
+      !/physician|provider|clinician|doctor/i.test(s.roleLabel ?? ""),
+  );
 
-  // PREVIOUS: latest completed shift before now (not care-team order)
+  // PREVIOUS: latest completed *care* shift (not clinical review)
   let previous = emptyParty();
   if (completed[0]) {
     previous = fromShift(store, completed[0], "professional_assignment");
-    previous.role = nameOf(store, completed[0].assigneePersonId)
-      ? previous.role
-      : previous.role;
   }
 
-  // CURRENT: active shift for principal, else any active shift, else ongoing primary
+  // CURRENT: role-correct typing — clinicians are not "covering a shift"
   let current = emptyParty();
   const myActive = active.find((s) => s.assigneePersonId === principalId);
-  if (myActive) {
-    current = fromShift(store, myActive, "scheduled_shift");
+  if (isClinician && !myActive) {
+    current = {
+      coverage_id: `clinical-${careRecipientId}-${principalId}`,
+      caregiver_id: principalId,
+      caregiver_name: nameOf(store, principalId),
+      role: rel?.roleLabel ?? "Authorized clinical reviewer",
+      start: null,
+      end: null,
+      status: "active",
+      coverage_type: "clinical_oversight",
+      is_ongoing_primary_coverage: false,
+    };
+  } else if (myActive) {
+    current = fromShift(
+      store,
+      myActive,
+      isProfessional ? "professional_assignment" : "scheduled_shift",
+    );
     current.is_ongoing_primary_coverage = false;
     const end = Date.parse(myActive.shiftEnd);
     if (!Number.isNaN(end) && now > end) {
@@ -200,24 +235,41 @@ export function buildCareCoverageTimeline(
       coverage_type: "ongoing_primary_family_coverage",
       is_ongoing_primary_coverage: true,
     };
-  } else if (active[0]) {
-    current = fromShift(
-      store,
-      active[0],
-      active[0].assigneePersonId.startsWith("p-walter")
-        ? "professional_assignment"
-        : "scheduled_shift",
-    );
-  } else if (slotNow) {
+  } else if (isFamilyHelper) {
     current = {
-      coverage_id: slotNow.id,
-      caregiver_id: slotNow.personId,
-      caregiver_name: slotNow.personDisplayName,
-      role: slotNow.roleLabel,
+      coverage_id: `family-${careRecipientId}-${principalId}`,
+      caregiver_id: principalId,
+      caregiver_name: nameOf(store, principalId),
+      role: rel?.roleLabel ?? "Family caregiver",
       start: null,
       end: null,
-      status: "helping_now",
+      status: "active",
       coverage_type: "temporary_family_coverage",
+      is_ongoing_primary_coverage: false,
+    };
+  } else if (isProfessional) {
+    // DSP with relationship but no active formal shift
+    current = {
+      coverage_id: `prof-access-${careRecipientId}-${principalId}`,
+      caregiver_id: principalId,
+      caregiver_name: nameOf(store, principalId),
+      role: rel?.roleLabel ?? "Professional caregiver",
+      start: null,
+      end: null,
+      status: rel?.status ?? "active",
+      coverage_type: "access_only",
+      is_ongoing_primary_coverage: false,
+    };
+  } else if (rel?.status === "active") {
+    current = {
+      coverage_id: `member-${careRecipientId}-${principalId}`,
+      caregiver_id: principalId,
+      caregiver_name: nameOf(store, principalId),
+      role: rel.roleLabel ?? "Care team member",
+      start: null,
+      end: null,
+      status: "active",
+      coverage_type: "care_team_membership",
       is_ongoing_primary_coverage: false,
     };
   } else {
@@ -228,12 +280,24 @@ export function buildCareCoverageTimeline(
     };
   }
 
-  // NEXT: next scheduled/accepted after now, else coverage slot next (not care-team dump)
+  // NEXT: formal care shift or family coverage slot only — never clinicians
   let next = emptyParty();
-  const nextShift =
-    upcoming.find((s) => s.assigneePersonId !== principalId) ?? upcoming[0];
+  const nextShift = upcoming.find((s) => {
+    if (s.assigneePersonId === principalId) return false;
+    const r = store.getRelationship(careRecipientId, s.assigneePersonId);
+    const blob = `${r?.role ?? ""} ${r?.roleLabel ?? ""} ${s.assigneePersonId}`;
+    return !/physician|provider|clinician|doctor/i.test(blob);
+  });
   if (nextShift) {
-    next = fromShift(store, nextShift, "scheduled_shift");
+    const r = store.getRelationship(careRecipientId, nextShift.assigneePersonId);
+    const prof = /professional|paid|dsp/i.test(
+      `${r?.role ?? ""} ${r?.roleLabel ?? ""} ${nextShift.assigneePersonId}`,
+    );
+    next = fromShift(
+      store,
+      nextShift,
+      prof ? "professional_assignment" : "scheduled_shift",
+    );
   } else if (slotNext && slotNext.personId !== principalId) {
     next = {
       coverage_id: slotNext.id,
@@ -353,13 +417,20 @@ export function formatNextCoverageAnswer(
 ): string {
   const n = timeline.next;
   if (!n.caregiver_name && !n.caregiver_id) {
-    return `No next caregiver is scheduled yet for ${recipientName}. Relay can help request coverage.`;
+    return `No next caregiver is scheduled yet for ${recipientName}. Your current handoff will remain a draft until coverage is assigned.`;
+  }
+  // Never present clinical oversight as "next caregiver"
+  if (
+    n.coverage_type === "clinical_oversight" ||
+    n.coverage_type === "review_authority"
+  ) {
+    return `No next caregiver is scheduled yet for ${recipientName}. A clinician may have review authority, but that is not care coverage.`;
   }
   const name = n.caregiver_name ?? "The next caregiver";
   if (n.start) {
     return `${name} is scheduled to begin at ${formatLocal(n.start, timeline.recipient_timezone)}.`;
   }
-  return `${name} is listed as next for ${recipientName}, but an exact start time is not on file yet.`;
+  return `${name} is listed as next coverage for ${recipientName}, but an exact start time is not on file yet.`;
 }
 
 function formatLocal(iso: string, timeZone: string): string {
