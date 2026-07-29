@@ -164,7 +164,10 @@ function exclusiveAnswerPlan(
   if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
     return ["CARE_TEAM", "CARE_COVERAGE"];
   }
-  if (primary.startsWith("MEDICATION_")) return [primary];
+  if (primary.startsWith("MEDICATION_") || /allegra|medication change/i.test(q)) {
+    if (/allegra|medication change/i.test(q)) return ["MEDICATION_CHANGE"];
+    return [primary];
+  }
   if (primary.startsWith("APPOINTMENT_")) return [primary];
   // Default: primary only (blocks multi-template walls)
   return [primary];
@@ -247,8 +250,15 @@ function composeAnswer(ctx: {
     used.add("RECENT_OBSERVATION_CLUSTERS");
     // Prefer distinct shift events over a single pending-plan line
     const shiftEvents = semanticDedupeLines([
-      ...cleanChanges.filter((c) => !/^allegra 60 mg was reported/i.test(c)),
-      ...cleanHandoffChanged.filter((c) => !/^allegra 60 mg was reported/i.test(c)),
+      ...cleanChanges.filter(
+        (c) =>
+          !/^allegra 60 mg was reported/i.test(c) &&
+          !/\bprobe\b/i.test(c),
+      ),
+      ...cleanHandoffChanged.filter(
+        (c) =>
+          !/^allegra 60 mg was reported/i.test(c) && !/\bprobe\b/i.test(c),
+      ),
     ]).slice(0, 4);
     const correction = cleanChanges.find((c) =>
       /corrected|not administered/i.test(c),
@@ -750,7 +760,9 @@ function composeAnswer(ctx: {
         );
       }
       if (issue) {
-        bits.push(`The main item needing attention is ${issue}.`);
+        bits.push(
+          `The main item needing attention is ${issue.replace(/\.\s*$/, "")}.`,
+        );
       } else if (/urgent/i.test(question)) {
         bits.push("Nothing urgent is flagged on the authorized record right now.");
       }

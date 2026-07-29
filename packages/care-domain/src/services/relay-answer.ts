@@ -665,11 +665,13 @@ function answerWithState(
     };
   }
 
-  // Unresolved work — orchestration + open uncertainties (not generic fallback)
+  // Unresolved work — orchestration + open uncertainties (not generic fallback).
+  // Do not steal Allegra / medication-change questions into the open-loop dump.
   if (
-    preClassified.intents.includes("WAITING_ON") ||
-    preClassified.intents.includes("OPEN_LOOP_STATUS") ||
-    isUnresolvedWorkQuestion(req.question)
+    !/allegra|medication change/i.test(req.question) &&
+    (preClassified.intents.includes("WAITING_ON") ||
+      preClassified.intents.includes("OPEN_LOOP_STATUS") ||
+      isUnresolvedWorkQuestion(req.question))
   ) {
     const loops = summarizeOpenLoops(
       store,
@@ -1037,8 +1039,11 @@ function answerWithState(
   }
 
   // Open-loop path already handled earlier via isUnresolvedWorkQuestion + intents.
-  // Keep a late safety net for residual phrasing.
-  if (isUnresolvedWorkQuestion(req.question)) {
+  // Keep a late safety net for residual phrasing (never Allegra/plan-change).
+  if (
+    isUnresolvedWorkQuestion(req.question) &&
+    !/allegra|medication change/i.test(req.question)
+  ) {
     const loops = summarizeOpenLoops(
       store,
       req.careRecipientId,

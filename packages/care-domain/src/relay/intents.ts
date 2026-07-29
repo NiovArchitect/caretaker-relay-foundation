@@ -110,6 +110,14 @@ export function isMedicationRedoseSafetyQuestion(q: string): boolean {
 /** Open coordination / unresolved work family. */
 export function isUnresolvedWorkQuestion(q: string): boolean {
   const s = q.toLowerCase().trim();
+  // Medication-plan / Allegra questions are not generic open-loop dumps
+  if (
+    /\ballegra\b/.test(s) ||
+    /medication change/.test(s) ||
+    /is (it|allegra|that) active/.test(s)
+  ) {
+    return false;
+  }
   return (
     /\bunresolved\b/.test(s) ||
     /\bunfinished\b/.test(s) ||
