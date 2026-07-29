@@ -50,20 +50,27 @@ export function buildOrderedMedicationCandidatesFromLines(
 ): OrderedMedicationCandidate[] {
   const lines = linesIn.map(str).filter(Boolean);
 
-  const raw: Array<Omit<OrderedMedicationCandidate, "display_index" | "candidate_id">> =
-    [];
+  const raw: Array<
+    Omit<OrderedMedicationCandidate, "display_index" | "candidate_id"> & {
+      force_index?: number;
+    }
+  > = [];
   const seen = new Set<string>();
+  let sawNumberedList = false;
 
   for (const line of lines) {
     if (!line || isSmokeResidueLine(line)) continue;
     // Accept numbered Relay list lines: "1. Cetirizine 10mg for allergies"
+    // Preserve the printed index so ordinals match the user-visible list.
     const numbered = line.match(
-      /^\s*\d+\.\s*([A-Za-z][A-Za-z-]{2,})(?:\s+(\d+\s*(?:mg|mcg|ml|units?)))?(?:\s+for\s+([^(\n]+))?/i,
+      /^\s*(\d+)\.\s*([A-Za-z][A-Za-z-]{2,})(?:\s+(\d+\s*(?:mg|mcg|ml|units?)))?(?:\s+for\s+([^(\n]+))?/i,
     );
     if (numbered) {
-      const medication = numbered[1]!;
-      const dose = (numbered[2] || "").trim();
-      const reason = (numbered[3] || "pending review").trim();
+      sawNumberedList = true;
+      const force_index = Number(numbered[1]);
+      const medication = numbered[2]!;
+      const dose = (numbered[3] || "").trim();
+      const reason = (numbered[4] || "pending review").trim();
       if (/medication|none|active|authorized/i.test(medication)) continue;
       const key = `${medication.toLowerCase()}|${dose.toLowerCase()}`;
       if (seen.has(key)) continue;
@@ -79,6 +86,7 @@ export function buildOrderedMedicationCandidatesFromLines(
         report_time: null,
         review_state: "pending_plan_verification",
         source_line: sanitizeHumanCareCopy(line),
+        force_index,
       });
       continue;
     }
@@ -144,21 +152,30 @@ export function buildOrderedMedicationCandidatesFromLines(
     });
   }
 
-  // Deterministic order: report_time ASC (unknown last), then medication, then dose
-  raw.sort((a, b) => {
-    const ta = a.report_time || "9999";
-    const tb = b.report_time || "9999";
-    if (ta !== tb) return ta.localeCompare(tb);
-    const n = a.medication.localeCompare(b.medication);
-    if (n !== 0) return n;
-    return a.dose.localeCompare(b.dose);
-  });
+  if (sawNumberedList) {
+    // Keep user-visible list order (force_index), not name sort
+    raw.sort((a, b) => (a.force_index ?? 99) - (b.force_index ?? 99));
+  } else {
+    // Deterministic order: report_time ASC (unknown last), then medication, then dose
+    raw.sort((a, b) => {
+      const ta = a.report_time || "9999";
+      const tb = b.report_time || "9999";
+      if (ta !== tb) return ta.localeCompare(tb);
+      const n = a.medication.localeCompare(b.medication);
+      if (n !== 0) return n;
+      return a.dose.localeCompare(b.dose);
+    });
+  }
 
-  return raw.slice(0, max).map((c, i) => ({
-    ...c,
-    display_index: i + 1,
-    candidate_id: `medcand-${c.medication.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${c.dose.replace(/\s+/g, "") || "na"}-${i + 1}`,
-  }));
+  return raw.slice(0, max).map((c, i) => {
+    const display_index = sawNumberedList && c.force_index ? c.force_index : i + 1;
+    const { force_index: _f, ...rest } = c;
+    return {
+      ...rest,
+      display_index,
+      candidate_id: `medcand-${c.medication.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${c.dose.replace(/\s+/g, "") || "na"}-${display_index}`,
+    };
+  });
 }
 
 export function buildOrderedMedicationCandidates(
