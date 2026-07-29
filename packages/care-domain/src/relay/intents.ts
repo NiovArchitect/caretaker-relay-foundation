@@ -367,12 +367,12 @@ export function classifyIntent(
   if (
     !intents.includes("META_CONVERSATION") &&
     (/\bis allegra\b|\ballegra (active|on|approved|pending|waiting)\b/.test(q) ||
-      /medication change (is |that's |that is )?waiting|pending medication change|waiting for (medication-?plan )?review/.test(
+      /medication change (is |that's |that is )?waiting|what medication change is waiting|pending medication change|waiting for (medication-?plan )?review|medication changes? (are |is )?waiting/.test(
         q,
       ))
   ) {
     intents.push("MEDICATION_CHANGE");
-    intents.push("WAITING_ON");
+    // Do not also push WAITING_ON — that steals the answer into open-loop Metformin dump
   }
 
   // Previous shift — exclusive temporal scope (not current-status dump)

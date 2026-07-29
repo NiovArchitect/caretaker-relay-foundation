@@ -16,6 +16,7 @@ import {
   conversationIdFor,
   listTurns,
   persistTurn,
+  resolveContextualFollowUp,
   resolveWithDurableMemory,
   type RelayTurnRecord,
 } from "../relay/conversation-memory.js";
@@ -584,7 +585,36 @@ function answerWithState(
   }
 
   // Continuity + person + scheduling intents
-  const preClassified = classifyIntent(req.question, priorEntities);
+  let preClassified = classifyIntent(req.question, priorEntities);
+  preClassified = resolveWithDurableMemory(
+    store,
+    req.principalId,
+    req.careRecipientId,
+    preClassified,
+    req.question,
+  );
+
+  // Short follow-ups: resolve against prior turn/focus before generic UNKNOWN
+  const contextual = resolveContextualFollowUp(
+    store,
+    req.principalId,
+    req.careRecipientId,
+    req.recipientDisplayName,
+    req.question,
+  );
+  if (contextual.handled && contextual.answer) {
+    return persistDeterministicAnswer(
+      req,
+      sanitizeHumanCareCopy(contextual.answer),
+      [
+        `conversation:follow_up:${contextual.confidence ?? "medium"}`,
+        contextual.selectedReferent
+          ? `referent:${contextual.selectedReferent}`
+          : "referent:prior_answer",
+      ],
+      contextual.modelPath === "clarification" ? "CLARIFICATION" : "CONTEXT_FOLLOW_UP",
+    );
+  }
 
   // Medication redose safety — must not inherit admin-history "Yes" from prior turns
   if (

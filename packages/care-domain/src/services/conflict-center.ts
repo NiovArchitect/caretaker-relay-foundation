@@ -99,7 +99,7 @@ export function listConflicts(
       careRecipientId,
       kind: "schedule",
       status: "open",
-      title: "Schedule / report conflict",
+      title: "Schedule disagreement",
       summary: e.statement,
       sides: [e, ...peers].map((x) => ({
         eventId: x.id,
@@ -111,7 +111,7 @@ export function listConflicts(
         confidence: x.confidenceLabel,
       })),
       whyCannotDecide:
-        "Multiple authorized reports disagree. Relay will not silently pick one.",
+        "Two care notes about the schedule do not match. Choose which note is correct, or keep both on file for review.",
       authorizedResolverRoles: ["family_primary", "clinician", "controlling"],
       availableActions: ["confirm_side_a", "confirm_side_b", "mark_both_reported", "open_review"],
       createdAt: e.reportAt ?? e.occurredAt,
