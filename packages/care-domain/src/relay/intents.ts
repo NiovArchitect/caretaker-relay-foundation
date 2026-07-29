@@ -564,6 +564,24 @@ export function classifyIntent(
       intents.push("CARE_COVERAGE");
   }
 
+  // Operating plan — "what am I doing today / on my shift"
+  if (
+    /\bwhat am i (doing|handling|working on)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift today\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b|\bpriorit(y|ies) today\b/.test(
+      q,
+    )
+  ) {
+    intents.push("TASKS_NOW");
+    intents.push("CHANGES_TODAY");
+  }
+  if (
+    /\b(on my shift|this shift|during (my )?shift|assigned to me (today|this shift)|shift (plan|work|tasks))\b/.test(
+      q,
+    )
+  ) {
+    intents.push("TASKS_NOW");
+    intents.push("TASKS_REMAINING");
+  }
+
   // Multi-turn: user selects offered slot e.g. "Wednesday, July 29 · 2:00 PM PDT"
   if (
     (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(q) &&
