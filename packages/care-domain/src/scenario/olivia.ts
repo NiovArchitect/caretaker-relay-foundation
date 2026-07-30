@@ -12,6 +12,7 @@ import type {
   CareRecipient,
 } from "../types.js";
 import { seedDefaultCoverage } from "../services/care-coverage.js";
+import { seedEvelynPrnOrders } from "../services/prn-medication.js";
 
 export const HOUSEHOLD_OLIVIA = "hh-olivia";
 export const HOUSEHOLD_OTHER = "hh-other";
@@ -357,6 +358,9 @@ export function seedOliviaScenario(store: CareStore): void {
   });
 
   store.upsertMedSchedule(medicationSchedule);
+
+  // Authorized PRN (as-needed) acetaminophen for pain — synthetic lab order
+  seedEvelynPrnOrders(store, careRecipient.id);
 
   // Seed last administration for conversation follow-ups (synthetic).
   if (store.getMedRecords(careRecipient.id).length === 0) {

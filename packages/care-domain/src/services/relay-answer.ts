@@ -56,6 +56,12 @@ import {
   filterStateByDomains,
   auditRelayAccess,
 } from "./relay-authorization.js";
+import {
+  answerPrnQuestion,
+  createOrAdvancePrnEpisode,
+  reassessPrnEpisode,
+  seedEvelynPrnOrders,
+} from "./prn-medication.js";
 
 export type RelayAnswerRequest = {
   question: string;
@@ -623,6 +629,141 @@ function answerWithState(
           : "referent:prior_answer",
       ],
       contextual.modelPath === "clarification" ? "CLARIFICATION" : "CONTEXT_FOLLOW_UP",
+    );
+  }
+
+  // PRN (as-needed) medication — authorized order + charting episode path
+  seedEvelynPrnOrders(store, req.careRecipientId);
+
+  // Confirm PRN charting
+  if (
+    /^(confirm prn|confirm as-needed|confirm the prn|yes,? chart (the )?prn|looks right[,.]? chart prn)\b/i.test(
+      req.question.trim(),
+    )
+  ) {
+    const last = listTurns(store, req.principalId, req.careRecipientId, 4)
+      .reverse()
+      .find((t) => /as-needed check|Ready to verify|confirm PRN/i.test(t.answerSummary));
+    const med =
+      last?.answerSummary.match(/\*\*As-needed check for ([^*]+)\*\*/i)?.[1] ||
+      last?.answerSummary.match(/Acetaminophen|Tylenol|[A-Z][a-z]+/)?.[0] ||
+      "Acetaminophen";
+    const symptom =
+      last?.answerSummary.match(/Reason:\s*([^\n(]+)/i)?.[1]?.trim() || "pain";
+    const severity =
+      last?.answerSummary.match(/\(([^)]+)\)/)?.[1] || undefined;
+    const created = createOrAdvancePrnEpisode(store, {
+      careRecipientId: req.careRecipientId,
+      actorPersonId: req.principalId,
+      actorDisplayName: req.principalDisplayName,
+      medicationHint: med,
+      symptom,
+      severityBefore: severity,
+      confirm: true,
+    });
+    if (created.ok) {
+      return persistDeterministicAnswer(
+        req,
+        sanitizeHumanCareCopy(created.plainLanguage),
+        ["prn:administered", created.episode.id],
+        "PRN_ADMIN",
+      );
+    }
+    return persistDeterministicAnswer(
+      req,
+      sanitizeHumanCareCopy(created.message),
+      ["prn:blocked"],
+      "PRN_BLOCKED",
+    );
+  }
+
+  // Effectiveness / reassessment follow-up (only when open PRN episode likely)
+  if (
+    /^(it )?(helped|didn'?t help|did not help|no (clear )?change|worse|worsened|better)\.?$/i.test(
+      req.question.trim(),
+    ) ||
+    /^(pain is |it is )?(down to|better|worse)/i.test(req.question.trim()) ||
+    /how is .{0,20}(pain|nausea|itch|feeling) now/i.test(qLow)
+  ) {
+    let effect: "improved" | "unchanged" | "worsened" | "unable_to_assess" =
+      "unable_to_assess";
+    if (/help|better|improved|down to|lower|comfort/i.test(qLow)) effect = "improved";
+    else if (/didn'?t help|did not help|no (clear )?change|unchanged|same/i.test(qLow))
+      effect = "unchanged";
+    else if (/worse|worsened|higher|more pain/i.test(qLow)) effect = "worsened";
+    const sev =
+      req.question.match(/(\d+)\s*\/\s*10/)?.[0] ||
+      req.question.match(/down to (?:a )?(\d+)/i)?.[0];
+    const re = reassessPrnEpisode(store, {
+      careRecipientId: req.careRecipientId,
+      actorPersonId: req.principalId,
+      actorDisplayName: req.principalDisplayName,
+      effect,
+      severityAfter: sev,
+    });
+    if (re.ok) {
+      return persistDeterministicAnswer(
+        req,
+        sanitizeHumanCareCopy(re.plainLanguage),
+        ["prn:reassess", re.episode.id],
+        "PRN_REASSESS",
+      );
+    }
+  }
+
+  // Give PRN / can she have / I gave PRN Tylenol
+  if (
+    /gave .{0,40}(prn|as[- ]?needed|tylenol|acetaminophen).{0,40}(pain|needed)?|gave her the (prn |as-needed )?tylenol|prn tylenol|as-needed (tylenol|acetaminophen)|can .{0,20}(have|take).{0,20}(pain|prn|as-needed)|i gave .{0,30}(for pain|when needed)/i.test(
+      qLow,
+    )
+  ) {
+    const med =
+      req.question.match(
+        /\b(tylenol|acetaminophen|benadryl|ibuprofen|advil|ondansetron)\b/i,
+      )?.[1] || "Acetaminophen";
+    const symptom =
+      req.question.match(
+        /\b(pain|knee pain|nausea|itch(?:ing)?|wheez(?:ing)?|fever|constipat(?:ion)?|anxiety)\b/i,
+      )?.[1] || "pain";
+    const severity =
+      req.question.match(/(\d+)\s*\/\s*10|about a (\d+)/i)?.[0] || undefined;
+    const created = createOrAdvancePrnEpisode(store, {
+      careRecipientId: req.careRecipientId,
+      actorPersonId: req.principalId,
+      actorDisplayName: req.principalDisplayName,
+      medicationHint: med,
+      symptom,
+      severityBefore: severity,
+      confirm: false,
+      forceUnauthorized: /benadryl/i.test(med),
+    });
+    if (created.ok) {
+      return persistDeterministicAnswer(
+        req,
+        sanitizeHumanCareCopy(created.plainLanguage),
+        [
+          created.episode.unauthorizedReport
+            ? "prn:unauthorized_report"
+            : "prn:preview",
+          created.order?.id || "no-order",
+        ],
+        "PRN_PREVIEW",
+      );
+    }
+  }
+
+  const prnQ = answerPrnQuestion(
+    store,
+    req.careRecipientId,
+    req.recipientDisplayName,
+    req.question,
+  );
+  if (prnQ) {
+    return persistDeterministicAnswer(
+      req,
+      sanitizeHumanCareCopy(prnQ),
+      ["prn:projection"],
+      "PRN_ANSWER",
     );
   }
 

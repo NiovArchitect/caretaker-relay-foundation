@@ -151,6 +151,12 @@ import {
   resolvePersonDisplayName,
   redactSystemIds,
   buildCareHistory,
+  buildPrnProjection,
+  createOrAdvancePrnEpisode,
+  reassessPrnEpisode,
+  seedEvelynPrnOrders,
+  listPrnOrders,
+  listPrnEpisodes,
   type VerificationBundle,
   type CareInvitation,
   type CareCoordinationMessage,
@@ -5965,6 +5971,168 @@ export async function registerCareRoutes(
       });
     },
   );
+
+  // ── PRN (as-needed) medication orders & charting episodes ──
+  app.get(
+    "/api/v1/care/recipients/:id/prn",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      seedEvelynPrnOrders(runtime.store, id);
+      const proj = buildPrnProjection(runtime.store, id);
+      return reply.code(200).send({
+        ok: true,
+        ...proj,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  app.post<{
+    Body: {
+      medication?: string;
+      symptom?: string;
+      severity_before?: string;
+      dose?: string;
+      confirm?: boolean;
+      alternatives_tried?: string;
+      notes?: string;
+    };
+  }>("/api/v1/care/recipients/:id/prn/episodes", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const { id } = request.params as { id: string };
+    const access = runtime.access(principal.carePersonId, id);
+    if (!access.allowed) {
+      return reply.code(403).send({
+        ok: false,
+        code: access.code,
+        message: access.reason,
+        correlation_id: correlationId(request),
+      });
+    }
+    seedEvelynPrnOrders(runtime.store, id);
+    const body = request.body ?? {};
+    const med =
+      typeof body.medication === "string" ? body.medication : "Acetaminophen";
+    const symptom =
+      typeof body.symptom === "string" ? body.symptom : "pain";
+    const result = createOrAdvancePrnEpisode(runtime.store, {
+      careRecipientId: id,
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+      medicationHint: med,
+      symptom,
+      severityBefore:
+        typeof body.severity_before === "string"
+          ? body.severity_before
+          : undefined,
+      dose: typeof body.dose === "string" ? body.dose : undefined,
+      alternativesTried:
+        typeof body.alternatives_tried === "string"
+          ? body.alternatives_tried
+          : undefined,
+      notes: typeof body.notes === "string" ? body.notes : undefined,
+      confirm: body.confirm === true,
+      forceUnauthorized: /benadryl/i.test(med),
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    return reply.code(result.needsConfirmation ? 200 : 201).send({
+      ok: true,
+      needs_confirmation: result.needsConfirmation,
+      episode: result.episode,
+      order: result.order ?? null,
+      interval: result.interval,
+      plain_language: result.plainLanguage,
+      correlation_id: correlationId(request),
+    });
+  });
+
+  app.post<{
+    Body: {
+      episode_id?: string;
+      effect?: "improved" | "unchanged" | "worsened" | "unable_to_assess";
+      severity_after?: string;
+      adverse_reaction?: string;
+      follow_up_action?: string;
+      notes?: string;
+    };
+  }>(
+    "/api/v1/care/recipients/:id/prn/episodes/reassess",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const body = request.body ?? {};
+      const effect = body.effect || "unable_to_assess";
+      const result = reassessPrnEpisode(runtime.store, {
+        careRecipientId: id,
+        actorPersonId: principal.carePersonId,
+        actorDisplayName: principal.displayName,
+        episodeId:
+          typeof body.episode_id === "string" ? body.episode_id : undefined,
+        effect,
+        severityAfter:
+          typeof body.severity_after === "string"
+            ? body.severity_after
+            : undefined,
+        adverseReaction:
+          typeof body.adverse_reaction === "string"
+            ? body.adverse_reaction
+            : undefined,
+        followUpAction:
+          typeof body.follow_up_action === "string"
+            ? body.follow_up_action
+            : undefined,
+        notes: typeof body.notes === "string" ? body.notes : undefined,
+      });
+      if (!result.ok) {
+        return reply.code(404).send({
+          ok: false,
+          code: result.code,
+          message: result.message,
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        episode: result.episode,
+        plain_language: result.plainLanguage,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
+
+  void listPrnOrders;
+  void listPrnEpisodes;
 
   // silence unused import guards for getHandoffLifecycle when only ensure is used
   void getHandoffLifecycle;
