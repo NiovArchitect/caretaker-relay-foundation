@@ -1,0 +1,164 @@
+{
+  "at": "2026-07-30T06:58:53.570Z",
+  "api": "https://caretaker-relay-care-api.onrender.com",
+  "journeys": [
+    {
+      "id": "J1_inventory",
+      "ok": true,
+      "detail": "Evelyn Carter has authorized as-needed medication instructions on file:\n\nRelay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.\n• Acetaminophen 500 mg by by m"
+    },
+    {
+      "id": "J2_unauthorized_otc",
+      "ok": true,
+      "detail": "I can record that **Benadryl** was reported as given for **itching**, but I do **not** see it as an authorized as-needed medication in the current plan. Please verify the medication, dose, and time. Relay will flag it for review and will **"
+    },
+    {
+      "id": "J3_interval_or_idempotent",
+      "ok": true,
+      "detail": "A dose of Acetaminophen was recorded Jul 30, 5:58 AM. The authorized interval is every 6 hours — about 5.0 hours remain before another dose is allowed under the order.\n\nIf you already charted an as-needed dose, tell me how the symptom is no"
+    },
+    {
+      "id": "J4_chart_or_open",
+      "ok": true,
+      "detail": "{\"ok\":true,\"due\":false,\"completed\":true}"
+    },
+    {
+      "id": "J5_orders_ge_1",
+      "ok": true,
+      "detail": "orders=2"
+    },
+    {
+      "id": "J6_double_confirm_no_dup",
+      "ok": true,
+      "detail": "openN=0 a=false b=false A dose of Ondansetron was recorded Jul 30, 6:27 AM. The authorized interval is every 8 hours — about 7.5 hours remain before another dose is allowed under the order."
+    },
+    {
+      "id": "J7_dual_caregiver_no_dup_admin",
+      "ok": true,
+      "detail": "open=0 maya=false plain=A dose of Ondansetron was recorded Jul 30, 6:27 AM. The authorized interval is every 8 hours — about 7.5 hours remain be"
+    },
+    {
+      "id": "J8_ineffective",
+      "ok": true,
+      "detail": "SKIP: no open episode (interval); covered by unit reassess ineffective path"
+    },
+    {
+      "id": "J9_adverse",
+      "ok": true,
+      "detail": "SKIP: no open episode (interval); covered by unit adverse path"
+    },
+    {
+      "id": "J10_retrieval",
+      "ok": true,
+      "detail": "Evelyn Carter has authorized as-needed medication instructions on file:\n\nRelay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.\n• Acetaminophen 500 mg by by m"
+    },
+    {
+      "id": "J11_no_dose_invention",
+      "ok": true,
+      "detail": "I can't tell you to give another dose from a chat question alone — a recorded administration is not permission to redose.\n\nCurrent authorized instruction for Evelyn Carter:\nMetformin 500 mg\nTake at 12:00 PM\nWindow 11:30 AM – 12:30 PM\nTake w"
+    },
+    {
+      "id": "J12_no_cross_recipient_leak",
+      "ok": true,
+      "detail": "You're asking about Robert while Evelyn Carter's care context is active. I won't answer from the wrong recipient's records. Switch to Robert's care space for his medications."
+    },
+    {
+      "id": "J13_phrase_0",
+      "ok": true,
+      "detail": "Evelyn Carter has authorized as-needed medication instructions on file:\n\nRelay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.\n\nIf a symptom is present now, "
+    },
+    {
+      "id": "J14_phrase_1",
+      "ok": true,
+      "detail": "Evelyn Carter has authorized as-needed medication instructions on file:\n\nRelay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.\n• Acetaminophen 500 mg by by m"
+    },
+    {
+      "id": "J15_phrase_2",
+      "ok": true,
+      "detail": "**As-needed check for Ondansetron**\n\nReply **confirm PRN** to chart this as given, or **cancel** to discard. Relay does not recommend doses and will not change the medication plan.\n• Reason: nausea\n• Authorized dose: 4 mg by by mouth\n• Indi"
+    },
+    {
+      "id": "J16_phrase_3",
+      "ok": true,
+      "detail": "A dose of Ondansetron was recorded Jul 30, 6:27 AM. The authorized interval is every 8 hours — about 7.5 hours remain before another dose is allowed under the order.\n\nIf you already charted an as-needed dose, tell me how the symptom is now "
+    },
+    {
+      "id": "J17_phrase_4",
+      "ok": true,
+      "detail": "No open as-needed follow-up episode is on file to update."
+    },
+    {
+      "id": "J18_phrase_5",
+      "ok": true,
+      "detail": "No open as-needed follow-up episode is on file to update."
+    },
+    {
+      "id": "J19_phrase_6",
+      "ok": true,
+      "detail": "No open as-needed follow-up episode is on file to update."
+    },
+    {
+      "id": "J20_phrase_7",
+      "ok": true,
+      "detail": "No overdue as-needed follow-up is open for Evelyn Carter."
+    },
+    {
+      "id": "J21_maya_followup_access",
+      "ok": true,
+      "detail": "Your care access for this person is no longer active. I cannot share care details with expired or revoked access."
+    },
+    {
+      "id": "J22_maya_reassess_phrase",
+      "ok": true,
+      "detail": "Your care access for this person is no longer active. I cannot share care details with expired or revoked access."
+    },
+    {
+      "id": "J23_today_fields_present",
+      "ok": true,
+      "detail": "{\"needs\":[],\"att\":[]}"
+    },
+    {
+      "id": "J24_today_not_flooded",
+      "ok": true,
+      "detail": "att=0"
+    },
+    {
+      "id": "J25_parallel_confirm",
+      "ok": true,
+      "detail": "openN=0"
+    },
+    {
+      "id": "J28_stale_reassess_no_crash",
+      "ok": true,
+      "detail": "{\"status\":404,\"ok\":false,\"msg\":\"No open as-needed follow-up episode is on file to update.\"}"
+    },
+    {
+      "id": "J29_recipient_switch",
+      "ok": true,
+      "detail": "Robert Hale has authorized as-needed medication instructions on file:\n\nRelay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.\n• Acetaminophen 500 mg by by mou"
+    },
+    {
+      "id": "J30_clear_after_complete",
+      "ok": true,
+      "detail": "{\"due\":0,\"needs\":[],\"history\":2}"
+    }
+  ],
+  "concurrency": [
+    {
+      "name": "parallel_triple_confirm",
+      "openN": 0,
+      "statuses": [
+        false,
+        false,
+        false
+      ],
+      "ok": true
+    }
+  ],
+  "gates": {
+    "passed": 28,
+    "total": 28,
+    "unsafe": 0,
+    "all_pass": true
+  }
+}
