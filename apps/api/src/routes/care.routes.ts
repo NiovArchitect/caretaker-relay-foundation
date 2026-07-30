@@ -155,6 +155,7 @@ import {
   createOrAdvancePrnEpisode,
   reassessPrnEpisode,
   seedEvelynPrnOrders,
+  ensurePrnOverdueEscalation,
   listPrnOrders,
   listPrnEpisodes,
   type VerificationBundle,
@@ -792,21 +793,36 @@ export async function registerCareRoutes(
     const handoffs = runtime.store.getHandoffs(id);
     const latestHandoff = handoffs[handoffs.length - 1] ?? null;
     seedEvelynPrnOrders(runtime.store, id);
+    ensurePrnOverdueEscalation(runtime.store, id);
     const prn = buildPrnProjection(runtime.store, id);
-    // Signal-first: only actionable PRN (reassessment due / incomplete)
-    const prnAttention = prn.reassessmentDue.slice(0, 3).map((e) => ({
-      id: e.id,
-      title: `As-needed follow-up: ${e.medication}`,
-      whatHappened: e.humanSummary,
-      whySurfaced: "Effectiveness still needs to be checked after an as-needed dose.",
-      nextStep: "Record how they feel now",
-      kind: "medication" as const,
-      episode_id: e.id,
-    }));
-    const prnNeeds = prn.reassessmentDue.map(
-      (e) =>
-        `As-needed follow-up: ${e.medication} for ${e.symptom} — check how they feel now`,
+    const overdueIds = new Set(prn.overdue.map((e) => e.id));
+    // Signal-first: one attention card per incomplete episode (overdue once if late)
+    const prnAttention = prn.reassessmentDue.slice(0, 3).map((e) => {
+      const isOverdue = overdueIds.has(e.id);
+      const od = prn.overdue.find((x) => x.id === e.id);
+      return {
+        id: e.id,
+        title: isOverdue
+          ? `Overdue as-needed follow-up: ${e.medication}`
+          : `As-needed follow-up: ${e.medication}`,
+        whatHappened: e.humanSummary,
+        whySurfaced: isOverdue
+          ? `Follow-up was due${od ? ` about ${od.overdueMinutes} minutes ago` : ""} and still needs a result.`
+          : "Effectiveness still needs to be checked after an as-needed dose.",
+        nextStep: "Record how they feel now",
+        kind: "medication" as const,
+        episode_id: e.id,
+        overdue: isOverdue,
+      };
+    });
+    const prnNeeds = prn.reassessmentDue.map((e) =>
+      overdueIds.has(e.id)
+        ? `Overdue as-needed follow-up: ${e.medication} for ${e.symptom} — check how they feel now`
+        : `As-needed follow-up: ${e.medication} for ${e.symptom} — check how they feel now`,
     );
+    // Refresh handoff after overdue inject
+    const handoffsAfter = runtime.store.getHandoffs(id);
+    const latestHandoffAfter = handoffsAfter[handoffsAfter.length - 1] ?? latestHandoff;
     return reply.code(200).send({
       ok: true,
       care_recipient_id: id,
@@ -816,7 +832,7 @@ export async function registerCareRoutes(
         appointments: state?.appointments ?? [],
         observations: state?.observations ?? [],
         open_safety_reviews: state?.openSafetyReviews ?? [],
-        latest_handoff: latestHandoff,
+        latest_handoff: latestHandoffAfter,
         last_updated_at: state?.lastUpdatedAt ?? null,
         prn_attention: prnAttention,
         prn_needs: prnNeeds,
@@ -830,6 +846,12 @@ export async function registerCareRoutes(
             id: e.id,
             human_summary: e.humanSummary,
             human_status: e.humanStatus,
+            overdue: overdueIds.has(e.id),
+          })),
+          overdue: prn.overdue.map((e) => ({
+            id: e.id,
+            human_summary: e.humanSummary,
+            overdue_minutes: e.overdueMinutes,
           })),
         },
       },
@@ -6019,6 +6041,7 @@ export async function registerCareRoutes(
         });
       }
       seedEvelynPrnOrders(runtime.store, id);
+      ensurePrnOverdueEscalation(runtime.store, id);
       const proj = buildPrnProjection(runtime.store, id);
       return reply.code(200).send({
         ok: true,
@@ -6037,6 +6060,8 @@ export async function registerCareRoutes(
       confirm?: boolean;
       alternatives_tried?: string;
       notes?: string;
+      /** Optional occurrence time (ISO) for late documentation — interval checked at this time. */
+      administered_at?: string;
     };
   }>("/api/v1/care/recipients/:id/prn/episodes", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
@@ -6073,6 +6098,11 @@ export async function registerCareRoutes(
           ? body.alternatives_tried
           : undefined,
       notes: typeof body.notes === "string" ? body.notes : undefined,
+      administeredAt:
+        typeof body.administered_at === "string" &&
+        !Number.isNaN(Date.parse(body.administered_at))
+          ? body.administered_at
+          : undefined,
       confirm: body.confirm === true,
       forceUnauthorized: /benadryl/i.test(med),
     });

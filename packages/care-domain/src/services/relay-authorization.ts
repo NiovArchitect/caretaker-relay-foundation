@@ -15,9 +15,12 @@ import type { CareStateBag } from "../relay/projections.js";
 import {
   resolveShiftRelayAccess,
   isDocumentationIntent,
+  isPrnContinuityIntent,
+  prnContinuityDomains,
   SHIFT_DOMAIN_PRESETS,
 } from "./shift-relay-access.js";
 import { listInvitations } from "./invitation.js";
+import { hasOpenPrnReassessment } from "./prn-medication.js";
 
 export type RelayAuthOutcome =
   | {
@@ -225,21 +228,47 @@ export function authorizeRelayQuestion(
 
   // Intersect with shift window domains when applicable
   if (shift.kind === "authorized") {
-    if (shift.documentationOnly && !isDocumentationIntent(classified.intents)) {
-      return {
-        kind: "denied",
-        code: "DOCUMENTATION_WINDOW_ONLY",
-        answer: SHIFT_DOMAIN_PRESETS.DENY_DOC_ONLY,
+    const openPrn = hasOpenPrnReassessment(
+      store,
+      input.careRecipientId,
+    );
+    const prnContinuity =
+      openPrn &&
+      isPrnContinuityIntent(input.question, classified.intents as string[]);
+
+    if (shift.documentationOnly) {
+      if (
+        !isDocumentationIntent(classified.intents as string[]) &&
+        !prnContinuity
+      ) {
+        return {
+          kind: "denied",
+          code: "DOCUMENTATION_WINDOW_ONLY",
+          answer: SHIFT_DOMAIN_PRESETS.DENY_DOC_ONLY,
+        };
+      }
+      // Bounded continuity: handoff docs + incomplete PRN reassessment only
+      const allowed = new Set([
+        ...shift.domains,
+        ...(prnContinuity ? prnContinuityDomains() : []),
+      ]);
+      caps = {
+        ...caps,
+        controlling: false,
+        domains: caps.domains.filter((d) => allowed.has(d)).length
+          ? caps.domains.filter((d) => allowed.has(d))
+          : [...allowed],
+      };
+    } else {
+      const shiftSet = new Set(shift.domains);
+      const intersected = caps.domains.filter((d) => shiftSet.has(d));
+      // pre_shift / active: domains must come from shift intersection (not full family scope)
+      caps = {
+        ...caps,
+        controlling: false,
+        domains: intersected.length ? intersected : shift.domains,
       };
     }
-    const shiftSet = new Set(shift.domains);
-    const intersected = caps.domains.filter((d) => shiftSet.has(d));
-    // pre_shift / active: domains must come from shift intersection (not full family scope)
-    caps = {
-      ...caps,
-      controlling: false,
-      domains: intersected.length ? intersected : shift.domains,
-    };
   }
 
   const permitted = new Set(caps.domains);

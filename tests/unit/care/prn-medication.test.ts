@@ -13,6 +13,8 @@ import {
   intervalAllows,
   lastPrnAdministration,
   answerPrnQuestion,
+  hasOpenPrnReassessment,
+  ensurePrnOverdueEscalation,
 } from "../../../packages/care-domain/src/services/prn-medication.js";
 
 describe("PRN medication charting", () => {
@@ -199,5 +201,63 @@ describe("PRN medication charting", () => {
     expect(
       proj.reassessmentDue.filter((e) => /ondansetron/i.test(e.medication)),
     ).toHaveLength(0);
+  });
+
+  it("does not create a second administration on double confirm (idempotent)", () => {
+    const first = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.episode.id).toBe(first.episode.id);
+    expect(second.plainLanguage).toMatch(/already charted|No second dose|already recorded/i);
+    const open = buildPrnProjection(store, "cr-olivia").reassessmentDue.filter(
+      (e) => /ondansetron/i.test(e.medication),
+    );
+    expect(open.length).toBe(1);
+  });
+
+  it("marks overdue reassessment once and does not duplicate handoff lines", () => {
+    const admin = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+      administeredAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    });
+    expect(admin.ok).toBe(true);
+    if (!admin.ok) return;
+    // Force due in the past via second write if needed — episode uses reassess minutes from admin time
+    const pastDue = Date.now() + 60_000; // projection clock after due
+    // administered 3h ago with 45m reassess → overdue
+    expect(hasOpenPrnReassessment(store, "cr-olivia")).toBe(true);
+    const a = ensurePrnOverdueEscalation(store, "cr-olivia", pastDue);
+    expect(a.overdueCount).toBeGreaterThanOrEqual(1);
+    const b = ensurePrnOverdueEscalation(store, "cr-olivia", pastDue);
+    expect(b.overdueCount).toBeGreaterThanOrEqual(1);
+    // second call should not re-escalate same ids if audit already written
+    const audits = store
+      .listAudit({ careRecipientId: "cr-olivia" })
+      .filter((x) => x.action === "PRN_REASSESS_OVERDUE");
+    expect(audits.length).toBe(1);
+    const proj = buildPrnProjection(store, "cr-olivia", pastDue);
+    expect(proj.overdue.length).toBeGreaterThanOrEqual(1);
   });
 });

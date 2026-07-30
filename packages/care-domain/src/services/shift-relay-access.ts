@@ -102,6 +102,14 @@ const DOC_DOMAINS: CareDataDomain[] = [
   "demographics_basic",
 ];
 
+/** Bounded PRN continuity during documentation window / next-coverage handoff. */
+const PRN_CONTINUITY_DOMAINS: CareDataDomain[] = [
+  "handoffs",
+  "medication_admin",
+  "symptoms",
+  "demographics_basic",
+];
+
 const DENY_NO_CARE =
   "You do not currently have authorized access to a care profile for that request. An invitation, approval, or assignment is required.";
 const DENY_INACTIVE =
@@ -222,6 +230,55 @@ export function isDocumentationIntent(intents: string[]): boolean {
       i === "CHANGE_SINCE" ||
       i === "RECENT_ACTIVITY",
   );
+}
+
+/**
+ * Bounded continuity intents for incomplete as-needed (PRN) reassessment.
+ * Does not grant broad medication-plan access — only follow-up charting language.
+ */
+export function isPrnContinuityIntent(
+  question: string,
+  intents: string[] = [],
+): boolean {
+  const q = question.toLowerCase();
+  if (
+    intents.some(
+      (i) =>
+        i === "MEDICATION_HISTORY" ||
+        i === "MEDICATION_ADMIN" ||
+        i === "MEDICATION_STATUS" ||
+        i === "OPEN_LOOP_STATUS" ||
+        i === "TASKS_REMAINING" ||
+        i === "HANDOFF_REVIEW",
+    )
+  ) {
+    // Still require PRN/follow-up language so general med questions stay denied in doc window
+    if (
+      /as[- ]?needed|prn|follow-?up|reassess|did it help|helped|nausea|ondansetron|acetaminophen|tylenol|chart(ed)?|result after|how (are|is) .{0,20}(pain|nausea|feeling)/i.test(
+        q,
+      )
+    ) {
+      return true;
+    }
+  }
+  return (
+    /^(it )?(helped|didn'?t help|did not help|no (clear )?change|worse|worsened|better)\b/i.test(
+      question.trim(),
+    ) ||
+    /\b(pain is|it is|nausea is) (down to|better|worse)/i.test(q) ||
+    /\bas[- ]?needed (follow-?up|medication|dose)\b|\bprn (follow-?up|episode|reassess)/i.test(
+      q,
+    ) ||
+    /\bstill needs (to be )?(checked|charted|followed)/i.test(q) ||
+    /\bwhat (as-needed|prn).{0,40}(follow|check|open|left)\b/i.test(q) ||
+    /\bwhen was (the )?(last )?(as-needed|prn)\b/i.test(q) ||
+    /\bconfirm prn\b|\bchart(ed)? (as-needed|prn)\b/i.test(q) ||
+    /\b(mark|record).{0,20}(helped|did not help|result)\b/i.test(q)
+  );
+}
+
+export function prnContinuityDomains(): CareDataDomain[] {
+  return [...PRN_CONTINUITY_DOMAINS];
 }
 
 /**
@@ -389,6 +446,7 @@ export const SHIFT_DOMAIN_PRESETS = {
   PREP_DOMAINS,
   ACTIVE_SHIFT_DOMAINS,
   DOC_DOMAINS,
+  PRN_CONTINUITY_DOMAINS,
   DENY_NO_CARE,
   DENY_INACTIVE,
   DENY_SHIFT_WINDOW,

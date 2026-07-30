@@ -99,7 +99,42 @@ export type PrnProjection = {
   openEpisodes: Array<PrnEpisode & { humanStatus: string; humanSummary: string }>;
   completedRecent: Array<PrnEpisode & { humanStatus: string; humanSummary: string }>;
   reassessmentDue: Array<PrnEpisode & { humanStatus: string; humanSummary: string }>;
+  /** Incomplete reassessments past due time (subset of reassessmentDue). */
+  overdue: Array<
+    PrnEpisode & {
+      humanStatus: string;
+      humanSummary: string;
+      overdueMinutes: number;
+    }
+  >;
 };
+
+/** True when any administered PRN episode still needs effectiveness charted. */
+export function hasOpenPrnReassessment(
+  store: CareStore,
+  careRecipientId: string,
+  nowMs: number = Date.now(),
+): boolean {
+  return listPrnEpisodes(store, careRecipientId).some(
+    (e) =>
+      e.outcome === "administered" &&
+      !e.reassessmentCompletedAt &&
+      !e.effect &&
+      (e.lifecycle === "reassessment_due" ||
+        e.lifecycle === "administered" ||
+        (!!e.reassessmentDueAt && Date.parse(e.reassessmentDueAt) <= nowMs + 60_000)),
+  );
+}
+
+function isIncompleteReassessment(e: PrnEpisode): boolean {
+  return (
+    e.outcome === "administered" &&
+    !e.reassessmentCompletedAt &&
+    (e.lifecycle === "reassessment_due" ||
+      e.lifecycle === "administered" ||
+      (!!e.reassessmentDueAt && !e.effect))
+  );
+}
 
 function source(
   personId: string,
@@ -342,6 +377,7 @@ function formatWhen(iso: string): string {
 export function buildPrnProjection(
   store: CareStore,
   careRecipientId: string,
+  nowMs: number = Date.now(),
 ): PrnProjection {
   const orders = listPrnOrders(store, careRecipientId).map((o) => ({
     ...o,
@@ -350,29 +386,17 @@ export function buildPrnProjection(
   const episodes = listPrnEpisodes(store, careRecipientId);
   const open = episodes.filter(
     (e) =>
-      ![
-        "completed",
-        "cancelled",
-        "effective",
-        "partially_effective",
-        "ineffective",
-        "adverse_effect",
-        "escalated",
-      ].includes(e.lifecycle) || e.lifecycle === "reassessment_due" || e.lifecycle === "administered",
+      isIncompleteReassessment(e) ||
+      e.lifecycle === "needs_clarification" ||
+      e.lifecycle === "awaiting_confirmation" ||
+      e.unauthorizedReport === true,
   );
-  const reassess = episodes.filter(
-    (e) =>
-      e.lifecycle === "reassessment_due" ||
-      e.lifecycle === "administered" ||
-      (e.reassessmentDueAt &&
-        !e.reassessmentCompletedAt &&
-        Date.parse(e.reassessmentDueAt) <= Date.now()),
-  );
+  const reassess = episodes.filter((e) => isIncompleteReassessment(e));
   const completed = episodes
     .filter((e) =>
       ["completed", "effective", "partially_effective", "ineffective"].includes(
         e.lifecycle,
-      ),
+      ) || !!e.reassessmentCompletedAt,
     )
     .slice(0, 8);
 
@@ -382,13 +406,99 @@ export function buildPrnProjection(
     humanSummary: summarizeEpisode(e),
   });
 
+  const overdue = reassess
+    .filter(
+      (e) =>
+        !!e.reassessmentDueAt && Date.parse(e.reassessmentDueAt) < nowMs,
+    )
+    .map((e) => ({
+      ...enrich(e),
+      humanStatus: "Follow-up overdue — check how they feel now",
+      overdueMinutes: Math.max(
+        0,
+        Math.round((nowMs - Date.parse(e.reassessmentDueAt!)) / 60_000),
+      ),
+    }));
+
   return {
     recipientId: careRecipientId,
     orders,
     openEpisodes: open.map(enrich),
     completedRecent: completed.map(enrich),
     reassessmentDue: reassess.map(enrich),
+    overdue,
   };
+}
+
+/**
+ * Ensure overdue incomplete PRN reassessments appear once on handoff attention
+ * and once in audit — no duplicate tasks/notifications on repeated projection.
+ */
+export function ensurePrnOverdueEscalation(
+  store: CareStore,
+  careRecipientId: string,
+  nowMs: number = Date.now(),
+): { overdueCount: number; escalated: string[] } {
+  const proj = buildPrnProjection(store, careRecipientId, nowMs);
+  const escalated: string[] = [];
+  if (!proj.overdue.length) return { overdueCount: 0, escalated };
+
+  try {
+    const handoffs = store.getHandoffs(careRecipientId);
+    const latest = handoffs[handoffs.length - 1];
+    if (latest) {
+      const open = [...(latest.stillNeedsAttention ?? [])];
+      let changed = false;
+      for (const e of proj.overdue.slice(0, 3)) {
+        const line = `Overdue as-needed follow-up: ${e.medication} for ${e.symptom} — check how they feel now`;
+        if (
+          !open.some(
+            (x) =>
+              /overdue as-needed follow-up/i.test(x) &&
+              new RegExp(e.medication, "i").test(x),
+          )
+        ) {
+          open.push(line);
+          changed = true;
+          escalated.push(e.id);
+        }
+      }
+      if (changed) {
+        latest.stillNeedsAttention = open.slice(0, 12);
+        store.addHandoff({ ...latest });
+      }
+    }
+  } catch {
+    /* optional */
+  }
+
+  for (const e of proj.overdue.slice(0, 3)) {
+    // Idempotent audit: one PRN_REASSESS_OVERDUE per episode id
+    const already = store
+      .listAudit({ careRecipientId })
+      .some(
+        (a) =>
+          a.action === "PRN_REASSESS_OVERDUE" &&
+          (a.details as { episode_id?: string } | undefined)?.episode_id ===
+            e.id,
+      );
+    if (!already) {
+      store.writeAudit({
+        at: new Date(nowMs).toISOString(),
+        actorPersonId: "system",
+        action: "PRN_REASSESS_OVERDUE",
+        careRecipientId,
+        details: {
+          episode_id: e.id,
+          medication: e.medication,
+          overdue_minutes: e.overdueMinutes,
+        },
+      });
+      if (!escalated.includes(e.id)) escalated.push(e.id);
+    }
+  }
+
+  return { overdueCount: proj.overdue.length, escalated };
 }
 
 function summarizeEpisode(e: PrnEpisode): string {
@@ -506,9 +616,9 @@ export function createOrAdvancePrnEpisode(
   }
 
   const last = lastPrnAdministration(store, input.careRecipientId, order.id);
-  const interval = intervalAllows(order, last);
   const now = new Date();
   const adminAt = input.administeredAt || now.toISOString();
+  const interval = intervalAllows(order, last, Date.parse(adminAt));
   const dose = input.dose || order.allowedDose;
   const route = input.route || order.route;
 
@@ -562,6 +672,59 @@ export function createOrAdvancePrnEpisode(
         updatedAt: now.toISOString(),
         epistemicStatus: "REPORTED",
       },
+    };
+  }
+
+  // Idempotency: if an incomplete administration already exists for this order,
+  // do not create a second episode (double-tap / retry / dual-reporter).
+  const existingOpen = listPrnEpisodes(store, input.careRecipientId).find(
+    (e) =>
+      e.orderId === order.id &&
+      e.outcome === "administered" &&
+      !e.reassessmentCompletedAt &&
+      !e.effect &&
+      (e.lifecycle === "reassessment_due" || e.lifecycle === "administered"),
+  );
+  if (existingOpen) {
+    return {
+      ok: true,
+      episode: existingOpen,
+      order,
+      interval,
+      needsConfirmation: false,
+      plainLanguage:
+        `As-needed **${existingOpen.medication} ${existingOpen.dose}** for **${existingOpen.symptom}** is already charted` +
+        (existingOpen.administeredAt
+          ? ` at ${formatWhen(existingOpen.administeredAt)}`
+          : "") +
+        `.\nFollow-up still open: check how they feel` +
+        (existingOpen.reassessmentDueAt
+          ? ` around ${formatWhen(existingOpen.reassessmentDueAt)}`
+          : "") +
+        `.\nNo second dose was recorded. Tell me how the symptom is now to complete the result.`,
+    };
+  }
+
+  // Recent completed chart of same order within 2 minutes → treat as duplicate submit
+  const recentDup = listPrnEpisodes(store, input.careRecipientId).find((e) => {
+    if (e.orderId !== order.id || e.outcome !== "administered" || !e.administeredAt)
+      return false;
+    const age = now.getTime() - Date.parse(e.administeredAt);
+    return age >= 0 && age < 2 * 60 * 1000;
+  });
+  if (recentDup) {
+    return {
+      ok: true,
+      episode: recentDup,
+      order,
+      interval,
+      needsConfirmation: false,
+      plainLanguage:
+        `That as-needed dose of **${recentDup.medication}** was already recorded` +
+        (recentDup.administeredAt
+          ? ` at ${formatWhen(recentDup.administeredAt)}`
+          : "") +
+        `. No duplicate administration was added.`,
     };
   }
 

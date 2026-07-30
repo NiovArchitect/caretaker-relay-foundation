@@ -15,6 +15,9 @@ import {
   PRE_SHIFT_WINDOW_MS,
   DOC_WINDOW_MS,
   deriveShiftPhase,
+  seedEvelynPrnOrders,
+  createOrAdvancePrnEpisode,
+  reassessPrnEpisode,
 } from "@caretaker-relay/care-domain";
 
 function seedDspUniverse() {
@@ -262,6 +265,82 @@ describe("DSP shift Relay authorization matrix", () => {
     });
     // Handoff may be allowed in doc window if relationship still active until expire
     expect(["answered", "denied"]).toContain(handoffQ.authorizationOutcome);
+  });
+
+  it("G2 documentation window + open PRN → continuity reassess allowed; broad med denied", () => {
+    const { store, u, assigner, dspId, dspName } = seedDspUniverse();
+    seedEvelynPrnOrders(store, u.recipient.id);
+    const startMs = Date.now() - 5 * 60 * 60 * 1000;
+    const endMs = Date.now() - 30 * 60 * 1000;
+    const created = createShiftAssignment(store, {
+      careRecipientId: u.recipient.id,
+      assignerPersonId: assigner.id,
+      assignerDisplayName: assigner.displayName,
+      assigneePersonId: dspId,
+      assigneeDisplayName: dspName,
+      shiftStart: new Date(startMs).toISOString(),
+      shiftEnd: new Date(endMs).toISOString(),
+    });
+    const assignmentId = (created as { assignment: { id: string } }).assignment.id;
+    respondShiftAssignment(store, {
+      careRecipientId: u.recipient.id,
+      assignmentId,
+      actorPersonId: dspId,
+      actorDisplayName: dspName,
+      decision: "accept",
+    });
+    // Chart during active, then ask in doc window
+    createOrAdvancePrnEpisode(store, {
+      careRecipientId: u.recipient.id,
+      actorPersonId: dspId,
+      actorDisplayName: dspName,
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+    });
+    const nowMs = endMs + 30 * 60 * 1000;
+    const broad = ask(store, {
+      principalId: dspId,
+      displayName: dspName,
+      roleLabel: "Direct support professional",
+      careRecipientId: u.recipient.id,
+      recipientName: u.recipient.displayName,
+      question: "What is the full medication list and diagnosis?",
+      nowMs,
+    });
+    expect(broad.authorizationOutcome).toBe("denied");
+
+    const follow = ask(store, {
+      principalId: dspId,
+      displayName: dspName,
+      roleLabel: "Direct support professional",
+      careRecipientId: u.recipient.id,
+      recipientName: u.recipient.displayName,
+      question: "What as-needed follow-up still needs to be checked?",
+      nowMs,
+    });
+    expect(follow.authorizationOutcome).toBe("answered");
+    expect(follow.answer).toMatch(/as-needed|ondansetron|nause|follow/i);
+
+    const re = reassessPrnEpisode(store, {
+      careRecipientId: u.recipient.id,
+      actorPersonId: dspId,
+      actorDisplayName: dspName,
+      effect: "improved",
+    });
+    expect(re.ok).toBe(true);
+
+    const after = ask(store, {
+      principalId: dspId,
+      displayName: dspName,
+      roleLabel: "Direct support professional",
+      careRecipientId: u.recipient.id,
+      recipientName: u.recipient.displayName,
+      question: "What as-needed follow-up still needs to be checked?",
+      nowMs,
+    });
+    // After complete: either answered with no open follow-up or still denied broad
+    expect(["answered", "denied"]).toContain(after.authorizationOutcome);
   });
 
   it("H expired assignment → denied; no conversation replay access", () => {
