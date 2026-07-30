@@ -252,6 +252,11 @@ function exclusiveAnswerPlan(
     return ["STATUS_SYNTHESIS"];
   }
 
+  // Who is responsible now → open loops, not full shift plan
+  if (/\bwho is responsible\b|\bwhose responsibility\b/.test(q)) {
+    return ["TASKS_REMAINING"];
+  }
+
   // Today operating plan / current shift responsibilities — TASKS_NOW only
   if (
     classified.intents.includes("TASKS_NOW") ||
@@ -1658,10 +1663,25 @@ function composeAnswer(ctx: {
       intents.includes("TASKS_REMAINING") && !intents.includes("TASKS_NOW");
     const onlyNow =
       intents.includes("TASKS_NOW") && !intents.includes("TASKS_REMAINING");
+    const qLow = question.toLowerCase();
+    const shiftFraming =
+      onlyNow &&
+      /\b(shift|responsible for|assigned to me|finish before|before i leave|on my shift)\b/.test(
+        qLow,
+      );
+    const todayFraming =
+      onlyNow && !shiftFraming;
     if (persona === "family") {
       if (openFromHandoff.length) {
+        const head = onlyRemaining
+          ? "Still open / unfinished"
+          : shiftFraming
+            ? "On this shift, finish"
+            : todayFraming
+              ? "For today's plan, prioritize"
+              : "Still unfinished from the last handoff";
         parts.push(
-          `${onlyRemaining ? "Still open / unfinished" : "Still unfinished from the last handoff"}:\n${openFromHandoff
+          `${head}:\n${openFromHandoff
             .slice(0, onlyRemaining ? 5 : 3)
             .map((x) => `• ${x}`)
             .join("\n")}`,
@@ -1672,14 +1692,20 @@ function composeAnswer(ctx: {
       } else {
         parts.push(
           proj.OPEN_UNCERTAINTIES.length
-            ? `Right now:\n• ${proj.OPEN_UNCERTAINTIES[0]}\nYou're okay to take this one step at a time.`
-            : "Nothing urgent is flagged right now.",
+            ? `${shiftFraming ? "This shift" : "Right now"}:\n• ${proj.OPEN_UNCERTAINTIES[0]}\nYou're okay to take this one step at a time.`
+            : shiftFraming
+              ? "Nothing additional is assigned on this shift beyond routine coverage."
+              : "Nothing urgent is flagged right now.",
         );
       }
       // Operating plan (TASKS_NOW) includes coming-up; pure unfinished stays open-only
       if (!onlyRemaining) {
         const up = proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `• ${t}`).join("\n");
-        if (up) parts.push(`Coming up:\n${up}`);
+        if (up) {
+          parts.push(
+            `${shiftFraming ? "Also on your shift plate" : "Coming up today"}:\n${up}`,
+          );
+        }
       }
     } else if (persona === "professional_dsp") {
       parts.push(onlyRemaining ? "Unfinished before leave:" : "During this visit, prioritize:");
