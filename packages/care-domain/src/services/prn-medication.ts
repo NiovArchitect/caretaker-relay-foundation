@@ -450,52 +450,233 @@ function formatWhen(iso: string): string {
   }
 }
 
-/** Unauthorized / needs_clarification remain operational only this long. */
+/**
+ * Low-risk abandoned drafts may leave operational open after this window.
+ * Safety-relevant and unauthorized administration reports never age-archive.
+ */
 export const PRN_CLARIFICATION_ACTIVE_MS = 24 * 60 * 60 * 1000;
 
-function isActiveClarification(e: PrnEpisode, nowMs: number): boolean {
-  if (!(e.unauthorizedReport || e.lifecycle === "needs_clarification")) {
-    return false;
-  }
-  if (e.lifecycle === "cancelled" || e.lifecycle === "completed") return false;
-  const t = Date.parse(e.updatedAt || e.createdAt);
-  if (Number.isNaN(t)) return false;
-  return nowMs - t < PRN_CLARIFICATION_ACTIVE_MS;
+/** Semantic classes for unresolved clarification / unauthorized reports. */
+export type PrnClarificationClass =
+  | "LOW_RISK_ABANDONED"
+  | "EXPLICITLY_CANCELLED"
+  | "DUPLICATE"
+  | "SUPERSEDED"
+  | "POSSIBLE_ADMINISTRATION"
+  | "POSSIBLE_ADVERSE"
+  | "UNAUTHORIZED_MEDICATION_REPORT"
+  | "REQUIRED_HUMAN_REVIEW";
+
+const ADVERSE_SIGNAL_RE =
+  /\b(adverse|reaction|rash|hives|swell|swelling|drowsy|sleepy|lethargic|vomit|wheeze|breathing|allergic|anaphyla)\b/i;
+/** Administration verbs only — do not match the bare word "dose" (e.g. "dose not confirmed"). */
+const ADMIN_SIGNAL_RE =
+  /\b(took|given|gave|administered|swallowed|received|had\s+\d+)\b/i;
+
+function medKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /**
- * Archive abandoned clarification / unauthorized reports so they leave
- * operational open lists while remaining in history-style completedRecent.
+ * Classify an unresolved clarification before it may leave operational state.
+ * Age alone must not hide possible administrations or possible reactions.
+ */
+export function classifyPrnClarification(e: PrnEpisode): PrnClarificationClass {
+  if (e.lifecycle === "cancelled") {
+    if (/superseded by duplicate/i.test(e.notes || "")) return "SUPERSEDED";
+    return "EXPLICITLY_CANCELLED";
+  }
+  if (e.lifecycle === "completed") return "EXPLICITLY_CANCELLED";
+
+  const blob = [
+    e.notes,
+    e.symptom,
+    e.indication,
+    e.adverseReaction,
+    e.dose,
+    e.medication,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    e.lifecycle === "adverse_effect" ||
+    !!e.adverseReaction ||
+    ADVERSE_SIGNAL_RE.test(blob)
+  ) {
+    return "POSSIBLE_ADVERSE";
+  }
+
+  if (e.unauthorizedReport || e.outcome === "reported_unauthorized") {
+    // Unauthorized medication report — never an authorized plan; may be a
+    // possible administration if dose/time language is present.
+    const doseKnown =
+      !!e.dose &&
+      !/^dose not confirmed$/i.test(e.dose.trim()) &&
+      !/^not confirmed$/i.test(e.dose.trim());
+    if (doseKnown || ADMIN_SIGNAL_RE.test(blob) || !!e.administeredAt) {
+      return "POSSIBLE_ADMINISTRATION";
+    }
+    return "UNAUTHORIZED_MEDICATION_REPORT";
+  }
+
+  if (e.lifecycle === "needs_clarification") {
+    const incompleteDose =
+      !e.dose ||
+      /^dose not confirmed$/i.test(e.dose) ||
+      /^not confirmed$/i.test(e.dose);
+    if (incompleteDose && !ADMIN_SIGNAL_RE.test(blob)) {
+      return "LOW_RISK_ABANDONED";
+    }
+    return "REQUIRED_HUMAN_REVIEW";
+  }
+
+  return "REQUIRED_HUMAN_REVIEW";
+}
+
+function isClarificationCandidate(e: PrnEpisode): boolean {
+  if (e.lifecycle === "cancelled" || e.lifecycle === "completed") return false;
+  return !!(e.unauthorizedReport || e.lifecycle === "needs_clarification");
+}
+
+/** Safety-relevant classes must stay operational until human resolution. */
+export function isSafetyRetainedClarification(cls: PrnClarificationClass): boolean {
+  return (
+    cls === "POSSIBLE_ADMINISTRATION" ||
+    cls === "POSSIBLE_ADVERSE" ||
+    cls === "UNAUTHORIZED_MEDICATION_REPORT" ||
+    cls === "REQUIRED_HUMAN_REVIEW"
+  );
+}
+
+function isActiveClarification(e: PrnEpisode, nowMs: number): boolean {
+  if (!isClarificationCandidate(e)) return false;
+  const cls = classifyPrnClarification(e);
+  if (isSafetyRetainedClarification(cls)) return true;
+  // Low-risk abandoned drafts only remain open while fresh.
+  if (cls === "LOW_RISK_ABANDONED") {
+    const t = Date.parse(e.updatedAt || e.createdAt);
+    if (Number.isNaN(t)) return false;
+    return nowMs - t < PRN_CLARIFICATION_ACTIVE_MS;
+  }
+  return false;
+}
+
+function writeEpisodeLifecycle(
+  store: CareStore,
+  e: PrnEpisode,
+  patch: Partial<PrnEpisode>,
+  why: string,
+): void {
+  const updated: PrnEpisode = {
+    ...e,
+    ...patch,
+    updatedAt: patch.updatedAt || new Date().toISOString(),
+  };
+  store.addUpdate(
+    encodeEpisode(updated, source("system", "System", why)),
+  );
+}
+
+/**
+ * Semantic clarification lifecycle:
+ * 1) collapse duplicate unauthorized/clarification rows per medication;
+ * 2) age-archive only low-risk abandoned drafts;
+ * 3) never silently archive possible administrations or adverse signals;
+ * 4) retain cancelled/superseded lineage in history projections.
  */
 export function ensurePrnClarificationLifecycle(
   store: CareStore,
   careRecipientId: string,
   nowMs: number = Date.now(),
-): { archived: number } {
+): {
+  archived: number;
+  collapsed: number;
+  retainedSafety: number;
+} {
   let archived = 0;
-  for (const e of listPrnEpisodes(store, careRecipientId)) {
-    if (!(e.unauthorizedReport || e.lifecycle === "needs_clarification")) {
+  let collapsed = 0;
+  let retainedSafety = 0;
+
+  const candidates = listPrnEpisodes(store, careRecipientId).filter(
+    isClarificationCandidate,
+  );
+
+  // ── Duplicate collapse: one operational row per medication ──────────
+  const byMed = new Map<string, PrnEpisode[]>();
+  for (const e of candidates) {
+    const k = medKey(e.medication || "unknown");
+    const list = byMed.get(k) || [];
+    list.push(e);
+    byMed.set(k, list);
+  }
+  const survivingIds = new Set<string>();
+  for (const [, group] of byMed) {
+    if (group.length <= 1) {
+      if (group[0]) survivingIds.add(group[0].id);
       continue;
     }
-    if (e.lifecycle === "cancelled" || e.lifecycle === "completed") continue;
-    if (isActiveClarification(e, nowMs)) continue;
-    const updated: PrnEpisode = {
-      ...e,
-      lifecycle: "cancelled",
-      updatedAt: new Date(nowMs).toISOString(),
-      notes: [e.notes, "Clarification closed — not an active plan item"]
-        .filter(Boolean)
-        .join(" · "),
-    };
-    store.addUpdate(
-      encodeEpisode(
-        updated,
-        source("system", "System", "PRN clarification lifecycle"),
-      ),
+    group.sort(
+      (a, b) =>
+        Date.parse(b.updatedAt || b.createdAt) -
+        Date.parse(a.updatedAt || a.createdAt),
+    );
+    const keep = group[0]!;
+    survivingIds.add(keep.id);
+    for (const dup of group.slice(1)) {
+      writeEpisodeLifecycle(
+        store,
+        dup,
+        {
+          lifecycle: "cancelled",
+          updatedAt: new Date(nowMs).toISOString(),
+          notes: [
+            dup.notes,
+            `Superseded by duplicate clarification ${keep.id} — lineage retained`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        },
+        "PRN clarification duplicate collapse",
+      );
+      collapsed += 1;
+    }
+  }
+
+  // Re-list after collapse writes
+  const afterCollapse = listPrnEpisodes(store, careRecipientId).filter(
+    isClarificationCandidate,
+  );
+
+  for (const e of afterCollapse) {
+    const cls = classifyPrnClarification(e);
+    if (isSafetyRetainedClarification(cls)) {
+      retainedSafety += 1;
+      continue;
+    }
+    if (cls !== "LOW_RISK_ABANDONED") continue;
+    const t = Date.parse(e.updatedAt || e.createdAt);
+    if (Number.isNaN(t)) continue;
+    if (nowMs - t < PRN_CLARIFICATION_ACTIVE_MS) continue;
+    writeEpisodeLifecycle(
+      store,
+      e,
+      {
+        lifecycle: "cancelled",
+        updatedAt: new Date(nowMs).toISOString(),
+        notes: [
+          e.notes,
+          "Low-risk abandoned clarification closed — not an active plan item",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      },
+      "PRN low-risk clarification archive",
     );
     archived += 1;
   }
-  return { archived };
+
+  return { archived, collapsed, retainedSafety };
 }
 
 export function buildPrnProjection(

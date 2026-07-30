@@ -101,7 +101,7 @@ describe("PRN clean-universe ETL lineage", () => {
     expect(re2.ok).toBe(true);
   });
 
-  it("archives stale unauthorized clarifications out of operational open", () => {
+  it("does not age-archive possible unauthorized administration reports", () => {
     const t0 = Date.now();
     createOrAdvancePrnEpisode(store, {
       careRecipientId: "cr-olivia",
@@ -112,18 +112,11 @@ describe("PRN clean-universe ETL lineage", () => {
       confirm: false,
       forceUnauthorized: true,
     });
-    // Force age by rewriting episode updatedAt via second unauthorized
     const fresh = buildPrnProjection(store, "cr-olivia", t0);
-    expect(
-      fresh.openEpisodes.some((e) => e.unauthorizedReport === true),
-    ).toBe(true);
-
-    // Age past window
-    const aged = t0 + PRN_CLARIFICATION_ACTIVE_MS + 60_000;
-    // Manually age: re-encode with old timestamp
     const open = fresh.openEpisodes.find((e) => e.unauthorizedReport);
     expect(open).toBeTruthy();
     if (!open) return;
+    // Age past 24h — safety-relevant unauthorized reports must remain reviewable
     store.addUpdate({
       id: open.id,
       careRecipientId: "cr-olivia",
@@ -147,20 +140,159 @@ describe("PRN clean-universe ETL lineage", () => {
         whyVisible: "test",
       },
     });
-
-    const { archived } = ensurePrnClarificationLifecycle(
+    const aged = t0 + PRN_CLARIFICATION_ACTIVE_MS + 60_000;
+    const { archived, retainedSafety } = ensurePrnClarificationLifecycle(
       store,
       "cr-olivia",
       aged,
     );
-    expect(archived).toBeGreaterThanOrEqual(1);
+    expect(archived).toBe(0);
+    expect(retainedSafety).toBeGreaterThanOrEqual(1);
     const after = buildPrnProjection(store, "cr-olivia", aged);
     expect(
       after.openEpisodes.filter((e) => e.unauthorizedReport).length,
-    ).toBe(0);
+    ).toBe(1);
+  });
+
+  it("collapses duplicate unauthorized clarifications to one operational row", () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 4; i++) {
+      createOrAdvancePrnEpisode(store, {
+        careRecipientId: "cr-olivia",
+        actorPersonId: "p-sadeil",
+        actorDisplayName: "Marcus",
+        medicationHint: "Benadryl",
+        symptom: "itching",
+        confirm: false,
+        forceUnauthorized: true,
+      });
+    }
+    const before = buildPrnProjection(store, "cr-olivia", t0);
+    expect(
+      before.openEpisodes.filter((e) => e.unauthorizedReport).length,
+    ).toBeGreaterThanOrEqual(4);
+
+    const { collapsed } = ensurePrnClarificationLifecycle(
+      store,
+      "cr-olivia",
+      t0,
+    );
+    expect(collapsed).toBeGreaterThanOrEqual(3);
+    const after = buildPrnProjection(store, "cr-olivia", t0);
+    const unauthOpen = after.openEpisodes.filter((e) => e.unauthorizedReport);
+    expect(unauthOpen.length).toBe(1);
     expect(
       after.completedRecent.some(
-        (e) => e.unauthorizedReport || e.lifecycle === "cancelled",
+        (e) =>
+          e.lifecycle === "cancelled" &&
+          /superseded by duplicate/i.test(e.notes || ""),
+      ),
+    ).toBe(true);
+  });
+
+  it("age-archives only low-risk abandoned drafts, never adverse signals", () => {
+    const t0 = Date.now();
+    // Low-risk incomplete clarification (authorized path incomplete style)
+    createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus",
+      medicationHint: "MysteryMed",
+      symptom: "?",
+      confirm: false,
+      forceUnauthorized: true,
+      notes: "started typing only",
+      dose: "dose not confirmed",
+    });
+    // Force low-risk: rewrite without administered claim
+    let proj = buildPrnProjection(store, "cr-olivia", t0);
+    let draft = proj.openEpisodes.find((e) => e.medication === "MysteryMed");
+    expect(draft).toBeTruthy();
+    if (!draft) return;
+    store.addUpdate({
+      id: draft.id,
+      careRecipientId: "cr-olivia",
+      toPersonId: "p-sadeil",
+      summary:
+        "PRN_EPISODE_V1:" +
+        JSON.stringify({
+          ...draft,
+          dose: "dose not confirmed",
+          route: "not confirmed",
+          administeredAt: undefined,
+          unauthorizedReport: false,
+          lifecycle: "needs_clarification",
+          outcome: undefined,
+          notes: "abandoned draft only",
+          updatedAt: new Date(t0 - PRN_CLARIFICATION_ACTIVE_MS - 5000).toISOString(),
+          createdAt: new Date(t0 - PRN_CLARIFICATION_ACTIVE_MS - 5000).toISOString(),
+        }),
+      status: "ready",
+      safetyClass: "high",
+      source: {
+        id: "src-draft",
+        kind: "caregiver_text",
+        label: "draft",
+        actorName: "Marcus",
+        actorPersonId: "p-sadeil",
+        recordedAt: new Date().toISOString(),
+        whyVisible: "test",
+      },
+    });
+
+    // Adverse-signal unauthorized
+    createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus",
+      medicationHint: "Benadryl",
+      symptom: "itching",
+      confirm: false,
+      forceUnauthorized: true,
+      notes: "she became very sleepy after taking it",
+    });
+    proj = buildPrnProjection(store, "cr-olivia", t0);
+    const adverse = proj.openEpisodes.find((e) => e.medication === "Benadryl");
+    expect(adverse).toBeTruthy();
+    if (adverse) {
+      store.addUpdate({
+        id: adverse.id,
+        careRecipientId: "cr-olivia",
+        toPersonId: "p-sadeil",
+        summary:
+          "PRN_EPISODE_V1:" +
+          JSON.stringify({
+            ...adverse,
+            notes: "she became very sleepy after taking it",
+            updatedAt: new Date(t0 - PRN_CLARIFICATION_ACTIVE_MS - 5000).toISOString(),
+            createdAt: new Date(t0 - PRN_CLARIFICATION_ACTIVE_MS - 5000).toISOString(),
+          }),
+        status: "ready",
+        safetyClass: "high",
+        source: {
+          id: "src-adv",
+          kind: "caregiver_text",
+          label: "adv",
+          actorName: "Marcus",
+          actorPersonId: "p-sadeil",
+          recordedAt: new Date().toISOString(),
+          whyVisible: "test",
+        },
+      });
+    }
+
+    const aged = t0 + PRN_CLARIFICATION_ACTIVE_MS + 60_000;
+    const { archived } = ensurePrnClarificationLifecycle(store, "cr-olivia", aged);
+    expect(archived).toBeGreaterThanOrEqual(1);
+    const after = buildPrnProjection(store, "cr-olivia", aged);
+    expect(
+      after.openEpisodes.some((e) => e.medication === "MysteryMed"),
+    ).toBe(false);
+    expect(
+      after.openEpisodes.some(
+        (e) =>
+          e.medication === "Benadryl" &&
+          /sleepy|taking/i.test(e.notes || ""),
       ),
     ).toBe(true);
   });
