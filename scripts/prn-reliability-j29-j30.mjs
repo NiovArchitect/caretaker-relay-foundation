@@ -144,10 +144,18 @@ const maya = await login("p-maya", "maya-lab-password");
 
 // ——— J30: idempotency key offline retry ———
 {
+  // Fresh tokens after order mutations
+  const m2 = await login("p-sadeil", "sadeil-lab-password");
+  const y2 = await login("p-maya", "maya-lab-password");
+  // Ensure ondansetron order is active for chart path
+  const p0 = await prn(m2);
+  const ond = (p0.orders || []).find((o) => /ondansetron/i.test(o.medication || ""));
+  if (ond?.id) {
+    await orderStatus(m2, { order_id: ond.id, status: "active" });
+  }
   const key = `offline-prn-${Date.now()}`;
-  // Prefer acetaminophen may be interval-blocked — try ondansetron after restore
   const a = await createEp(
-    marcus,
+    m2,
     {
       medication: "Ondansetron",
       symptom: "nausea",
@@ -157,7 +165,7 @@ const maya = await login("p-maya", "maya-lab-password");
     { "x-idempotency-key": key },
   );
   const b = await createEp(
-    marcus,
+    m2,
     {
       medication: "Ondansetron",
       symptom: "nausea",
@@ -167,7 +175,7 @@ const maya = await login("p-maya", "maya-lab-password");
     { "x-idempotency-key": key },
   );
   const c = await createEp(
-    maya,
+    y2,
     {
       medication: "Ondansetron",
       symptom: "nausea",

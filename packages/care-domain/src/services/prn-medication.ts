@@ -1157,7 +1157,8 @@ export function seedEvelynPrnOrders(
   store: CareStore,
   careRecipientId = "cr-olivia",
 ): void {
-  const orders = listPrnOrders(store, careRecipientId);
+  // Use all statuses so ended/held lab orders are not re-activated on every request
+  const orders = listAllPrnOrders(store, careRecipientId);
   if (!orders.some((o) => /acetaminophen|tylenol/i.test(o.medication))) {
     upsertPrnOrder(
       store,
