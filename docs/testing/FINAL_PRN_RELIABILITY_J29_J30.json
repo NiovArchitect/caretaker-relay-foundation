@@ -1,0 +1,88 @@
+{
+  "at": "2026-07-30T11:22:00.936Z",
+  "api": "https://caretaker-relay-care-api.onrender.com",
+  "journeys": {
+    "j29_preview": {
+      "ok": true,
+      "orderId": "prn-order-ondansetron-cr-olivia",
+      "plain": "**As-needed check for Ondansetron**\n• Reason: nausea\n• Authorized dose: 4 mg by by mouth\n• Indication on file: nausea\n• Interval: A dose of Ondansetron was reco"
+    },
+    "j29": {
+      "deactivated": {
+        "status": 200,
+        "ok": true
+      },
+      "stale": {
+        "status": 409,
+        "ok": false,
+        "code": "PRN_ORDER_INACTIVE",
+        "message": "The as-needed instruction for **Ondansetron** is no longer active (ended). Nothing was charted. Ask an authorized reviewer if a current order is on file."
+      },
+      "openAfter": 0,
+      "pass": true
+    },
+    "j30": {
+      "key": "offline-prn-1785410525672",
+      "medication": "Simethicone",
+      "a": {
+        "ok": true,
+        "status": 201,
+        "id": "prn-ep-fsy5wqzt-ms7fbukr",
+        "plain": "Charted as-needed **Simethicone 80 mg** by by mouth for **gas** at Jul 30, 11:22 AM.\nFollow-up: chec"
+      },
+      "b": {
+        "ok": true,
+        "status": 201,
+        "id": "prn-ep-fsy5wqzt-ms7fbukr",
+        "plain": "Already recorded: as-needed **Simethicone 80 mg** at Jul 30, 11:22 AM for **gas**. No duplicate administration was added"
+      },
+      "c": {
+        "ok": true,
+        "status": 201,
+        "id": "prn-ep-fsy5wqzt-ms7fbukr"
+      },
+      "openN": 1,
+      "pass": true
+    },
+    "non_prn_sample": {
+      "checks": [
+        {
+          "q": "How is Evelyn today?",
+          "len": 281,
+          "sample": "Evelyn Carter's most recent report on file is caregiver reported: ate (last note"
+        },
+        {
+          "q": "What is the next appointment?",
+          "len": 1087,
+          "sample": "Physical therapy\nFriday 4:30 PM PDT\nLocation: Coastal PT\nStatus: scheduled\nTrave"
+        },
+        {
+          "q": "What medications is she on?",
+          "len": 104,
+          "sample": "Metformin 500 mg\nTake at 12:00 PM\nWindow 11:30 AM – 12:30 PM\nTake with food\nAuth"
+        },
+        {
+          "q": "Should I give it again?",
+          "len": 975,
+          "sample": "I can't tell you to give another dose from a chat question alone — a recorded ad"
+        },
+        {
+          "q": "Did Maya get my message?",
+          "len": 168,
+          "sample": "I do not have a confirmed Send receipt for a message to Maya about Evelyn Carter"
+        }
+      ],
+      "unsafe": 0
+    },
+    "cross_recipient": "You're asking about Robert while Evelyn Carter's care context is active. I won't answer from the wrong recipient's records. Switch to Robert's care space for hi"
+  },
+  "gates": {
+    "j29_stale_order": true,
+    "j30_offline_idempotency": true,
+    "today_has_prn_fields": true,
+    "prn_has_overdue_array": true,
+    "non_prn_sample_unsafe_0": true,
+    "no_cross_recipient_dump": true,
+    "all_critical": true
+  }
+}
