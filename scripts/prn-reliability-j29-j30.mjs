@@ -147,66 +147,38 @@ const maya = await login("p-maya", "maya-lab-password");
   // Fresh tokens after order mutations
   const m2 = await login("p-sadeil", "sadeil-lab-password");
   const y2 = await login("p-maya", "maya-lab-password");
-  // Ensure ondansetron order is active for chart path
-  const p0 = await prn(m2);
-  const ond = (p0.orders || []).find((o) => /ondansetron/i.test(o.medication || ""));
-  if (ond?.id) {
-    await orderStatus(m2, { order_id: ond.id, status: "active" });
-  }
+  // Use Simethicone (third authorized PRN class) so pain/nausea intervals do not block
   const key = `offline-prn-${Date.now()}`;
-  const a = await createEp(
-    m2,
-    {
-      medication: "Ondansetron",
-      symptom: "nausea",
-      confirm: true,
-      idempotency_key: key,
-    },
-    { "x-idempotency-key": key },
-  );
-  const b = await createEp(
-    m2,
-    {
-      medication: "Ondansetron",
-      symptom: "nausea",
-      confirm: true,
-      idempotency_key: key,
-    },
-    { "x-idempotency-key": key },
-  );
-  const c = await createEp(
-    y2,
-    {
-      medication: "Ondansetron",
-      symptom: "nausea",
-      confirm: true,
-      idempotency_key: key,
-    },
-    { "x-idempotency-key": key },
-  );
+  const medBody = {
+    medication: "Simethicone",
+    symptom: "gas",
+    confirm: true,
+    idempotency_key: key,
+  };
+  const a = await createEp(m2, medBody, { "x-idempotency-key": key });
+  const b = await createEp(m2, medBody, { "x-idempotency-key": key });
+  const c = await createEp(y2, medBody, { "x-idempotency-key": key });
   const idA = a.episode?.id;
   const idB = b.episode?.id;
   const idC = c.episode?.id;
-  const same =
-    idA &&
-    idA === idB &&
-    (!idC || idC === idA || c.ok === false);
-  const proj = await prn(marcus);
+  const same = !!(idA && idA === idB && idA === idC);
+  const proj = await prn(m2);
   const openN = (proj.reassessmentDue || []).filter((e) =>
-    /ondansetron/i.test(e.medication || ""),
+    /simethicone/i.test(e.medication || ""),
   ).length;
-  // If interval blocked first write, still pass if all retries agree (same message / no multi open)
   const j30Pass =
-    (same && openN <= 1) ||
-    (a.ok && b.ok && a.episode?.id === b.episode?.id && openN <= 1) ||
-    (/Already recorded|already charted|No duplicate|No second dose/i.test(
-      String(b.plain_language || a.plain_language || ""),
-    ) &&
-      openN <= 1);
+    a.ok === true &&
+    b.ok === true &&
+    same &&
+    openN === 1 &&
+    /Already recorded|already charted|No duplicate|No second dose|Charted as-needed|Follow-up/i.test(
+      String(a.plain_language || "") + String(b.plain_language || ""),
+    );
 
   out.journeys.j30 = {
     key,
-    a: { ok: a.ok, status: a.status, id: idA, code: a.code },
+    medication: "Simethicone",
+    a: { ok: a.ok, status: a.status, id: idA, code: a.code, plain: String(a.plain_language || "").slice(0, 100) },
     b: { ok: b.ok, status: b.status, id: idB, plain: String(b.plain_language || "").slice(0, 120) },
     c: { ok: c.ok, status: c.status, id: idC },
     openN,

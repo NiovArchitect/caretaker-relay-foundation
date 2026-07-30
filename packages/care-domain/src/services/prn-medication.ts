@@ -1211,6 +1211,32 @@ export function seedEvelynPrnOrders(
       "Dr. Priya Shah",
     );
   }
+  // Third class for offline-idempotency / reliability demos when other intervals are open
+  if (!orders.some((o) => /simethicone/i.test(o.medication))) {
+    upsertPrnOrder(
+      store,
+      {
+        id: `prn-order-simethicone-${careRecipientId}`,
+        careRecipientId,
+        medication: "Simethicone",
+        strength: "80 mg",
+        allowedDose: "80 mg",
+        route: "by mouth",
+        indication: "gas",
+        minIntervalHours: 4,
+        maxDosesPer24h: 6,
+        reassessmentMinutes: 30,
+        requiredPreChecks: ["confirm symptom", "check last dose interval"],
+        authorizedBy: "Dr. Priya Shah",
+        authorizedAt: "2026-07-01T00:00:00Z",
+        status: "active",
+        specialInstructions: "As needed for gas discomfort. Do not invent a dose.",
+        sourceLabel: "Authorized PRN order (synthetic lab)",
+      },
+      "p-dr-shah",
+      "Dr. Priya Shah",
+    );
+  }
 }
 
 export function answerPrnQuestion(
