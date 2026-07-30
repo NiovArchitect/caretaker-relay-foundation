@@ -742,7 +742,7 @@ export function classifyIntent(
   } else if (isAmbiguousScheduleMoveQuestion(q)) {
     intents.push("APPOINTMENT_RESCHEDULE");
   } else if (
-    /appoint|pt\b|physical therapy|clinic|doctor'?s visit|where do i (take|go)|bring|prepare for/.test(
+    /appoint|pt\b|physical therapy|personal training|training session|clinic|doctor'?s visit|where do i (take|go)|bring|prepare for|what time is .+ (tomorrow|today|on )/.test(
       q,
     )
   ) {

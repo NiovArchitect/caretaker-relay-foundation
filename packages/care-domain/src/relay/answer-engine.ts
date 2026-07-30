@@ -945,12 +945,40 @@ function composeAnswer(ctx: {
   if (intents.some((i) => i.startsWith("APPOINTMENT"))) {
     used.add("NEXT_APPOINTMENT");
     used.add("REMINDERS");
-    const a = proj.NEXT_APPOINTMENT;
+    // Prefer named appointment when the question mentions training / PT / clinic
+    let a = proj.NEXT_APPOINTMENT;
+    const qLow = question.toLowerCase();
+    const fromState = Array.isArray(state.appointments)
+      ? (state.appointments as Array<Record<string, unknown>>)
+      : [];
+    const activeApts = fromState.filter((x) => {
+      const st = str(x.status).toLowerCase();
+      const life = str(x.scheduleState).toLowerCase();
+      return !["cancelled", "completed", "missed", "superseded", "rescheduled"].includes(st) &&
+        !["cancelled", "completed", "missed", "rescheduled"].includes(life);
+    });
+    if (activeApts.length) {
+      const pick =
+        activeApts.find(
+          (x) =>
+            /personal training/i.test(str(x.title)) &&
+            /training|personal/.test(qLow),
+        ) ||
+        activeApts.find(
+          (x) =>
+            /physical therapy|\bpt\b/i.test(str(x.title)) &&
+            /physical therapy|\bpt\b/.test(qLow),
+        ) ||
+        activeApts.find(
+          (x) => str(x.title) && qLow.includes(str(x.title).toLowerCase()),
+        );
+      if (pick) a = pick;
+    }
     if (!a) {
       parts.push(`No appointment is on file for ${recipientName}.`);
     } else {
       const title = str(a.title);
-      const when = str(a.startsAtLabel ?? a.startsAt);
+      const when = sanitizeHumanCareCopy(str(a.startsAtLabel ?? a.startsAt));
       const loc = str(a.location) || SYNTHETIC_FACILITIES.pt.address;
       const status = str(a.status);
       const prev = str(a.previousStartsAtLabel);
