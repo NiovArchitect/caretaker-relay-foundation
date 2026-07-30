@@ -156,6 +156,7 @@ import {
   reassessPrnEpisode,
   seedEvelynPrnOrders,
   ensurePrnOverdueEscalation,
+  setPrnOrderStatus,
   listPrnOrders,
   listPrnEpisodes,
   type VerificationBundle,
@@ -6062,6 +6063,10 @@ export async function registerCareRoutes(
       notes?: string;
       /** Optional occurrence time (ISO) for late documentation — interval checked at this time. */
       administered_at?: string;
+      /** Stable client action id — offline retries must not double-chart */
+      idempotency_key?: string;
+      /** Order id captured at preview — rejects if order deactivated before confirm */
+      order_id?: string;
     };
   }>("/api/v1/care/recipients/:id/prn/episodes", async (request, reply) => {
     const principal = await requireCareAuth(runtime, request, reply);
@@ -6082,6 +6087,11 @@ export async function registerCareRoutes(
       typeof body.medication === "string" ? body.medication : "Acetaminophen";
     const symptom =
       typeof body.symptom === "string" ? body.symptom : "pain";
+    const headerIdem = request.headers["x-idempotency-key"];
+    const idempotencyKey =
+      (typeof headerIdem === "string" && headerIdem.trim()) ||
+      (typeof body.idempotency_key === "string" && body.idempotency_key.trim()) ||
+      undefined;
     const result = createOrAdvancePrnEpisode(runtime.store, {
       careRecipientId: id,
       actorPersonId: principal.carePersonId,
@@ -6105,9 +6115,12 @@ export async function registerCareRoutes(
           : undefined,
       confirm: body.confirm === true,
       forceUnauthorized: /benadryl/i.test(med),
+      idempotencyKey,
+      orderId:
+        typeof body.order_id === "string" ? body.order_id : undefined,
     });
     if (!result.ok) {
-      return reply.code(400).send({
+      return reply.code(result.code === "PRN_ORDER_INACTIVE" ? 409 : 400).send({
         ok: false,
         code: result.code,
         message: result.message,
@@ -6122,9 +6135,72 @@ export async function registerCareRoutes(
       order: result.order ?? null,
       interval: result.interval,
       plain_language: result.plainLanguage,
+      idempotency_key: idempotencyKey || null,
       correlation_id: correlationId(request),
     });
   });
+
+  // Deactivate / hold / end an authorized PRN order (authorized principals only)
+  app.post<{
+    Body: {
+      order_id?: string;
+      status?: "active" | "held" | "ended";
+    };
+  }>(
+    "/api/v1/care/recipients/:id/prn/orders/status",
+    async (request, reply) => {
+      const principal = await requireCareAuth(runtime, request, reply);
+      if (!principal) return;
+      const { id } = request.params as { id: string };
+      const access = runtime.access(principal.carePersonId, id);
+      if (!access.allowed) {
+        return reply.code(403).send({
+          ok: false,
+          code: access.code,
+          message: access.reason,
+          correlation_id: correlationId(request),
+        });
+      }
+      const body = request.body ?? {};
+      const orderId =
+        typeof body.order_id === "string" ? body.order_id : "";
+      const status =
+        body.status === "held" || body.status === "ended" || body.status === "active"
+          ? body.status
+          : "ended";
+      if (!orderId) {
+        return reply.code(400).send({
+          ok: false,
+          code: "MISSING_ORDER",
+          message: "order_id is required.",
+          correlation_id: correlationId(request),
+        });
+      }
+      const updated = setPrnOrderStatus(
+        runtime.store,
+        id,
+        orderId,
+        status,
+        principal.carePersonId,
+        principal.displayName,
+      );
+      if (!updated) {
+        return reply.code(404).send({
+          ok: false,
+          code: "NOT_FOUND",
+          message: "As-needed order not found.",
+          correlation_id: correlationId(request),
+        });
+      }
+      await runtime.flush();
+      return reply.code(200).send({
+        ok: true,
+        order: updated,
+        plain_language: `As-needed order for ${updated.medication} is now ${updated.status}.`,
+        correlation_id: correlationId(request),
+      });
+    },
+  );
 
   app.post<{
     Body: {

@@ -19,6 +19,8 @@ import { evaluateAccess } from "./access.js";
 
 const ORDER_PREFIX = "PRN_ORDER_V1:";
 const EPISODE_PREFIX = "PRN_EPISODE_V1:";
+/** Durable idempotency map: key → episodeId for confirm retries / offline recovery */
+const IDEM_PREFIX = "PRN_IDEM_V1:";
 
 export type PrnLifecycle =
   | "symptom_reported"
@@ -235,7 +237,8 @@ function decodeEpisode(u: CareUpdate): PrnEpisode | null {
   }
 }
 
-export function listPrnOrders(
+/** All orders including held/ended (for stale-confirm and supersede checks). */
+export function listAllPrnOrders(
   store: CareStore,
   careRecipientId: string,
 ): PrnOrder[] {
@@ -244,7 +247,80 @@ export function listPrnOrders(
     const o = decodeOrder(u);
     if (o) map.set(o.id, o);
   }
-  return [...map.values()].filter((o) => o.status === "active");
+  return [...map.values()];
+}
+
+export function listPrnOrders(
+  store: CareStore,
+  careRecipientId: string,
+): PrnOrder[] {
+  return listAllPrnOrders(store, careRecipientId).filter(
+    (o) => o.status === "active",
+  );
+}
+
+export function setPrnOrderStatus(
+  store: CareStore,
+  careRecipientId: string,
+  orderId: string,
+  status: PrnOrder["status"],
+  actorPersonId: string,
+  actorDisplayName: string,
+): PrnOrder | null {
+  const all = listAllPrnOrders(store, careRecipientId);
+  const order = all.find((o) => o.id === orderId);
+  if (!order) return null;
+  const updated = { ...order, status };
+  return upsertPrnOrder(store, updated, actorPersonId, actorDisplayName);
+}
+
+function findIdempotentEpisode(
+  store: CareStore,
+  careRecipientId: string,
+  idempotencyKey: string,
+): PrnEpisode | undefined {
+  const key = idempotencyKey.trim();
+  if (!key) return undefined;
+  for (const u of store.getUpdates(careRecipientId)) {
+    if (!u.summary?.startsWith(IDEM_PREFIX)) continue;
+    try {
+      const row = JSON.parse(u.summary.slice(IDEM_PREFIX.length)) as {
+        key?: string;
+        episodeId?: string;
+      };
+      if (row.key === key && row.episodeId) {
+        return listPrnEpisodes(store, careRecipientId).find(
+          (e) => e.id === row.episodeId,
+        );
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return undefined;
+}
+
+function recordIdempotency(
+  store: CareStore,
+  careRecipientId: string,
+  idempotencyKey: string,
+  episodeId: string,
+  actorPersonId: string,
+  actorDisplayName: string,
+): void {
+  const key = idempotencyKey.trim();
+  if (!key) return;
+  store.addUpdate({
+    id: `prn-idem-${key.slice(0, 48)}`,
+    careRecipientId,
+    toPersonId: actorPersonId,
+    summary:
+      IDEM_PREFIX +
+      JSON.stringify({ key, episodeId, at: new Date().toISOString() }),
+    status: "ready",
+    safetyClass: "high",
+    source: source(actorPersonId, actorDisplayName, "PRN confirm idempotency"),
+  });
 }
 
 export function listPrnEpisodes(
@@ -534,6 +610,10 @@ export type CreatePrnEpisodeInput = {
   /** If true, do not invent authorization — flag unauthorized report */
   forceUnauthorized?: boolean;
   confirm?: boolean;
+  /** Stable client key so offline retries never double-chart */
+  idempotencyKey?: string;
+  /** Order id from preview — used to reject stale confirms after deactivation */
+  orderId?: string;
 };
 
 export type CreatePrnEpisodeResult =
@@ -565,12 +645,83 @@ export function createOrAdvancePrnEpisode(
     return { ok: false, code: access.code, message: access.reason };
   }
 
-  const order = matchPrnOrder(
-    store,
-    input.careRecipientId,
-    input.medicationHint,
-    input.symptom,
-  );
+  // Offline / retry recovery: same idempotency key → same episode, no second dose
+  if (input.confirm && input.idempotencyKey) {
+    const prior = findIdempotentEpisode(
+      store,
+      input.careRecipientId,
+      input.idempotencyKey,
+    );
+    if (prior) {
+      return {
+        ok: true,
+        episode: prior,
+        order: listAllPrnOrders(store, input.careRecipientId).find(
+          (o) => o.id === prior.orderId,
+        ),
+        interval: { ok: true, human: "n/a (idempotent retry)" },
+        needsConfirmation: false,
+        plainLanguage:
+          `Already recorded: as-needed **${prior.medication} ${prior.dose}**` +
+          (prior.administeredAt
+            ? ` at ${formatWhen(prior.administeredAt)}`
+            : "") +
+          ` for **${prior.symptom}**. No duplicate administration was added.`,
+      };
+    }
+  }
+
+  // Stale order: explicit orderId no longer active → reject confirm with no chart
+  if (input.confirm && input.orderId) {
+    const byId = listAllPrnOrders(store, input.careRecipientId).find(
+      (o) => o.id === input.orderId,
+    );
+    if (byId && byId.status !== "active") {
+      return {
+        ok: false,
+        code: "PRN_ORDER_INACTIVE",
+        message:
+          `The as-needed instruction for **${byId.medication}** is no longer active ` +
+          `(${byId.status}). Nothing was charted. Ask an authorized reviewer if a current order is on file.`,
+      };
+    }
+  }
+
+  let order = input.orderId
+    ? listPrnOrders(store, input.careRecipientId).find(
+        (o) => o.id === input.orderId,
+      )
+    : undefined;
+  if (!order) {
+    order = matchPrnOrder(
+      store,
+      input.careRecipientId,
+      input.medicationHint,
+      input.symptom,
+    );
+  }
+
+  // Confirm path: medication matches only an inactive order → reject (stale preview)
+  if (input.confirm && !order && !input.forceUnauthorized) {
+    const inactiveMatch = listAllPrnOrders(store, input.careRecipientId).find(
+      (o) =>
+        o.status !== "active" &&
+        (o.id === input.orderId ||
+          o.medication.toLowerCase().includes(input.medicationHint.toLowerCase()) ||
+          input.medicationHint
+            .toLowerCase()
+            .includes(o.medication.toLowerCase().split(" ")[0]!)),
+    );
+    if (inactiveMatch) {
+      return {
+        ok: false,
+        code: "PRN_ORDER_INACTIVE",
+        message:
+          `The as-needed instruction for **${inactiveMatch.medication}** changed or was deactivated. ` +
+          `Nothing was charted from the previous check. Verify the current plan with an authorized reviewer.`,
+      };
+    }
+  }
 
   if (!order || input.forceUnauthorized) {
     // Unauthorized / OTC report — chart as reported only
@@ -686,6 +837,16 @@ export function createOrAdvancePrnEpisode(
       (e.lifecycle === "reassessment_due" || e.lifecycle === "administered"),
   );
   if (existingOpen) {
+    if (input.idempotencyKey) {
+      recordIdempotency(
+        store,
+        input.careRecipientId,
+        input.idempotencyKey,
+        existingOpen.id,
+        input.actorPersonId,
+        input.actorDisplayName,
+      );
+    }
     return {
       ok: true,
       episode: existingOpen,
@@ -773,6 +934,16 @@ export function createOrAdvancePrnEpisode(
       source(input.actorPersonId, input.actorDisplayName, "PRN administration"),
     ),
   );
+  if (input.idempotencyKey) {
+    recordIdempotency(
+      store,
+      input.careRecipientId,
+      input.idempotencyKey,
+      ep.id,
+      input.actorPersonId,
+      input.actorDisplayName,
+    );
+  }
   // Also MAR-style med record for lineage with schedules
   store.addMedRecord({
     id: store.newId("mar-prn"),
@@ -799,6 +970,7 @@ export function createOrAdvancePrnEpisode(
       order_id: order.id,
       symptom: ep.symptom,
       dose,
+      idempotency_key: input.idempotencyKey || undefined,
     },
   });
 

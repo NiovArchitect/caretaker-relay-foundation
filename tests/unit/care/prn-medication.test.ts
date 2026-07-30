@@ -15,6 +15,7 @@ import {
   answerPrnQuestion,
   hasOpenPrnReassessment,
   ensurePrnOverdueEscalation,
+  setPrnOrderStatus,
 } from "../../../packages/care-domain/src/services/prn-medication.js";
 
 describe("PRN medication charting", () => {
@@ -226,6 +227,80 @@ describe("PRN medication charting", () => {
     if (!second.ok) return;
     expect(second.episode.id).toBe(first.episode.id);
     expect(second.plainLanguage).toMatch(/already charted|No second dose|already recorded/i);
+    const open = buildPrnProjection(store, "cr-olivia").reassessmentDue.filter(
+      (e) => /ondansetron/i.test(e.medication),
+    );
+    expect(open.length).toBe(1);
+  });
+
+  it("rejects confirm after order is deactivated (stale preview) without charting", () => {
+    const preview = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: false,
+    });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    const orderId = preview.order!.id;
+    setPrnOrderStatus(
+      store,
+      "cr-olivia",
+      orderId,
+      "ended",
+      "p-dr-shah",
+      "Dr. Priya Shah",
+    );
+    expect(listPrnOrders(store, "cr-olivia").some((o) => o.id === orderId)).toBe(
+      false,
+    );
+    const confirm = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+      orderId,
+    });
+    expect(confirm.ok).toBe(false);
+    if (confirm.ok) return;
+    expect(confirm.code).toBe("PRN_ORDER_INACTIVE");
+    expect(confirm.message).toMatch(/no longer active|deactivated|changed/i);
+    const due = buildPrnProjection(store, "cr-olivia").reassessmentDue.filter(
+      (e) => /ondansetron/i.test(e.medication),
+    );
+    expect(due).toHaveLength(0);
+  });
+
+  it("retries with the same idempotency key return one episode (offline recovery)", () => {
+    const key = "client-action-prn-ond-1";
+    const a = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+      idempotencyKey: key,
+    });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    const b = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+      idempotencyKey: key,
+    });
+    expect(b.ok).toBe(true);
+    if (!b.ok) return;
+    expect(b.episode.id).toBe(a.episode.id);
+    expect(b.plainLanguage).toMatch(/Already recorded|No duplicate|already charted/i);
     const open = buildPrnProjection(store, "cr-olivia").reassessmentDue.filter(
       (e) => /ondansetron/i.test(e.medication),
     );
