@@ -1015,6 +1015,8 @@ export type ReassessPrnInput = {
   adverseReaction?: string;
   followUpAction?: string;
   notes?: string;
+  /** Stable client key — retries must not re-open a completed follow-up */
+  idempotencyKey?: string;
 };
 
 export function reassessPrnEpisode(
@@ -1028,6 +1030,25 @@ export function reassessPrnEpisode(
   );
   if (!access.allowed) {
     return { ok: false, code: access.code, message: access.reason };
+  }
+  if (input.idempotencyKey) {
+    const prior = findIdempotentEpisode(
+      store,
+      input.careRecipientId,
+      input.idempotencyKey,
+    );
+    if (prior?.reassessmentCompletedAt || prior?.effect) {
+      return {
+        ok: true,
+        episode: prior,
+        interval: { ok: true, human: "n/a (idempotent reassess retry)" },
+        needsConfirmation: false,
+        plainLanguage:
+          `Follow-up for **${prior.medication}** was already charted` +
+          (prior.effect ? ` (${prior.effect})` : "") +
+          `. No duplicate result was added.`,
+      };
+    }
   }
   const episodes = listPrnEpisodes(store, input.careRecipientId);
   const ep =
@@ -1047,7 +1068,25 @@ export function reassessPrnEpisode(
       (e) => e.outcome === "administered" && !e.effect && !e.reassessmentCompletedAt,
     ) ||
     episodes.find((e) => e.outcome === "administered" && !e.effect);
-  if (!ep) {
+  // Already completed this episode — idempotent reply (retry after success)
+  if (
+    ep &&
+    (ep.reassessmentCompletedAt || ep.effect) &&
+    input.episodeId &&
+    ep.id === input.episodeId
+  ) {
+    return {
+      ok: true,
+      episode: ep,
+      interval: { ok: true, human: "n/a" },
+      needsConfirmation: false,
+      plainLanguage:
+        `Follow-up for **${ep.medication}** was already charted` +
+        (ep.effect ? ` (${ep.effect})` : "") +
+        `. No duplicate result was added.`,
+    };
+  }
+  if (!ep || ep.reassessmentCompletedAt || ep.effect) {
     return {
       ok: false,
       code: "NOT_FOUND",
@@ -1095,6 +1134,16 @@ export function reassessPrnEpisode(
       source(input.actorPersonId, input.actorDisplayName, "PRN reassessment"),
     ),
   );
+  if (input.idempotencyKey) {
+    recordIdempotency(
+      store,
+      input.careRecipientId,
+      input.idempotencyKey,
+      updated.id,
+      input.actorPersonId,
+      input.actorDisplayName,
+    );
+  }
   store.writeAudit({
     at: now,
     actorPersonId: input.actorPersonId,
@@ -1104,6 +1153,7 @@ export function reassessPrnEpisode(
       episode_id: updated.id,
       effect: input.effect,
       severity_after: input.severityAfter,
+      idempotency_key: input.idempotencyKey || undefined,
     },
   });
 
@@ -1232,6 +1282,33 @@ export function seedEvelynPrnOrders(
         status: "active",
         specialInstructions: "As needed for gas discomfort. Do not invent a dose.",
         sourceLabel: "Authorized PRN order (synthetic lab)",
+      },
+      "p-dr-shah",
+      "Dr. Priya Shah",
+    );
+  }
+  // Short reassessment window for real elapsed-time overdue soak (lab only)
+  if (!orders.some((o) => /cetirizine|short-soak/i.test(o.medication + (o.sourceLabel || "")))) {
+    upsertPrnOrder(
+      store,
+      {
+        id: `prn-order-cetirizine-soak-${careRecipientId}`,
+        careRecipientId,
+        medication: "Cetirizine",
+        strength: "10 mg",
+        allowedDose: "10 mg",
+        route: "by mouth",
+        indication: "itching",
+        minIntervalHours: 24,
+        maxDosesPer24h: 1,
+        reassessmentMinutes: 1,
+        requiredPreChecks: ["confirm symptom", "check last dose interval"],
+        authorizedBy: "Dr. Priya Shah",
+        authorizedAt: "2026-07-01T00:00:00Z",
+        status: "active",
+        specialInstructions:
+          "Lab soak order: reassess in ~1 minute. Not a dosing recommendation.",
+        sourceLabel: "Authorized PRN order (synthetic lab short-soak)",
       },
       "p-dr-shah",
       "Dr. Priya Shah",

@@ -6210,6 +6210,7 @@ export async function registerCareRoutes(
       adverse_reaction?: string;
       follow_up_action?: string;
       notes?: string;
+      idempotency_key?: string;
     };
   }>(
     "/api/v1/care/recipients/:id/prn/episodes/reassess",
@@ -6228,6 +6229,11 @@ export async function registerCareRoutes(
       }
       const body = request.body ?? {};
       const effect = body.effect || "unable_to_assess";
+      const headerIdem = request.headers["x-idempotency-key"];
+      const idempotencyKey =
+        (typeof headerIdem === "string" && headerIdem.trim()) ||
+        (typeof body.idempotency_key === "string" && body.idempotency_key.trim()) ||
+        undefined;
       const result = reassessPrnEpisode(runtime.store, {
         careRecipientId: id,
         actorPersonId: principal.carePersonId,
@@ -6248,6 +6254,7 @@ export async function registerCareRoutes(
             ? body.follow_up_action
             : undefined,
         notes: typeof body.notes === "string" ? body.notes : undefined,
+        idempotencyKey,
       });
       if (!result.ok) {
         return reply.code(404).send({
@@ -6262,6 +6269,7 @@ export async function registerCareRoutes(
         ok: true,
         episode: result.episode,
         plain_language: result.plainLanguage,
+        idempotency_key: idempotencyKey || null,
         correlation_id: correlationId(request),
       });
     },
