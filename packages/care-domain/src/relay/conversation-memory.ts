@@ -718,6 +718,12 @@ export function resolveContextualFollowUp(
       focus?.personName ||
       lastAnswer.match(/\b(Daniel Kim|Maya Bennett|Marcus Carter|Daniel|Maya|Marcus)\b/)?.[1] ||
       "the prior caregiver";
+    const whoLabel =
+      /daniel/i.test(String(who))
+        ? "Daniel Kim"
+        : /maya/i.test(String(who))
+          ? "Maya Bennett"
+          : who;
     const completed =
       lastAnswer.match(/They completed or recorded:\s*([^.]+)/i)?.[1] ||
       lastAnswer.match(/completed or recorded:\s*([^.]+)/i)?.[1];
@@ -725,12 +731,11 @@ export function resolveContextualFollowUp(
       return {
         handled: true,
         confidence: "high",
-        selectedReferent: who,
+        selectedReferent: whoLabel,
         modelPath: "deterministic",
-        answer: `${who} completed or recorded: ${completed.trim()}.`,
+        answer: `${whoLabel} completed or recorded: ${completed.trim()}.`,
       };
     }
-    // Pull from prior PREVIOUS_SHIFT style answers stored in turns
     for (const t of [...turns].reverse()) {
       const m = t.answerSummary.match(
         /They completed or recorded:\s*([^.]{8,200})/i,
@@ -739,17 +744,33 @@ export function resolveContextualFollowUp(
         return {
           handled: true,
           confidence: "high",
-          selectedReferent: who,
+          selectedReferent: whoLabel,
           modelPath: "deterministic",
-          answer: `${who} completed or recorded: ${m[1]!.trim()}.`,
+          answer: `${whoLabel} completed or recorded: ${m[1]!.trim()}.`,
         };
       }
+    }
+    // Coverage answers may only name open items — still answer from that turn
+    const left =
+      lastAnswer.match(/left open:\s*([^.]+)/i)?.[1] ||
+      [...turns]
+        .reverse()
+        .map((t) => t.answerSummary.match(/left open:\s*([^.]+)/i)?.[1])
+        .find(Boolean);
+    if (left) {
+      return {
+        handled: true,
+        confidence: "medium",
+        selectedReferent: whoLabel,
+        modelPath: "deterministic",
+        answer: `${whoLabel}'s coverage answer on file emphasizes what was left open (${left.trim()}) rather than a separate completion list. Ask “what happened last shift?” for a fuller previous-shift summary.`,
+      };
     }
     return {
       handled: true,
       confidence: "medium",
       modelPath: "deterministic",
-      answer: `I do not have a completion list for ${who} in the immediately prior coverage answer. Ask “what happened last shift?” first, then follow up.`,
+      answer: `I do not have a completion list for ${whoLabel} in the immediately prior coverage answer. Ask “what happened last shift?” first, then follow up.`,
     };
   }
 
