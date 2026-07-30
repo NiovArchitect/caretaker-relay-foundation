@@ -145,4 +145,59 @@ describe("PRN medication charting", () => {
     expect(a).toMatch(/Acetaminophen|as-needed|authorized/i);
     expect(a).not.toMatch(/you should give|take two now/i);
   });
+
+  it("charts a second authorized PRN class without pain-interval collision", () => {
+    createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Acetaminophen",
+      symptom: "knee pain",
+      confirm: true,
+    });
+    const nausea = createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      severityBefore: "moderate",
+      confirm: true,
+    });
+    expect(nausea.ok).toBe(true);
+    if (!nausea.ok) return;
+    expect(nausea.episode.medication).toMatch(/Ondansetron/i);
+    expect(nausea.episode.lifecycle).toBe("reassessment_due");
+    const proj = buildPrnProjection(store, "cr-olivia");
+    expect(proj.orders.length).toBeGreaterThanOrEqual(2);
+    expect(proj.reassessmentDue.some((e) => /ondansetron/i.test(e.medication))).toBe(
+      true,
+    );
+  });
+
+  it("allows a different caregiver to complete reassessment on the same episode", () => {
+    createOrAdvancePrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-sadeil",
+      actorDisplayName: "Marcus Carter",
+      medicationHint: "Ondansetron",
+      symptom: "nausea",
+      confirm: true,
+    });
+    const re = reassessPrnEpisode(store, {
+      careRecipientId: "cr-olivia",
+      actorPersonId: "p-maya",
+      actorDisplayName: "Maya Chen",
+      effect: "improved",
+      severityAfter: "mild",
+    });
+    expect(re.ok).toBe(true);
+    if (!re.ok) return;
+    expect(re.episode.effect).toBe("improved");
+    expect(re.episode.reassessmentCompletedAt).toBeTruthy();
+    const proj = buildPrnProjection(store, "cr-olivia");
+    expect(
+      proj.reassessmentDue.filter((e) => /ondansetron/i.test(e.medication)),
+    ).toHaveLength(0);
+  });
 });

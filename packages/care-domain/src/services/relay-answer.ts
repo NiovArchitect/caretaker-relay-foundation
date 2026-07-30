@@ -711,11 +711,21 @@ function answerWithState(
     ) ||
     /\b(pain is|it is) (down to|better|worse)/i.test(qLow) ||
     /how is .{0,20}(pain|nausea|itch|feeling) now/i.test(qLow) ||
-    /\bhelped\b.+\b(pain|walk)/i.test(qLow)
+    /\bhelped\b.+\b(pain|walk)/i.test(qLow) ||
+    /\bpain improved\b|\bpain is better\b|\bfeeling better\b|\bfollow-?up complete\b/i.test(
+      qLow,
+    ) ||
+    /\b(the )?(as-needed|prn).{0,20}(helped|did not help|didn'?t help)\b/i.test(
+      qLow,
+    )
   ) {
     let effect: "improved" | "unchanged" | "worsened" | "unable_to_assess" =
       "unable_to_assess";
-    if (/help|better|improved|down to|lower|comfort/i.test(qLow)) effect = "improved";
+    if (
+      /help|better|improved|down to|lower|comfort/i.test(qLow) &&
+      !/didn'?t help|did not help/i.test(qLow)
+    )
+      effect = "improved";
     else if (/didn'?t help|did not help|no (clear )?change|unchanged|same/i.test(qLow))
       effect = "unchanged";
     else if (/worse|worsened|higher|more pain/i.test(qLow)) effect = "worsened";
@@ -737,33 +747,49 @@ function answerWithState(
         "PRN_REASSESS",
       );
     }
+    // Do not fall through to handoff/generic — effectiveness phrases stay in PRN domain
+    return persistDeterministicAnswer(
+      req,
+      sanitizeHumanCareCopy(
+        re.message ||
+          "I do not see an open as-needed follow-up to update. If a dose was just given, confirm charting first, then tell me how the symptom is now.",
+      ),
+      ["prn:reassess_miss"],
+      "PRN_REASSESS",
+    );
   }
 
   // Charting reports only — require gave/administered language (not "can she take")
   if (
-    /\b(i )?gave\b.+\b(prn|as[- ]?needed|tylenol|acetaminophen|benadryl|when needed)\b|\bgave her the (prn |as-needed )?tylenol\b|\badministered\b.+\b(prn|as-needed|tylenol)\b|\bi gave her benadryl\b/i.test(
+    /\b(i )?gave\b.+\b(prn|as[- ]?needed|tylenol|acetaminophen|benadryl|ondansetron|zofran|when needed)\b|\bgave her the (prn |as-needed )?(tylenol|ondansetron|zofran)\b|\badministered\b.+\b(prn|as-needed|tylenol|ondansetron)\b|\bi gave her benadryl\b/i.test(
       qLow,
     )
   ) {
     const med =
       req.question.match(
-        /\b(tylenol|acetaminophen|benadryl|ibuprofen|advil|ondansetron)\b/i,
+        /\b(tylenol|acetaminophen|benadryl|ibuprofen|advil|ondansetron|zofran)\b/i,
       )?.[1] || "Acetaminophen";
+    const medNorm = /zofran/i.test(med) ? "Ondansetron" : med;
     const symptom =
       req.question.match(
         /\b(pain|knee pain|nausea|itch(?:ing)?|wheez(?:ing)?|fever|constipat(?:ion)?|anxiety)\b/i,
-      )?.[1] || (/itch/i.test(qLow) ? "itching" : "pain");
+      )?.[1] ||
+      (/itch/i.test(qLow)
+        ? "itching"
+        : /ondansetron|zofran|nause/i.test(qLow)
+          ? "nausea"
+          : "pain");
     const severity =
       req.question.match(/(\d+)\s*\/\s*10|about a (\d+)/i)?.[0] || undefined;
     const created = createOrAdvancePrnEpisode(store, {
       careRecipientId: req.careRecipientId,
       actorPersonId: req.principalId,
       actorDisplayName: req.principalDisplayName,
-      medicationHint: med,
+      medicationHint: medNorm,
       symptom,
       severityBefore: severity,
       confirm: false,
-      forceUnauthorized: /benadryl/i.test(med),
+      forceUnauthorized: /benadryl/i.test(medNorm),
     });
     if (created.ok) {
       return persistDeterministicAnswer(

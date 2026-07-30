@@ -791,6 +791,22 @@ export async function registerCareRoutes(
     const state = runtime.store.getCurrentState(id);
     const handoffs = runtime.store.getHandoffs(id);
     const latestHandoff = handoffs[handoffs.length - 1] ?? null;
+    seedEvelynPrnOrders(runtime.store, id);
+    const prn = buildPrnProjection(runtime.store, id);
+    // Signal-first: only actionable PRN (reassessment due / incomplete)
+    const prnAttention = prn.reassessmentDue.slice(0, 3).map((e) => ({
+      id: e.id,
+      title: `As-needed follow-up: ${e.medication}`,
+      whatHappened: e.humanSummary,
+      whySurfaced: "Effectiveness still needs to be checked after an as-needed dose.",
+      nextStep: "Record how they feel now",
+      kind: "medication" as const,
+      episode_id: e.id,
+    }));
+    const prnNeeds = prn.reassessmentDue.map(
+      (e) =>
+        `As-needed follow-up: ${e.medication} for ${e.symptom} — check how they feel now`,
+    );
     return reply.code(200).send({
       ok: true,
       care_recipient_id: id,
@@ -802,6 +818,20 @@ export async function registerCareRoutes(
         open_safety_reviews: state?.openSafetyReviews ?? [],
         latest_handoff: latestHandoff,
         last_updated_at: state?.lastUpdatedAt ?? null,
+        prn_attention: prnAttention,
+        prn_needs: prnNeeds,
+        prn: {
+          orders: prn.orders.map((o) => ({
+            id: o.id,
+            medication: o.medication,
+            human_summary: o.humanSummary,
+          })),
+          reassessment_due: prn.reassessmentDue.map((e) => ({
+            id: e.id,
+            human_summary: e.humanSummary,
+            human_status: e.humanStatus,
+          })),
+        },
       },
       durable: runtime.durable,
       store_backend: runtime.storeBackend,

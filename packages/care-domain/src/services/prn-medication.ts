@@ -633,6 +633,22 @@ export function createOrAdvancePrnEpisode(
     },
   });
 
+  // Continuity: append one open line to latest handoff (same canonical episode)
+  try {
+    const handoffs = store.getHandoffs(input.careRecipientId);
+    const latest = handoffs[handoffs.length - 1];
+    if (latest) {
+      const line = `As-needed follow-up: ${order.medication} ${dose} for ${ep.symptom} at ${formatWhen(adminAt)} — check how they feel`;
+      const open = latest.stillNeedsAttention ?? [];
+      if (!open.some((x) => x.includes(ep.id) || x.includes(order.medication))) {
+        latest.stillNeedsAttention = [...open, line].slice(0, 12);
+        store.addHandoff({ ...latest });
+      }
+    }
+  } catch {
+    /* handoff optional */
+  }
+
   return {
     ok: true,
     episode: ep,
@@ -750,6 +766,22 @@ export function reassessPrnEpisode(
     },
   });
 
+  // Clear stale handoff open lines for this medication when result is charted
+  try {
+    const handoffs = store.getHandoffs(input.careRecipientId);
+    const latest = handoffs[handoffs.length - 1];
+    if (latest?.stillNeedsAttention?.length) {
+      latest.stillNeedsAttention = latest.stillNeedsAttention.filter(
+        (x) =>
+          !/as-needed follow-up/i.test(x) ||
+          !new RegExp(updated.medication, "i").test(x),
+      );
+      store.addHandoff({ ...latest });
+    }
+  } catch {
+    /* optional */
+  }
+
   const effectPhrase =
     input.effect === "improved"
       ? "helped"
@@ -775,37 +807,68 @@ export function reassessPrnEpisode(
   };
 }
 
-/** Seed synthetic authorized PRN acetaminophen for Evelyn lab. */
+/**
+ * Seed synthetic authorized PRN orders for lab recipients.
+ * Recipient-agnostic: only writes when the care space lacks that order class.
+ * Not a universal formulary — protocol pack for synthetic lab only.
+ */
 export function seedEvelynPrnOrders(
   store: CareStore,
   careRecipientId = "cr-olivia",
 ): void {
-  if (listPrnOrders(store, careRecipientId).some((o) => /acetaminophen|tylenol/i.test(o.medication))) {
-    return;
+  const orders = listPrnOrders(store, careRecipientId);
+  if (!orders.some((o) => /acetaminophen|tylenol/i.test(o.medication))) {
+    upsertPrnOrder(
+      store,
+      {
+        id: `prn-order-acetaminophen-${careRecipientId}`,
+        careRecipientId,
+        medication: "Acetaminophen",
+        strength: "500 mg",
+        allowedDose: "500 mg",
+        route: "by mouth",
+        indication: "pain",
+        minIntervalHours: 6,
+        maxDosesPer24h: 4,
+        reassessmentMinutes: 60,
+        requiredPreChecks: ["confirm symptom", "check last dose interval"],
+        authorizedBy: "Dr. Priya Shah",
+        authorizedAt: "2026-07-01T00:00:00Z",
+        status: "active",
+        specialInstructions: "As needed for pain. Do not exceed labeled maximum.",
+        sourceLabel: "Authorized PRN order (synthetic lab)",
+      },
+      "p-dr-shah",
+      "Dr. Priya Shah",
+    );
   }
-  upsertPrnOrder(
-    store,
-    {
-      id: "prn-order-acetaminophen-evelyn",
-      careRecipientId,
-      medication: "Acetaminophen",
-      strength: "500 mg",
-      allowedDose: "500 mg",
-      route: "by mouth",
-      indication: "pain",
-      minIntervalHours: 6,
-      maxDosesPer24h: 4,
-      reassessmentMinutes: 60,
-      requiredPreChecks: ["confirm symptom", "check last dose interval"],
-      authorizedBy: "Dr. Priya Shah",
-      authorizedAt: "2026-07-01T00:00:00Z",
-      status: "active",
-      specialInstructions: "As needed for pain. Do not exceed labeled maximum.",
-      sourceLabel: "Authorized PRN order (synthetic lab)",
-    },
-    "p-dr-shah",
-    "Dr. Priya Shah",
-  );
+  // Second authorized class so multi-journey demos are not blocked by pain-interval
+  // after a recent acetaminophen chart (interval safety remains per-order).
+  if (!orders.some((o) => /ondansetron/i.test(o.medication))) {
+    upsertPrnOrder(
+      store,
+      {
+        id: `prn-order-ondansetron-${careRecipientId}`,
+        careRecipientId,
+        medication: "Ondansetron",
+        strength: "4 mg",
+        allowedDose: "4 mg",
+        route: "by mouth",
+        indication: "nausea",
+        minIntervalHours: 8,
+        maxDosesPer24h: 3,
+        reassessmentMinutes: 45,
+        requiredPreChecks: ["confirm symptom", "check last dose interval"],
+        authorizedBy: "Dr. Priya Shah",
+        authorizedAt: "2026-07-01T00:00:00Z",
+        status: "active",
+        specialInstructions: "As needed for nausea. Do not invent a dose.",
+        sourceLabel: "Authorized PRN order (synthetic lab)",
+      },
+      "p-dr-shah",
+      "Dr. Priya Shah",
+    );
+  }
 }
 
 export function answerPrnQuestion(
