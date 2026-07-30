@@ -635,6 +635,29 @@ function answerWithState(
   // PRN (as-needed) medication — authorized order + charting episode path
   seedEvelynPrnOrders(store, req.careRecipientId);
 
+  // Inventory / status questions first (never open a charting preview)
+  if (
+    /what prn|as-needed medication|prn medication|what as-needed|when was .{0,30}(prn|as-needed|last as-needed)|follow-?up complete|still needs to be charted|reason for the last prn|who gave the last as-needed/i.test(
+      qLow,
+    ) &&
+    !/\bi gave\b|\bgave her\b|\bgave him\b|confirm prn/i.test(qLow)
+  ) {
+    const prnInv = answerPrnQuestion(
+      store,
+      req.careRecipientId,
+      req.recipientDisplayName,
+      req.question,
+    );
+    if (prnInv) {
+      return persistDeterministicAnswer(
+        req,
+        sanitizeHumanCareCopy(prnInv),
+        ["prn:projection"],
+        "PRN_ANSWER",
+      );
+    }
+  }
+
   // Confirm PRN charting
   if (
     /^(confirm prn|confirm as-needed|confirm the prn|yes,? chart (the )?prn|looks right[,.]? chart prn)\b/i.test(
@@ -679,11 +702,12 @@ function answerWithState(
 
   // Effectiveness / reassessment follow-up (only when open PRN episode likely)
   if (
-    /^(it )?(helped|didn'?t help|did not help|no (clear )?change|worse|worsened|better)\.?$/i.test(
+    /^(it )?(helped|didn'?t help|did not help|no (clear )?change|worse|worsened|better)\b/i.test(
       req.question.trim(),
     ) ||
-    /^(pain is |it is )?(down to|better|worse)/i.test(req.question.trim()) ||
-    /how is .{0,20}(pain|nausea|itch|feeling) now/i.test(qLow)
+    /\b(pain is|it is) (down to|better|worse)/i.test(qLow) ||
+    /how is .{0,20}(pain|nausea|itch|feeling) now/i.test(qLow) ||
+    /\bhelped\b.+\b(pain|walk)/i.test(qLow)
   ) {
     let effect: "improved" | "unchanged" | "worsened" | "unable_to_assess" =
       "unable_to_assess";
@@ -711,9 +735,9 @@ function answerWithState(
     }
   }
 
-  // Give PRN / can she have / I gave PRN Tylenol
+  // Charting reports only — require gave/administered language (not "can she take")
   if (
-    /gave .{0,40}(prn|as[- ]?needed|tylenol|acetaminophen).{0,40}(pain|needed)?|gave her the (prn |as-needed )?tylenol|prn tylenol|as-needed (tylenol|acetaminophen)|can .{0,20}(have|take).{0,20}(pain|prn|as-needed)|i gave .{0,30}(for pain|when needed)/i.test(
+    /\b(i )?gave\b.+\b(prn|as[- ]?needed|tylenol|acetaminophen|benadryl|when needed)\b|\bgave her the (prn |as-needed )?tylenol\b|\badministered\b.+\b(prn|as-needed|tylenol)\b|\bi gave her benadryl\b/i.test(
       qLow,
     )
   ) {
@@ -724,7 +748,7 @@ function answerWithState(
     const symptom =
       req.question.match(
         /\b(pain|knee pain|nausea|itch(?:ing)?|wheez(?:ing)?|fever|constipat(?:ion)?|anxiety)\b/i,
-      )?.[1] || "pain";
+      )?.[1] || (/itch/i.test(qLow) ? "itching" : "pain");
     const severity =
       req.question.match(/(\d+)\s*\/\s*10|about a (\d+)/i)?.[0] || undefined;
     const created = createOrAdvancePrnEpisode(store, {
@@ -748,6 +772,31 @@ function answerWithState(
           created.order?.id || "no-order",
         ],
         "PRN_PREVIEW",
+      );
+    }
+  }
+
+  // "Can she have pain medicine?" — eligibility from order, not charting
+  if (
+    /can .{0,30}(have|take).{0,30}(pain|prn|as-needed|tylenol|acetaminophen)/i.test(
+      qLow,
+    )
+  ) {
+    const prnCan = answerPrnQuestion(
+      store,
+      req.careRecipientId,
+      req.recipientDisplayName,
+      "What PRN medication can Evelyn take for pain?",
+    );
+    if (prnCan) {
+      return persistDeterministicAnswer(
+        req,
+        sanitizeHumanCareCopy(
+          prnCan +
+            "\n\nIf a symptom is present now, tell me what you observe (and optional severity). I will not recommend a dose.",
+        ),
+        ["prn:eligibility"],
+        "PRN_ANSWER",
       );
     }
   }
