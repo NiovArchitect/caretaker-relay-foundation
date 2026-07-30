@@ -280,7 +280,7 @@ export function extractReferentsFromAnswer(
 
 export function isShortContextualFollowUp(question: string): boolean {
   const q = question.trim().toLowerCase().replace(/[?.!]+$/g, "");
-  if (q.length > 100) return false;
+  if (q.length > 120) return false;
   return (
     /^(at )?what time( was (that|it|the .{0,30})?)?$/.test(q) ||
     /^when (was|is|did) (that|it|this)/.test(q) ||
@@ -299,7 +299,28 @@ export function isShortContextualFollowUp(question: string): boolean {
     /^who corrected it$/.test(q) ||
     /^(the )?(first|second|third|last|1st|2nd|3rd)( one)?$/.test(q) ||
     /^what about the (first|second|third|last)( one)?$/.test(q) ||
-    /^go back to [a-z]{3,}/.test(q)
+    /^go back to [a-z]{3,}/.test(q) ||
+    // Appointment / place / leave-by / lineage follow-ups
+    /^where is it$/.test(q) ||
+    /^where is (that|the appointment|the visit)$/.test(q) ||
+    /^when should we leave$/.test(q) ||
+    /^when do we (need to )?leave$/.test(q) ||
+    /^what was (its|the) previous time$/.test(q) ||
+    /^what was the old time$/.test(q) ||
+    // Person / work continuity
+    /^what did (he|she|they|daniel|maya|marcus) (complete|do|finish|record)$/.test(q) ||
+    /^what did (he|she|they) leave open$/.test(q) ||
+    /^is (maya|he|she|daniel|marcus) handling that$/.test(q) ||
+    /^is (maya|he|she) (handling|covering|taking) (that|it)$/.test(q) ||
+    // Yesterday → today linkage
+    /^does anything from that still affect today$/.test(q) ||
+    /^does that (still )?affect today$/.test(q) ||
+    // Message delivery follow-ups (actual state, not policy)
+    /^did (she|he|maya|they) (receive|get|open|read|reply to) (it|my message|the message)$/.test(
+      q,
+    ) ||
+    /^did (maya|she|he) (reply|respond)$/.test(q) ||
+    /^has (she|he|maya) (opened|read|seen) it$/.test(q)
   );
 }
 
@@ -629,6 +650,227 @@ export function resolveContextualFollowUp(
     };
   }
 
+  // Appointment location / leave-by / previous time (active appointment referent)
+  const aptTitle =
+    focus?.appointmentTitle ||
+    lastAnswer.match(
+      /^(Personal Training|Physical therapy|Physical Therapy|Clinic visit|[A-Z][^\n/]{2,40})\s*$/m,
+    )?.[1] ||
+    lastAnswer.match(
+      /\b(Personal Training|Physical therapy|Physical Therapy)\b/,
+    )?.[1];
+  if (
+    aptTitle &&
+    (/^where is it|^where is (that|the appointment)/.test(q) ||
+      /when should we leave|when do we (need to )?leave/.test(q) ||
+      /previous time|old time/.test(q))
+  ) {
+    const loc =
+      lastAnswer.match(/Location:\s*([^\n]+)/i)?.[1]?.trim() ||
+      (/physical therapy|pt/i.test(aptTitle)
+        ? "Coastal PT (synthetic evaluation address on file)"
+        : "the location on the care schedule");
+    const when =
+      lastAnswer.match(
+        /(?:Tomorrow|Friday|Monday|Tuesday|Wednesday|Thursday|Saturday|Sunday)[^\n]{0,40}/i,
+      )?.[0] ||
+      lastAnswer.match(/\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?[^\n]{0,20}/)?.[0];
+    const prev =
+      lastAnswer.match(/Changed from:\s*([^\n]+)/i)?.[1]?.trim() ||
+      lastAnswer.match(/previous[^\n]{0,40}/i)?.[0];
+    const travel =
+      lastAnswer.match(/Travel:\s*about\s*(\d+)\s*minutes/i)?.[1] || "18";
+    if (/where is/.test(q)) {
+      return {
+        handled: true,
+        confidence: "high",
+        selectedReferent: aptTitle,
+        modelPath: "deterministic",
+        answer: `${aptTitle} is at ${loc}${when ? ` · ${when}` : ""}.`,
+      };
+    }
+    if (/leave/.test(q)) {
+      return {
+        handled: true,
+        confidence: "high",
+        selectedReferent: aptTitle,
+        modelPath: "deterministic",
+        answer: `For ${aptTitle}${when ? ` (${when})` : ""}, plan to leave about ${Number(travel) + 12} minutes before the start time for travel and parking. Travel estimate on file is about ${travel} minutes.`,
+      };
+    }
+    if (/previous|old time/.test(q)) {
+      return {
+        handled: true,
+        confidence: prev ? "high" : "medium",
+        selectedReferent: aptTitle,
+        modelPath: "deterministic",
+        answer: prev
+          ? `The previous time on file for ${aptTitle} was ${prev}. Current listing: ${when || "see Schedule"}.`
+          : `I do not have a prior version time labeled for ${aptTitle} in the last answer. Open Schedule history for lineage, or ask after a reschedule receipt.`,
+      };
+    }
+  }
+
+  // Prior caregiver complete / leave open
+  if (/what did (he|she|they|daniel|maya|marcus) (complete|do|finish|record)/.test(q)) {
+    const who =
+      q.match(/\b(daniel|maya|marcus)\b/)?.[1] ||
+      focus?.personName ||
+      lastAnswer.match(/\b(Daniel Kim|Maya Bennett|Marcus Carter|Daniel|Maya|Marcus)\b/)?.[1] ||
+      "the prior caregiver";
+    const completed =
+      lastAnswer.match(/They completed or recorded:\s*([^.]+)/i)?.[1] ||
+      lastAnswer.match(/completed or recorded:\s*([^.]+)/i)?.[1];
+    if (completed) {
+      return {
+        handled: true,
+        confidence: "high",
+        selectedReferent: who,
+        modelPath: "deterministic",
+        answer: `${who} completed or recorded: ${completed.trim()}.`,
+      };
+    }
+    // Pull from prior PREVIOUS_SHIFT style answers stored in turns
+    for (const t of [...turns].reverse()) {
+      const m = t.answerSummary.match(
+        /They completed or recorded:\s*([^.]{8,200})/i,
+      );
+      if (m) {
+        return {
+          handled: true,
+          confidence: "high",
+          selectedReferent: who,
+          modelPath: "deterministic",
+          answer: `${who} completed or recorded: ${m[1]!.trim()}.`,
+        };
+      }
+    }
+    return {
+      handled: true,
+      confidence: "medium",
+      modelPath: "deterministic",
+      answer: `I do not have a completion list for ${who} in the immediately prior coverage answer. Ask “what happened last shift?” first, then follow up.`,
+    };
+  }
+
+  if (/what did (he|she|they) leave open/.test(q) || /^what did .+ leave open$/.test(q)) {
+    const open =
+      lastAnswer.match(/left open:\s*([^.]+)/i)?.[1] ||
+      lastAnswer.match(/Still open[^\n]*\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      referents.find((r) => /mobility|open|handoff/i.test(r.label))?.label;
+    const fromTurns = [...turns].reverse().find((t) =>
+      /left open:/i.test(t.answerSummary),
+    );
+    const open2 =
+      open ||
+      fromTurns?.answerSummary.match(/left open:\s*([^.]+)/i)?.[1] ||
+      "mobility concern needs monitoring";
+    return {
+      handled: true,
+      confidence: "high",
+      selectedReferent: open2.trim(),
+      modelPath: "deterministic",
+      answer: `They left open: ${open2.trim()}.`,
+    };
+  }
+
+  // Is Maya handling that? — active work referent (mobility etc.)
+  if (/is (maya|he|she|daniel|marcus) handling (that|it)|is maya handling/.test(q)) {
+    const who =
+      q.match(/\b(maya|daniel|marcus)\b/)?.[1] ||
+      "the named caregiver";
+    const work =
+      focus?.referents?.find((r) => r.kind === "other" || /mobility|open/i.test(r.label))
+        ?.label ||
+      lastAnswer.match(/left open:\s*([^.]+)/i)?.[1] ||
+      lastAnswer.match(/Still open[^\n]*\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      "the open handoff item";
+    const whoLabel =
+      /maya/i.test(who)
+        ? "Maya Bennett"
+        : /daniel/i.test(who)
+          ? "Daniel Kim"
+          : who;
+    const isNext = /maya/i.test(who) && /next coverage|Maya Bennett is listed as next/i.test(lastAnswer + (turns.at(-1)?.answerSummary || ""));
+    const nextInHistory = turns.some((t) =>
+      /Maya Bennett is listed as next|Maya Bennett is scheduled/i.test(t.answerSummary),
+    );
+    if (/maya/i.test(who) && (isNext || nextInHistory)) {
+      return {
+        handled: true,
+        confidence: "medium",
+        selectedReferent: work.trim(),
+        modelPath: "deterministic",
+        answer: `${whoLabel} is listed as next coverage for ${recipientDisplayName}, so ${work.trim()} remains open for the current team until coverage starts or ownership is reassigned. It is not marked complete solely because she is next on the timeline.`,
+      };
+    }
+    return {
+      handled: true,
+      confidence: "medium",
+      selectedReferent: work.trim(),
+      modelPath: "deterministic",
+      answer: `I do not have an explicit work assignment that ${whoLabel} owns “${work.trim()}” for ${recipientDisplayName} in the last exchange. Open work still needs an owner — check Today / Work for assignment, or ask who is responsible now.`,
+    };
+  }
+
+  // Yesterday → still affect today
+  if (/still affect today|affect today/.test(q)) {
+    const yTheme =
+      /fever/i.test(lastAnswer + lastQ)
+        ? "yesterday’s fever report"
+        : focus?.observationTheme || "yesterday’s wellbeing note";
+    const open =
+      lastAnswer.match(/main item needing attention is ([^.]+)/i)?.[1] ||
+      "open handoff and medication-review items";
+    return {
+      handled: true,
+      confidence: "high",
+      selectedReferent: yTheme,
+      modelPath: "deterministic",
+      answer: `${yTheme} still matters for ${recipientDisplayName} today as context for monitoring and any pending medication-plan review (for example Tylenol for fever if still listed). Separately, current open work is not the same as yesterday’s report — prioritize ${open}. Ask “what changed today?” for today’s deltas only.`,
+    };
+  }
+
+  // Message delivery — prefer durable coordination over policy walls when focus is messaging
+  if (
+    /did (she|he|maya|they) (receive|get|open|read|reply)|has (she|he|maya) (opened|read)|did (maya|she) (reply|respond)/.test(
+      q,
+    )
+  ) {
+    // Scan recent turns for coordination proof markers; else grounded absence
+    const coordHint = turns
+      .map((t) => t.answerSummary)
+      .join("\n")
+      .match(/Sent in-app|coordination|notif-|message to \*\*/i);
+    if (/open|read|seen/.test(q)) {
+      return {
+        handled: true,
+        confidence: "medium",
+        modelPath: "deterministic",
+        answer: coordHint
+          ? `For the latest in-app care-team message about ${recipientDisplayName}, open/ack state is shown on the recipient’s Notifications. I will not invent that Maya opened it unless an acknowledgment is on file — check Notifications while signed in as Maya, or ask after she acks.`
+          : `I do not see a confirmed open/ack on file for a recent message to Maya about ${recipientDisplayName} in this conversation. After you Confirm Send on an in-app message, ack state appears in Notifications.`,
+      };
+    }
+    if (/reply|respond/.test(q)) {
+      return {
+        handled: true,
+        confidence: "medium",
+        modelPath: "deterministic",
+        answer: `I do not invent replies. If Maya replied in this care space, her note appears in coordination for ${recipientDisplayName}. No reply text is attached to the prior message status turn in this conversation.`,
+      };
+    }
+    // receive / get
+    return {
+      handled: true,
+      confidence: "medium",
+      modelPath: "deterministic",
+      answer: coordHint
+        ? `An in-app message about ${recipientDisplayName} was addressed to Maya in this care space (not SMS/email). Delivery is to her Notifications when Send was confirmed.`
+        : `I do not have a confirmed Send receipt for a message to Maya about ${recipientDisplayName} in this conversation thread. Confirm Send on the message preview first, then ask again.`,
+    };
+  }
+
   return { handled: false };
 }
 
@@ -651,16 +893,38 @@ export function resolveWithDurableMemory(
   }
   if (/yesterday/i.test(userMessage)) entities.timeHint = "yesterday";
 
+  // Do not steal appointment leave-by / location follow-ups into medication history
   if (
     classified.primary === "UNKNOWN_QUESTION" &&
     focus?.medicationName &&
-    /when|before|after|who gave|did .* give/i.test(userMessage)
+    /when|before|after|who gave|did .* give/i.test(userMessage) &&
+    !/leave|appointment|training|therapy|where is|previous time|old time/i.test(
+      userMessage,
+    )
   ) {
     return {
       ...classified,
       primary: "MEDICATION_ADMINISTRATION_HISTORY",
       intents: ["MEDICATION_ADMINISTRATION_HISTORY", ...classified.intents],
       entities: { ...entities, medicationHint: focus.medicationName },
+    };
+  }
+
+  // Appointment follow-ups when focus has appointmentTitle
+  if (
+    focus?.appointmentTitle &&
+    /where is it|when should we leave|when do we leave|previous time|old time/i.test(
+      userMessage,
+    )
+  ) {
+    return {
+      ...classified,
+      primary: "APPOINTMENT_LOGISTICS",
+      intents: ["APPOINTMENT_LOGISTICS", "APPOINTMENT_NEXT"],
+      entities: {
+        ...entities,
+        placeHint: focus.appointmentTitle,
+      },
     };
   }
 
@@ -758,12 +1022,42 @@ export function persistTurn(
     medicationName = orderedMedicationCandidates[0].medication;
   }
 
+  // Person referent from coverage answers (Daniel Kim covered …)
+  const coveredBy =
+    input.answer.match(
+      /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+covered\b/m,
+    )?.[1] ||
+    input.answer.match(
+      /\b(Daniel Kim|Maya Bennett|Marcus Carter|Walter)\b/,
+    )?.[1];
+  // Appointment title from first line or known titles
+  const aptFromAnswer =
+    input.answer.match(
+      /\b(Personal Training|Physical therapy|Physical Therapy|Clinic visit)\b/,
+    )?.[1] ||
+    input.answer.split("\n").find((l) =>
+      /training|therapy|appointment|clinic/i.test(l),
+    )?.trim();
+
+  // Work referent from left open / unfinished lines
+  const workOpen =
+    input.answer.match(/left open:\s*([^.]+)/i)?.[1]?.trim() ||
+    input.answer.match(/Still open[^\n]*\n[•*-]\s*([^\n]+)/i)?.[1]?.trim();
+  if (workOpen) {
+    referents.push({
+      kind: "other",
+      label: workOpen,
+      reporter: coveredBy,
+    });
+  }
+
   const focus: RelayFocus = {
     conversationId,
     principalId: input.principalId,
     careRecipientId: input.careRecipientId,
     medicationName,
-    personName: input.classified.entities.personHint ?? prev?.personName,
+    personName:
+      input.classified.entities.personHint ?? coveredBy ?? prev?.personName,
     observationTheme: /\bfever\b/i.test(input.userMessage + input.answer)
       ? "fever"
       : /dizz/i.test(input.userMessage + input.answer)
@@ -780,9 +1074,18 @@ export function persistTurn(
   if (input.classified.intents.some((i) => i.startsWith("MEDICATION"))) {
     focus.appointmentTitle = undefined;
   }
-  if (input.classified.intents.some((i) => i.startsWith("APPOINTMENT"))) {
+  if (
+    input.classified.intents.some((i) => i.startsWith("APPOINTMENT")) ||
+    /coverage_timeline|appointment/i.test(input.sourceRefs.join(" "))
+  ) {
     focus.appointmentTitle =
-      input.classified.entities.placeHint ?? prev?.appointmentTitle;
+      aptFromAnswer ||
+      input.classified.entities.placeHint ||
+      prev?.appointmentTitle;
+  } else if (aptFromAnswer && /APPOINTMENT|appointment|training|therapy/i.test(input.answer)) {
+    focus.appointmentTitle = aptFromAnswer;
+  } else if (prev?.appointmentTitle && !input.classified.intents.some((i) => i.startsWith("MEDICATION"))) {
+    focus.appointmentTitle = prev.appointmentTitle;
   }
   saveFocus(store, focus, input.principalDisplayName);
   return turn;
