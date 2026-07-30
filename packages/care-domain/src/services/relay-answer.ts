@@ -692,9 +692,13 @@ function answerWithState(
         "PRN_ADMIN",
       );
     }
+    // Interval block: still surface plain safety language + invite reassessment of last dose
     return persistDeterministicAnswer(
       req,
-      sanitizeHumanCareCopy(created.message),
+      sanitizeHumanCareCopy(
+        created.message +
+          "\n\nIf you already charted an as-needed dose, tell me how the symptom is now (better, unchanged, or worse) to complete the result.",
+      ),
       ["prn:blocked"],
       "PRN_BLOCKED",
     );

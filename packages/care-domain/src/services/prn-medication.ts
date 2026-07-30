@@ -679,10 +679,17 @@ export function reassessPrnEpisode(
       : undefined) ||
     episodes.find(
       (e) =>
-        e.lifecycle === "reassessment_due" ||
-        e.lifecycle === "administered" ||
-        (e.reassessmentDueAt && !e.reassessmentCompletedAt),
-    );
+        e.outcome === "administered" &&
+        !e.reassessmentCompletedAt &&
+        (e.lifecycle === "reassessment_due" ||
+          e.lifecycle === "administered" ||
+          !!e.reassessmentDueAt),
+    ) ||
+    // Latest administered episode still missing effect result
+    episodes.find(
+      (e) => e.outcome === "administered" && !e.effect && !e.reassessmentCompletedAt,
+    ) ||
+    episodes.find((e) => e.outcome === "administered" && !e.effect);
   if (!ep) {
     return {
       ok: false,
@@ -820,11 +827,14 @@ export function answerPrnQuestion(
     }
   }
 
-  if (/what prn|as-needed medication|prn medication can|can .{0,20}take for pain|pain medicine/i.test(q)) {
+  if (/what prn|as-needed medication|prn medication can|can .{0,20}take for pain|pain medicine|what prn medication can/i.test(q)) {
     if (!proj.orders.length) {
       return `I do not see an authorized as-needed (PRN) medication on file for ${recipientName}. I will not invent a dose. Ask a clinician or authorized primary if a PRN order should be added to the plan.`;
     }
-    const lines = proj.orders.map((o) => `• ${o.humanSummary}`);
+    const lines = proj.orders.map(
+      (o) =>
+        `• ${o.humanSummary || `${o.medication} ${o.allowedDose} by ${o.route} as needed for ${o.indication}`}`,
+    );
     return (
       `${recipientName} has authorized as-needed medication instructions on file:\n${lines.join("\n")}\n\n` +
       `Relay does not recommend giving a dose. If a symptom is present, say what you observe and I can help check the order and charting steps.`
