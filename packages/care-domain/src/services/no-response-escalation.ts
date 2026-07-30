@@ -19,6 +19,43 @@ export type EscalationResult = {
   plainStatus: string;
 };
 
+function humanPrincipalLabel(
+  store: CareStore,
+  personId: string,
+  fallback?: string,
+): string {
+  if (fallback && fallback.trim() && !/^p-[a-z0-9-]+$/i.test(fallback)) {
+    return fallback.trim();
+  }
+  try {
+    const p = store.getPerson?.(personId) as
+      | { displayName?: string; name?: string }
+      | undefined;
+    const n = p?.displayName || p?.name;
+    if (n && String(n).trim()) return String(n).trim();
+  } catch {
+    /* store may not implement getPerson */
+  }
+  // Never show raw principal IDs in caregiver-facing status
+  if (/^p-[a-z0-9-]+$/i.test(personId)) return "a care team member";
+  return personId;
+}
+
+function humanWhen(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "earlier";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(t));
+  } catch {
+    return "earlier";
+  }
+}
+
 /**
  * For a principal's open notifications past escalate window:
  * notify alternate and open a needs-owner work item.
@@ -73,14 +110,24 @@ export function escalateNoResponseForRecipient(
       if (Number.isNaN(age) || age < windowMs) continue;
       if (n.priority === "info") continue;
 
+      const ownerLabel = humanPrincipalLabel(
+        store,
+        principalId,
+        principalId === input.actorPersonId ? input.actorDisplayName : undefined,
+      );
+      const altLabel =
+        input.alternateDisplayName ||
+        humanPrincipalLabel(store, input.alternatePersonId);
+      const whenHuman = humanWhen(n.createdAt);
+
       const work = createWorkItem(store, {
         careRecipientId: input.careRecipientId,
         actorPersonId: input.actorPersonId,
         actorDisplayName: input.actorDisplayName,
         action: `Follow up: ${n.title}`.slice(0, 120),
-        reason: `No response to in-app notification since ${n.createdAt}`,
+        reason: `No response to in-app notification since ${whenHuman}`,
         ownerPersonId: input.alternatePersonId,
-        ownerDisplayName: input.alternateDisplayName ?? input.alternatePersonId,
+        ownerDisplayName: altLabel,
         priority: n.priority === "urgent" ? "urgent" : "high",
         evidenceKind: "operational",
         status: "assigned",
@@ -93,7 +140,7 @@ export function escalateNoResponseForRecipient(
         type: "CARE_UPDATE",
         priority: "urgent",
         title: `No response: ${n.title}`.slice(0, 100),
-        body: `${principalId} has not acknowledged. You are the alternate owner.`,
+        body: `${ownerLabel} has not acknowledged. You are the alternate owner.`,
         sourceType: "notification_escalation",
         sourceId: n.id,
         actorPersonId: input.actorPersonId,
@@ -108,7 +155,7 @@ export function escalateNoResponseForRecipient(
         escalated: true,
         alternateNotified: true,
         workItemId: work.ok ? work.item.id : undefined,
-        plainStatus: `${principalId} received "${n.title}" at ${n.createdAt}. No response. ${input.alternateDisplayName ?? input.alternatePersonId} notified as alternate.`,
+        plainStatus: `${ownerLabel} received "${n.title}" ${whenHuman}. No response. ${altLabel} notified as alternate.`,
       });
     }
   }
