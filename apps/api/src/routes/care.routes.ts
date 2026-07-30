@@ -156,6 +156,7 @@ import {
   reassessPrnEpisode,
   seedEvelynPrnOrders,
   ensurePrnOverdueEscalation,
+  ensurePrnClarificationLifecycle,
   setPrnOrderStatus,
   listPrnOrders,
   listPrnEpisodes,
@@ -794,6 +795,7 @@ export async function registerCareRoutes(
     const handoffs = runtime.store.getHandoffs(id);
     const latestHandoff = handoffs[handoffs.length - 1] ?? null;
     seedEvelynPrnOrders(runtime.store, id);
+    ensurePrnClarificationLifecycle(runtime.store, id);
     ensurePrnOverdueEscalation(runtime.store, id);
     const prn = buildPrnProjection(runtime.store, id);
     const overdueIds = new Set(prn.overdue.map((e) => e.id));
@@ -824,15 +826,26 @@ export async function registerCareRoutes(
     // Refresh handoff after overdue inject
     const handoffsAfter = runtime.store.getHandoffs(id);
     const latestHandoffAfter = handoffsAfter[handoffsAfter.length - 1] ?? latestHandoff;
+    // Signal-first bounds: client only needs recent slices for Today (not full history)
+    const events = (state?.events ?? []).slice(-12);
+    const tasks = (state?.tasks ?? [])
+      .filter((t) => {
+        const st = String((t as { status?: string }).status ?? "pending");
+        return !/^(done|completed|cancelled|canceled)$/i.test(st);
+      })
+      .slice(0, 20);
+    const observations = (state?.observations ?? []).slice(-12);
+    const appointments = (state?.appointments ?? []).slice(-20);
+    const openSafety = (state?.openSafetyReviews ?? []).slice(0, 8);
     return reply.code(200).send({
       ok: true,
       care_recipient_id: id,
       today: {
-        events: state?.events ?? [],
-        tasks: state?.tasks ?? [],
-        appointments: state?.appointments ?? [],
-        observations: state?.observations ?? [],
-        open_safety_reviews: state?.openSafetyReviews ?? [],
+        events,
+        tasks,
+        appointments,
+        observations,
+        open_safety_reviews: openSafety,
         latest_handoff: latestHandoffAfter,
         last_updated_at: state?.lastUpdatedAt ?? null,
         prn_attention: prnAttention,
@@ -6042,6 +6055,7 @@ export async function registerCareRoutes(
         });
       }
       seedEvelynPrnOrders(runtime.store, id);
+      ensurePrnClarificationLifecycle(runtime.store, id);
       ensurePrnOverdueEscalation(runtime.store, id);
       const proj = buildPrnProjection(runtime.store, id);
       return reply.code(200).send({

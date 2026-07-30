@@ -450,6 +450,54 @@ function formatWhen(iso: string): string {
   }
 }
 
+/** Unauthorized / needs_clarification remain operational only this long. */
+export const PRN_CLARIFICATION_ACTIVE_MS = 24 * 60 * 60 * 1000;
+
+function isActiveClarification(e: PrnEpisode, nowMs: number): boolean {
+  if (!(e.unauthorizedReport || e.lifecycle === "needs_clarification")) {
+    return false;
+  }
+  if (e.lifecycle === "cancelled" || e.lifecycle === "completed") return false;
+  const t = Date.parse(e.updatedAt || e.createdAt);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t < PRN_CLARIFICATION_ACTIVE_MS;
+}
+
+/**
+ * Archive abandoned clarification / unauthorized reports so they leave
+ * operational open lists while remaining in history-style completedRecent.
+ */
+export function ensurePrnClarificationLifecycle(
+  store: CareStore,
+  careRecipientId: string,
+  nowMs: number = Date.now(),
+): { archived: number } {
+  let archived = 0;
+  for (const e of listPrnEpisodes(store, careRecipientId)) {
+    if (!(e.unauthorizedReport || e.lifecycle === "needs_clarification")) {
+      continue;
+    }
+    if (e.lifecycle === "cancelled" || e.lifecycle === "completed") continue;
+    if (isActiveClarification(e, nowMs)) continue;
+    const updated: PrnEpisode = {
+      ...e,
+      lifecycle: "cancelled",
+      updatedAt: new Date(nowMs).toISOString(),
+      notes: [e.notes, "Clarification closed — not an active plan item"]
+        .filter(Boolean)
+        .join(" · "),
+    };
+    store.addUpdate(
+      encodeEpisode(
+        updated,
+        source("system", "System", "PRN clarification lifecycle"),
+      ),
+    );
+    archived += 1;
+  }
+  return { archived };
+}
+
 export function buildPrnProjection(
   store: CareStore,
   careRecipientId: string,
@@ -460,19 +508,29 @@ export function buildPrnProjection(
     humanSummary: `${o.medication} ${o.allowedDose} by ${o.route} as needed for ${o.indication} (min every ${o.minIntervalHours}h) · authorized by ${o.authorizedBy}`,
   }));
   const episodes = listPrnEpisodes(store, careRecipientId);
-  const open = episodes.filter(
-    (e) =>
-      isIncompleteReassessment(e) ||
-      e.lifecycle === "needs_clarification" ||
-      e.lifecycle === "awaiting_confirmation" ||
-      e.unauthorizedReport === true,
-  );
+  // Operational open only: incomplete reassess, awaiting confirm, fresh clarifications
+  const open = episodes
+    .filter(
+      (e) =>
+        isIncompleteReassessment(e) ||
+        e.lifecycle === "awaiting_confirmation" ||
+        isActiveClarification(e, nowMs),
+    )
+    .slice(0, 8);
   const reassess = episodes.filter((e) => isIncompleteReassessment(e));
   const completed = episodes
-    .filter((e) =>
-      ["completed", "effective", "partially_effective", "ineffective"].includes(
-        e.lifecycle,
-      ) || !!e.reassessmentCompletedAt,
+    .filter(
+      (e) =>
+        [
+          "completed",
+          "effective",
+          "partially_effective",
+          "ineffective",
+          "cancelled",
+        ].includes(e.lifecycle) ||
+        !!e.reassessmentCompletedAt ||
+        // Aged unauthorized reports remain in history lineage, not open ops
+        (e.unauthorizedReport && !isActiveClarification(e, nowMs)),
     )
     .slice(0, 8);
 
