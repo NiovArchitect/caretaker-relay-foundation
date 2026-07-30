@@ -705,24 +705,30 @@ export function createOrAdvancePrnEpisode(
     };
   }
 
-  // Recent completed chart of same order within 2 minutes → treat as duplicate submit
-  const recentDup = listPrnEpisodes(store, input.careRecipientId).find((e) => {
-    if (e.orderId !== order.id || e.outcome !== "administered" || !e.administeredAt)
+  // Double-submit after a just-completed chart (same order, same actor, <90s):
+  // return the completed episode without inventing a second administration.
+  const justCompleted = listPrnEpisodes(store, input.careRecipientId).find((e) => {
+    if (
+      e.orderId !== order.id ||
+      e.outcome !== "administered" ||
+      !e.reassessmentCompletedAt ||
+      e.administeredByPersonId !== input.actorPersonId
+    )
       return false;
-    const age = now.getTime() - Date.parse(e.administeredAt);
-    return age >= 0 && age < 2 * 60 * 1000;
+    const age = now.getTime() - Date.parse(e.reassessmentCompletedAt);
+    return age >= 0 && age < 90_000;
   });
-  if (recentDup) {
+  if (justCompleted && !interval.ok) {
     return {
       ok: true,
-      episode: recentDup,
+      episode: justCompleted,
       order,
       interval,
       needsConfirmation: false,
       plainLanguage:
-        `That as-needed dose of **${recentDup.medication}** was already recorded` +
-        (recentDup.administeredAt
-          ? ` at ${formatWhen(recentDup.administeredAt)}`
+        `That as-needed dose of **${justCompleted.medication}** was already recorded` +
+        (justCompleted.administeredAt
+          ? ` at ${formatWhen(justCompleted.administeredAt)}`
           : "") +
         `. No duplicate administration was added.`,
     };
