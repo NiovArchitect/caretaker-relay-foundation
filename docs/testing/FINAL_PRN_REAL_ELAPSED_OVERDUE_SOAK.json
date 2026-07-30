@@ -1,0 +1,49 @@
+{
+  "at": "2026-07-30T11:38:12.444Z",
+  "api": "https://caretaker-relay-care-api.onrender.com",
+  "wait_ms": 75000,
+  "real_elapsed": true,
+  "clock_injection": false,
+  "journeys": [
+    {
+      "id": "soak-1-cetirizine",
+      "chart_ok": true,
+      "same_episode_on_retry": true,
+      "overdue_after_wait": true,
+      "needs_capped": true,
+      "reassess_ok": true,
+      "reassess_idempotent": true,
+      "cleared_after_complete": true,
+      "wait_ms": 75000,
+      "pass": true
+    },
+    {
+      "id": "soak-2-no-response-then-unchanged",
+      "pass": true,
+      "history_present": true
+    },
+    {
+      "id": "soak-3-worsened",
+      "pass": true,
+      "history_present": true
+    },
+    {
+      "id": "soak-4-double-worker-today",
+      "pass": true,
+      "history_present": true
+    },
+    {
+      "id": "soak-5-retry-reassess-key",
+      "pass": true,
+      "history_present": true
+    },
+    {
+      "id": "soak-6-history-retains",
+      "pass": true,
+      "history_present": true
+    }
+  ],
+  "passed": 6,
+  "total": 6,
+  "all_pass": true
+}

@@ -1,0 +1,39 @@
+{
+  "unsafe": 0,
+  "isolation": true,
+  "samples": [
+    {
+      "q": "How is Evelyn today?",
+      "len": 281
+    },
+    {
+      "q": "What is the next appointment?",
+      "len": 1087
+    },
+    {
+      "q": "What medications is she on?",
+      "len": 104
+    },
+    {
+      "q": "Should I give it again?",
+      "len": 975
+    },
+    {
+      "q": "Did Maya get my message?",
+      "len": 168
+    },
+    {
+      "q": "What changed today?",
+      "len": 362
+    },
+    {
+      "q": "Who worked before me?",
+      "len": 159
+    },
+    {
+      "q": "Where is physical therapy?",
+      "len": 1245
+    }
+  ],
+  "pass": true
+}
