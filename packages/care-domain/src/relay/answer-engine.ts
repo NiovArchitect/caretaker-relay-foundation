@@ -134,68 +134,179 @@ export function runAnswerEngine(input: AnswerEngineInput): AnswerEngineResult {
 }
 
 /**
- * One primary answer strategy — never concatenate every matched intent template.
+ * One exclusive primary answer plan — never concatenate multiple full templates.
+ * Order is most-specific first; each branch returns a single primary (or a tight pair).
  */
 function exclusiveAnswerPlan(
   classified: ClassifiedTurn,
   question: string,
 ): RelayIntent[] {
-  const q = question.toLowerCase();
+  const q = question.toLowerCase().trim();
   const primary = classified.primary;
+
   if (primary === "META_CONVERSATION" || classified.intents.includes("META_CONVERSATION")) {
     return ["META_CONVERSATION"];
   }
+
+  // Message / collaboration status — never CARE_TEAM or generic UNKNOWN wall
+  if (
+    /\b(did|has|have)\b.+\b(message|msg)\b/.test(q) ||
+    /\b(opened|read|replied to)\b.+\b(message|it)\b/.test(q) ||
+    /\bdid she (open|reply|read)\b/.test(q) ||
+    /\bwho (was )?contacted\b/.test(q) ||
+    /\bmessage status\b|\bget my message\b/.test(q)
+  ) {
+    return ["CARE_UPDATE"];
+  }
+
+  // Escalation / no-response — exclusive
+  if (
+    primary === "ESCALATION" ||
+    /\b(escalat|does not respond|doesn't respond|no response|if .+ (does not|doesn't) (respond|reply)|who is contacted next|still waiting)\b/.test(
+      q,
+    )
+  ) {
+    return ["ESCALATION"];
+  }
+
+  // Previous shift / prior caregiver — exclusive
   if (
     primary === "PREVIOUS_SHIFT" ||
     classified.intents.includes("PREVIOUS_SHIFT") ||
-    /previous shift|last shift|during her shift|during his shift|previous caregiver report|what did (the )?previous caregiver|what did (maya|daniel|marcus) report|before my shift|before (this|the) shift|caretaker (who )?helped .{0,40}before|who (worked|helped|covered|cared).{0,40}before (me|my shift)|who was (on|with) .{0,20}before me|prior (caregiver|caretaker|shift|helper)/.test(
+    /previous shift|last shift|during her shift|during his shift|previous caregiver|what did (the )?previous caregiver|what did (maya|daniel|marcus) (report|do|leave)|before my shift|before (this|the) shift|who (worked|helped|covered|cared).{0,40}before (me|my shift)|who was (on|with) .{0,20}before me|prior (caregiver|caretaker|shift|helper)|what did they leave open/.test(
       q,
     )
   ) {
     return ["PREVIOUS_SHIFT"];
   }
-  // Three distinct temporal plans — never share one CHANGE_SINCE composer
+
+  // Next coverage — exclusive (not CARE_TEAM dump)
+  if (
+    /who works after me|who is (next|after me|taking over)|when does (the )?next caregiver|next (caregiver|shift|helper)|who takes over|if no one comes next/.test(
+      q,
+    ) &&
+    !/\b(tell|message|notify|send|report|refused)\b/.test(q)
+  ) {
+    return ["NEXT_COVERAGE" as RelayIntent];
+  }
+
+  // Handoff content — exclusive
+  if (
+    primary === "HANDOFF_PREP" ||
+    primary === "HANDOFF_REVIEW" ||
+    /\b(what is in my handoff|what did i (receive|get)|handoff (note|package|content)|before (i )?send(ing)? (the )?handoff|what should i (tell|add).{0,20}(them|next|handoff)|what do i need to tell them)\b/.test(
+      q,
+    )
+  ) {
+    if (/receive|received|incoming|what did i (get|receive)/.test(q)) {
+      return ["HANDOFF_REVIEW"];
+    }
+    return ["HANDOFF_PREP"];
+  }
+
+  // Yesterday wellbeing — exclusive
   if (
     primary === "YESTERDAY_WELLBEING" ||
     classified.intents.includes("YESTERDAY_WELLBEING") ||
     (/\byesterday\b/.test(q) &&
-      /\b(feel|feeling|mood|tired|fever|dizz|sleep|ate)\b/.test(q))
-  ) {
-    return ["YESTERDAY_WELLBEING"];
-  }
-  if (
-    primary === "CHANGES_SINCE_YESTERDAY" ||
-    classified.intents.includes("CHANGES_SINCE_YESTERDAY") ||
-    /since yesterday|better than yesterday|different from yesterday/.test(q)
-  ) {
-    return ["CHANGES_SINCE_YESTERDAY"];
-  }
-  // Operating plan ("what am I doing today / on my shift") must not include
-  // CHANGES_TODAY: that block early-returns and never reaches TASKS_NOW.
-  // Keep only task/open-loop intents so caregivers get shift work, not a dump of updates.
-  if (
-    classified.intents.includes("TASKS_NOW") ||
-    /\bwhat am i (doing|handling|working on)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift today\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b|\bwhat is on my shift\b|\bon my shift today\b/.test(
+      /\b(feel|feeling|mood|tired|fever|dizz|sleep|ate|happen|reported|how was)\b/.test(q)) ||
+    /\b(how was|what (happened|was reported)).{0,20}\byesterday\b|\byesterday\b.{0,20}(happen|feel|report)/.test(
       q,
     )
   ) {
-    return ["TASKS_NOW", "TASKS_REMAINING"];
+    return ["YESTERDAY_WELLBEING"];
   }
+
   if (
-    primary === "CHANGES_TODAY" ||
-    classified.intents.includes("CHANGES_TODAY") ||
-    /what changed today|what happened today|what is new today/.test(q)
+    primary === "CHANGES_SINCE_YESTERDAY" ||
+    classified.intents.includes("CHANGES_SINCE_YESTERDAY") ||
+    /since yesterday|better than yesterday|different from yesterday|different from yesterday/.test(
+      q,
+    )
   ) {
+    return ["CHANGES_SINCE_YESTERDAY"];
+  }
+
+  // Changes today / since arrival / since handoff — exclusive CHANGES_TODAY or CHANGE_SINCE
+  if (
+    /what changed today|what happened today|what is new today|changed since i arrived|changed since (the )?last handoff|what changed\b/.test(
+      q,
+    )
+  ) {
+    if (/since (i arrived|the last handoff|last handoff|my last)/.test(q)) {
+      return ["CHANGE_SINCE"];
+    }
     return ["CHANGES_TODAY"];
   }
-  // Medication / Allegra before open-loop generic dump
-  if (/allegra|medication change/i.test(q) || primary.startsWith("MEDICATION_")) {
-    if (/allegra|medication change/i.test(q)) return ["MEDICATION_CHANGE"];
-    return [primary.startsWith("MEDICATION_") ? primary : "MEDICATION_CURRENT"];
-  }
-  if (primary === "STATUS_SYNTHESIS") {
+
+  // Current status picture — exclusive (not unfinished dump)
+  if (
+    primary === "STATUS_SYNTHESIS" ||
+    /\bhow is (she|he|evelyn|they)\b|\bhow are they\b|\bright now\b|\bcurrent picture\b|\bcurrent status\b|\banything urgent\b|\bis anything urgent\b/.test(
+      q,
+    )
+  ) {
+    if (/\burgent\b|\bright now\b/.test(q) && /\b(unfinished|open|waiting|left)\b/.test(q)) {
+      return ["TASKS_REMAINING"];
+    }
     return ["STATUS_SYNTHESIS"];
   }
+
+  // Today operating plan / current shift responsibilities — TASKS_NOW only
+  if (
+    classified.intents.includes("TASKS_NOW") ||
+    /\bwhat am i (doing|handling|working on|responsible for)\b|\bon my (shift|plate)\b|\bdoing today\b|\bmy shift\b|\bneed to (do|handle|focus) today\b|\btoday'?s plan\b|\bwhat needs me\b|\bwhat is on my shift\b|\bwhat should i focus\b|\bassigned to me\b|\bmust i finish\b|\bbefore i leave\b/.test(
+      q,
+    )
+  ) {
+    return ["TASKS_NOW"];
+  }
+
+  // Unfinished / open / overdue — TASKS_REMAINING only (not full STATUS)
+  if (
+    primary === "WAITING_ON" ||
+    primary === "OPEN_LOOP_STATUS" ||
+    primary === "TASKS_REMAINING" ||
+    /\b(unfinished|still needs|needs attention|left open|what is overdue|still open|what'?s open)\b/.test(
+      q,
+    )
+  ) {
+    return ["TASKS_REMAINING"];
+  }
+
+  // Leave-by / travel logistics
+  if (
+    /when do (we|i) (need to )?leave|leave[- ]?by|how long (to|until) (drive|travel)/.test(q)
+  ) {
+    return ["APPOINTMENT_LOGISTICS"];
+  }
+
+  // Medication family
+  if (/allegra|medication change|pending review|waiting for review/i.test(q)) {
+    return ["MEDICATION_CHANGE"];
+  }
+  if (/was medication administered|who gave|last (dose|med)|administration history/i.test(q)) {
+    return ["MEDICATION_ADMINISTRATION_HISTORY"];
+  }
+  if (/medication is due|med(s)? due|next (med|dose)|is metformin due/i.test(q)) {
+    return ["MEDICATION_DUE"];
+  }
+  if (primary.startsWith("MEDICATION_")) {
+    return [primary];
+  }
+
+  // Appointments
+  if (
+    primary.startsWith("APPOINTMENT_") ||
+    /\b(appointment|personal training|physical therapy|\bpt\b|clinic visit)\b/.test(q)
+  ) {
+    if (/where|location|address|leave|travel|maps/.test(q)) return ["APPOINTMENT_LOGISTICS"];
+    if (/old time|previous time|was the time|before (it |we )?moved|history/.test(q)) {
+      return ["APPOINTMENT_NEXT"];
+    }
+    return ["APPOINTMENT_NEXT"];
+  }
+
   if (
     primary === "CHANGE_SINCE" ||
     primary === "RECENT_ACTIVITY" ||
@@ -203,37 +314,24 @@ function exclusiveAnswerPlan(
   ) {
     return [primary];
   }
-  if (
-    primary === "WAITING_ON" ||
-    primary === "OPEN_LOOP_STATUS" ||
-    primary === "TASKS_REMAINING"
-  ) {
-    return ["TASKS_REMAINING", "OPEN_LOOP_STATUS"];
-  }
-  // "who helped before my shift" must never collapse to the full care-team wall
-  if (
-    (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") &&
-    /before my shift|before (this|the) shift|previous caregiver|prior caregiver|who worked before|who helped before|who covered before/.test(
-      q,
-    )
-  ) {
-    return ["PREVIOUS_SHIFT"];
-  }
-  // Next coverage must use timeline, not generic CARE_COVERAGE seed dump.
-  // Exclude handoff/message actions ("tell the next caregiver …").
-  if (
-    /who works after me|who is (next|after me)|when does (the )?next caregiver|next (caregiver|shift|helper)/i.test(
-      q,
-    ) &&
-    !/\b(tell|message|notify|ask|send|report|left|refused|unfinished)\b/i.test(q)
-  ) {
-    return ["NEXT_COVERAGE" as RelayIntent];
-  }
+
   if (primary === "CARE_TEAM" || primary === "CARE_COVERAGE") {
-    return ["CARE_TEAM", "CARE_COVERAGE"];
+    if (/before my shift|previous caregiver|who worked before/.test(q)) {
+      return ["PREVIOUS_SHIFT"];
+    }
+    return ["CARE_TEAM"];
   }
-  if (primary.startsWith("APPOINTMENT_")) return [primary];
-  // Default: primary only (blocks multi-template walls)
+
+  // Default: primary only — never multi-template walls
+  if (primary === "UNKNOWN_QUESTION") {
+    // Last-chance domain recovery so we never emit the same three-line wall
+    if (/\b(message|reply|opened|contacted)\b/.test(q)) return ["CARE_UPDATE"];
+    if (/\b(handoff|tell them|next caregiver)\b/.test(q)) return ["HANDOFF_PREP"];
+    if (/\b(escalat|respond|waiting)\b/.test(q)) return ["ESCALATION"];
+    if (/\b(focus|today|shift|responsible|assigned)\b/.test(q)) return ["TASKS_NOW"];
+    if (/\b(open|unfinished|attention|overdue)\b/.test(q)) return ["TASKS_REMAINING"];
+    if (/\b(status|how is|picture|urgent)\b/.test(q)) return ["STATUS_SYNTHESIS"];
+  }
   return [primary];
 }
 
@@ -267,6 +365,67 @@ function composeAnswer(ctx: {
   const cleanOpen = semanticDedupeLines(proj.OPEN_UNCERTAINTIES ?? []).filter(
     (l) => !/RESPONSE_RECEIVED|Open list\s+\d+|s\d+-\d{10,}/i.test(l),
   );
+
+  // ── Exclusive short plans (message / escalation) — return immediately ──
+  if (intents.includes("CARE_UPDATE")) {
+    used.add("CARE_UPDATE");
+    used.add("ACTIVE_HANDOFF");
+    const qLow = question.toLowerCase();
+    const open = cleanHandoffOpen[0] || cleanOpen[0];
+    let body: string;
+    if (/opened|read|seen|ack/.test(qLow)) {
+      body =
+        `I track in-app message open/read on Notifications for this care space — not SMS/email.\n\n` +
+        `Open **Notifications** while signed in as the other caregiver to confirm seen/ack. ` +
+        `I will not invent that Maya opened a message unless an in-app acknowledgment is on file.`;
+    } else if (/replied|reply|response from/.test(qLow)) {
+      body =
+        `Replies to in-app care-team messages appear in coordination for ${recipientName}.\n\n` +
+        `If Maya replied in Relay, you will see her note in this care space. ` +
+        `Ask “show coordination” or check People/Notifications. External SMS/email was not claimed.`;
+    } else if (/who (was )?contacted|who is responsible/.test(qLow)) {
+      body =
+        `For ${recipientName}, responsibility stays with the authorized care team on this record.\n\n` +
+        (open
+          ? `Main open item still needing an owner: ${open}.`
+          : `No single open ownership item is flagged beyond normal shift coverage.`) +
+        `\n\nIn-app messages notify the person you named; they do not reassign clinical authority.`;
+    } else {
+      // did X get my message
+      body =
+        `In-app care-team messages about ${recipientName} are delivered to the named person's Notifications in this care space.\n\n` +
+        `I do **not** claim SMS or email delivery. After you confirm Send on a message preview, ` +
+        `the other caregiver should see one notification; they can ack and reply in-app.\n\n` +
+        `If you have not confirmed Send yet, nothing was delivered.`;
+    }
+    return {
+      answer: sanitizeHumanCareCopy(body),
+      sourceRefs: ["care_update", "notifications"],
+      projectionsUsed: [...used],
+    };
+  }
+
+  if (intents.includes("ESCALATION") && intents.length === 1) {
+    used.add("ESCALATION");
+    used.add("OPEN_UNCERTAINTIES");
+    used.add("ACTIVE_HANDOFF");
+    const open = cleanHandoffOpen[0] || cleanOpen[0];
+    const body =
+      `If someone does not respond in this care space, Relay can escalate:\n` +
+      `• notify an **alternate owner**\n` +
+      `• open a **follow-up work item**\n` +
+      `• keep the original notification visible until acknowledged\n\n` +
+      (open
+        ? `Something still open right now: ${open}.\n\n`
+        : `No single urgent open item is forced into escalation until a no-response window passes.\n\n`) +
+      `Use Notifications → escalate no-response, or ask an authorized coordinator. ` +
+      `Escalation does not change medication plans or invent clinical urgency.`;
+    return {
+      answer: sanitizeHumanCareCopy(body),
+      sourceRefs: ["escalation", "open_loops"],
+      projectionsUsed: [...used],
+    };
+  }
 
   if (intents.includes("META_CONVERSATION")) {
     used.add("META_CONVERSATION");
@@ -1139,6 +1298,14 @@ function composeAnswer(ctx: {
       }
       parts.push(bits.join(" "));
     }
+    // Exclusive: current status never appends handoff/med/appointment template walls
+    if (intents.length === 1 && intents[0] === "STATUS_SYNTHESIS") {
+      return {
+        answer: sanitizeHumanCareCopy(parts.join("\n\n").trim()),
+        sourceRefs: ["status_synthesis"],
+        projectionsUsed: [...used],
+      };
+    }
   }
 
   if (
@@ -1459,29 +1626,48 @@ function composeAnswer(ctx: {
           .map((w) => `• ${w}`)
           .join("\n") || "• No handoff content yet. Share an update and confirm it.",
       );
+      if (intents.includes("HANDOFF_REVIEW") && proj.ACTIVE_HANDOFF?.stillNeedsAttention?.length) {
+        parts.push(
+          `Still open from that handoff:\n` +
+            proj.ACTIVE_HANDOFF.stillNeedsAttention
+              .slice(0, 4)
+              .map((x) => `• ${x}`)
+              .join("\n"),
+        );
+      }
+      if (intents.includes("HANDOFF_PREP")) {
+        parts.push(
+          "Before sending: confirm observations, meds assisted (if any), unfinished work, and who covers next.",
+        );
+      }
     }
+    return {
+      answer: sanitizeHumanCareCopy(parts.join("\n\n").trim()),
+      sourceRefs: ["handoff"],
+      projectionsUsed: [...used],
+    };
   }
 
-  if (intents.includes("TASKS_NOW") || intents.includes("TASKS_REMAINING") || intents.includes("ESCALATION")) {
+  if (intents.includes("TASKS_NOW") || intents.includes("TASKS_REMAINING")) {
     used.add("OPEN_UNCERTAINTIES");
     used.add("NEXT_24H_TASKS");
     used.add("REMINDERS");
     used.add("ACTIVE_HANDOFF");
     const openFromHandoff = proj.ACTIVE_HANDOFF?.stillNeedsAttention ?? [];
+    const onlyRemaining =
+      intents.includes("TASKS_REMAINING") && !intents.includes("TASKS_NOW");
+    const onlyNow =
+      intents.includes("TASKS_NOW") && !intents.includes("TASKS_REMAINING");
     if (persona === "family") {
-      // Prefer latest handoff open work over long-lived review queues so shift
-      // continuity answers advance when unfinished items change.
       if (openFromHandoff.length) {
         parts.push(
-          `Still unfinished from the last handoff:\n${openFromHandoff
-            .slice(0, 4)
+          `${onlyRemaining ? "Still open / unfinished" : "Still unfinished from the last handoff"}:\n${openFromHandoff
+            .slice(0, onlyRemaining ? 5 : 3)
             .map((x) => `• ${x}`)
             .join("\n")}`,
         );
-        if (proj.OPEN_UNCERTAINTIES.length) {
-          parts.push(
-            `Also needs review:\n• ${proj.OPEN_UNCERTAINTIES[0]}`,
-          );
+        if (!onlyRemaining && proj.OPEN_UNCERTAINTIES.length) {
+          parts.push(`Also needs review:\n• ${proj.OPEN_UNCERTAINTIES[0]}`);
         }
       } else {
         parts.push(
@@ -1490,25 +1676,40 @@ function composeAnswer(ctx: {
             : "Nothing urgent is flagged right now.",
         );
       }
-      parts.push(`Coming up:\n${proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `• ${t}`).join("\n")}`);
+      // Operating plan (TASKS_NOW) includes coming-up; pure unfinished stays open-only
+      if (!onlyRemaining) {
+        const up = proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `• ${t}`).join("\n");
+        if (up) parts.push(`Coming up:\n${up}`);
+      }
     } else if (persona === "professional_dsp") {
-      parts.push("During this visit, prioritize:");
-      parts.push(proj.NEXT_24H_TASKS.slice(0, 4).map((t) => `• ${t}`).join("\n"));
-      if (openFromHandoff.length) {
+      parts.push(onlyRemaining ? "Unfinished before leave:" : "During this visit, prioritize:");
+      parts.push(
+        (onlyRemaining
+          ? openFromHandoff.slice(0, 4)
+          : proj.NEXT_24H_TASKS.slice(0, 4)
+        )
+          .map((t) => `• ${t}`)
+          .join("\n") || "• Confirm open work with the care record",
+      );
+      if (!onlyRemaining && openFromHandoff.length) {
         parts.push(
-          `From last handoff — still open:\n${openFromHandoff.slice(0, 4).map((x) => `• ${x}`).join("\n")}`,
+          `From last handoff — still open:\n${openFromHandoff.slice(0, 3).map((x) => `• ${x}`).join("\n")}`,
         );
       }
-      if (proj.OPEN_UNCERTAINTIES.length) {
-        parts.push(`Escalation / verification:\n• ${proj.OPEN_UNCERTAINTIES[0]}`);
-      }
-      parts.push(
-        `Unfinished before leave:\n${proj.DSP_SUPPORT_NOTES.slice(0, 3).map((n) => `• ${n}`).join("\n")}`,
-      );
     } else {
       parts.push(
         `Open verification items: ${proj.OPEN_UNCERTAINTIES.join("; ") || "none"}`,
       );
+    }
+    // Exclusive early return — do not append appointment/med walls
+    if (onlyNow || onlyRemaining) {
+      return {
+        answer: sanitizeHumanCareCopy(parts.join("\n\n").trim()),
+        sourceRefs: onlyRemaining
+          ? ["tasks_remaining", "handoff"]
+          : ["tasks_now", "handoff"],
+        projectionsUsed: [...used],
+      };
     }
   }
 
@@ -1647,47 +1848,40 @@ function composeAnswer(ctx: {
   }
 
   if (!parts.length) {
-    // Domain-specific no-data (never generic wall when we can name the gap)
+    // Domain-specific no-data — always question-scoped so static walls do not repeat
     used.add("UNKNOWN_CLEAN");
     const q = question.toLowerCase();
+    const topic =
+      q.replace(/[^\w\s]/g, " ").trim().split(/\s+/).slice(0, 8).join(" ") ||
+      "that ask";
     const domainHint = (() => {
       if (/\b(breakfast|lunch|dinner|eat|meal|water|hydrat|swallow)\b/.test(q))
-        return `No meal or hydration observation is recorded for the period you asked about for ${recipientName}. The latest care events on file may still help — ask what changed, or add a meal note in Relay.`;
+        return `No meal or hydration observation matches “${topic}” for ${recipientName}. Ask what changed, or add a meal note in Relay.`;
       if (/\b(sleep|slept|awake|overnight|last night)\b/.test(q))
-        return `No overnight sleep observation is recorded for ${recipientName} in the window you asked about. Check the last handoff or add a sleep note if you observed rest.`;
+        return `No overnight sleep note matches “${topic}” for ${recipientName}. Check the last handoff or record rest if you observed it.`;
       if (/\b(pain|hurt|fever|symptom)\b/.test(q))
-        return `No pain/fever/symptom report matching that question is on file for ${recipientName}. I will not invent symptoms — if you observed something, record it with time and who reported it.`;
+        return `No pain/fever/symptom report matches “${topic}” for ${recipientName}. I will not invent symptoms.`;
       if (/\b(fall|walk|mobility|transfer|out of bed)\b/.test(q))
-        return `No mobility/fall observation matching that question is on file for ${recipientName}. I cannot certify independent walking safety from missing data — use authorized mobility notes and escalate if unsure.`;
+        return `No mobility/fall note matches “${topic}” for ${recipientName}. Use authorized mobility notes and escalate if unsure.`;
       if (/\b(mood|anxious|upset|confused|repeating|resist|calm)\b/.test(q))
-        return `No mood/behavior observation for that period is on file for ${recipientName}. I will not invent how she felt — ask for the last handoff or record what you observed.`;
+        return `No mood/behavior note matches “${topic}” for ${recipientName}. I will not invent how she felt.`;
       if (/\b(shower|dressed|toilet|bathroom|routine)\b/.test(q))
-        return `No personal-care completion note for that item is on file for ${recipientName}. Preferences and dignity rules still apply; open Care for preferences if authorized.`;
+        return `No personal-care completion note matches “${topic}” for ${recipientName}. Open Care for preferences if authorized.`;
       if (/\b(document|discharge|original note|corrected|who changed)\b/.test(q))
-        return `I don't have a linked document extraction for that ask on file. Open Documents to review authorized summaries, or upload text for proposed actions (human confirm required).`;
-      if (/\b(remind|overdue|coverage|shift covered|message)\b/.test(q))
-        return `No matching reminder/coverage/message acknowledgment is on file for that ask. Check People for coverage and Today for open work that needs an owner.`;
-      return null;
+        return `No linked document extraction matches “${topic}”. Open Documents for authorized summaries.`;
+      if (/\b(message|reply|opened|contacted)\b/.test(q))
+        return `No in-app message status for “${topic}” is on file yet for ${recipientName}. Send from Relay with Confirm, then check Notifications — not SMS/email.`;
+      if (/\b(escalat|respond|waiting)\b/.test(q))
+        return `No escalation event matches “${topic}” yet. If someone does not respond, use no-response escalation so an alternate owner is notified.`;
+      if (/\b(handoff|tell them|before sending)\b/.test(q))
+        return `No handoff package text matches “${topic}” yet. Capture what changed and what is still open, then send the handoff to next coverage.`;
+      if (/\b(remind|overdue|coverage|shift)\b/.test(q))
+        return `No reminder/coverage match for “${topic}”. Check People for coverage and Today for open work.`;
+      if (/\b(focus|responsible|assigned|finish|leave)\b/.test(q))
+        return `I could not build a shift plan line for “${topic}”. Ask what is unfinished, what is on your shift, or what needs attention today.`;
+      return `I don't have a record that answers “${topic}” for ${recipientName} yet. Try naming the timeframe (today, last shift, yesterday) or the domain (meds, appointment, handoff, message).`;
     })();
-    if (domainHint) {
-      parts.push(domainHint);
-    } else if (persona === "family") {
-      parts.push(
-        `I don't have a matching record for that specific ask about ${recipientName}.`,
-      );
-      parts.push(
-        `I can help with status, medications, appointments, what changed, the care team, handoffs, meals/mobility when noted, and what is waiting — when those are authorized.`,
-      );
-      parts.push(`What domain should we check next, or what would you like to update?`);
-    } else if (persona === "professional_dsp") {
-      parts.push(
-        `No matching shift documentation answers that ask yet for ${recipientName}. Ask what changed, tasks remaining, medication authorization, or handoff.`,
-      );
-    } else {
-      parts.push(
-        `No matching record for that ask yet. Request changes since last encounter, uncertain administrations, or a caregiver-reported timeline for ${recipientName}.`,
-      );
-    }
+    parts.push(domainHint);
   }
 
   // Safety footer never invents
