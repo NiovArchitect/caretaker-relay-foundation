@@ -40,6 +40,11 @@ import {
   linkPrincipal,
   resolveCarePersonFromEntity,
 } from "./prisma-care-store.js";
+import {
+  BoundedMap,
+  ConcurrencyGate,
+  envInt,
+} from "./bounded-map.js";
 
 export type CareStoreBackend = "memory" | "file" | "prisma";
 
@@ -66,10 +71,26 @@ export class CareRuntimeService {
   readonly storeBackend: CareStoreBackend;
   readonly storePath?: string;
   private prismaStore: PrismaCareStore | null = null;
-  private pendingBundles = new Map<
-    string,
-    { bundle: VerificationBundle; ctx: AuthCareContext; rawText: string }
-  >();
+  /**
+   * Verification bundles awaiting confirm — bounded + TTL so abandoned
+   * understands cannot retain process memory indefinitely.
+   */
+  private pendingBundles = new BoundedMap<{
+    bundle: VerificationBundle;
+    ctx: AuthCareContext;
+    rawText: string;
+  }>({
+    name: "pending_bundles",
+    maxSize: envInt("CARE_PENDING_BUNDLE_MAX", 2_000),
+    ttlMs: envInt("CARE_PENDING_BUNDLE_TTL_MS", 30 * 60 * 1000),
+  });
+  /** Concurrent LLM understand / answer gate (process-local). */
+  private readonly llmGate = new ConcurrencyGate(
+    envInt("CARE_LLM_MAX_CONCURRENT", 2),
+    envInt("CARE_LLM_MAX_QUEUE", 20),
+    "care_llm",
+  );
+  private activeRequests = 0;
   private jwtSecret: string;
   private nonceStore: NonceStore;
   private readonly _understandMode: "fixture" | "llm";
@@ -481,7 +502,57 @@ export class CareRuntimeService {
   }
 
   takeBundle(id: string) {
-    return this.pendingBundles.get(id);
+    const entry = this.pendingBundles.get(id);
+    if (entry) this.pendingBundles.delete(id);
+    return entry;
+  }
+
+  /** Run an LLM-backed path under process-local concurrency + queue bounds. */
+  async withLlmConcurrency<T>(fn: () => Promise<T>): Promise<T> {
+    return this.llmGate.run(fn);
+  }
+
+  trackRequestStart(): void {
+    this.activeRequests += 1;
+  }
+
+  trackRequestEnd(): void {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+  }
+
+  /**
+   * Ops-safe memory / concurrency snapshot. No PHI, no secrets, no recipient names.
+   */
+  memoryTelemetry(): Record<string, unknown> {
+    const mu = process.memoryUsage();
+    const storeAny = this.store as unknown as {
+      inventoryCounts?: () => Record<string, number>;
+    };
+    const storeInventory =
+      this.prismaStore?.memoryInventory() ??
+      (typeof storeAny.inventoryCounts === "function"
+        ? {
+            store_backend: this.storeBackend,
+            families: storeAny.inventoryCounts(),
+          }
+        : { store_backend: this.storeBackend, families: null });
+
+    return {
+      ok: true,
+      timestamp: new Date().toISOString(),
+      process: {
+        rss: mu.rss,
+        heapTotal: mu.heapTotal,
+        heapUsed: mu.heapUsed,
+        external: mu.external,
+        arrayBuffers: mu.arrayBuffers,
+      },
+      active_requests: this.activeRequests,
+      pending_bundles: this.pendingBundles.stats(),
+      llm: this.llmGate.stats(),
+      store: storeInventory,
+      product: this.productMeta(),
+    };
   }
 
   get understandMode(): "fixture" | "llm" {
@@ -853,6 +924,17 @@ export class CareRuntimeService {
       ).getIdempotent(key);
     }
     return undefined;
+  }
+
+  /**
+   * Idempotency lookup with durable Prisma fallback after in-process eviction.
+   * Prefer this on write/confirm paths so TTL/max eviction cannot double-apply.
+   */
+  async getIdempotentDurable(key: string): Promise<unknown | undefined> {
+    if (this.prismaStore) {
+      return this.prismaStore.getIdempotentDurable(key);
+    }
+    return this.getIdempotent(key);
   }
 
   putIdempotent(key: string, body: unknown): void {

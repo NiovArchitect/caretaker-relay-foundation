@@ -137,6 +137,31 @@ export class MemoryCareStore implements CareStore {
     this.prefs.clear();
   }
 
+  /**
+   * Process-local object-family counts for memory telemetry.
+   * No PHI, no internal entity payloads — counts only.
+   */
+  inventoryCounts(): Record<string, number> {
+    return {
+      people: this.people.size,
+      recipients: this.recipients.size,
+      relationships: this.relationships.size,
+      consents: this.consents.size,
+      events: this.events.size,
+      observations: this.observations.size,
+      appointments: this.appointments.size,
+      tasks: this.tasks.size,
+      med_schedules: this.medSchedules.size,
+      med_records: this.medRecords.size,
+      handoffs: this.handoffs.size,
+      updates: this.updates.size,
+      corrections: this.corrections.size,
+      safety_reviews: this.safety.size,
+      audits: this.audit.length,
+      preferences: this.prefs.size,
+    };
+  }
+
   upsertPerson(p: Person): void {
     this.people.set(p.id, p);
   }

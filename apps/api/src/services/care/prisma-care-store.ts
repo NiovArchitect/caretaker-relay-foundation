@@ -32,6 +32,7 @@ import {
   type SafetyReview,
   type SourceRef,
 } from "@caretaker-relay/care-domain";
+import { BoundedMap, envInt } from "./bounded-map.js";
 
 /**
  * CANONICAL medication content hash — single policy shared with care-domain loop.
@@ -55,7 +56,16 @@ export function medContentHash(m: {
 
 export class PrismaCareStore implements CareStore {
   private memory = new MemoryCareStore();
-  private idempotency = new Map<string, { body: unknown; at: string }>();
+  /**
+   * In-process idempotency acceleration only.
+   * Durable truth is careIdempotencyRow; map is TTL + max-size bounded.
+   * Defaults: 10_000 entries / 48h (override via CARE_IDEM_MAX_SIZE / CARE_IDEM_TTL_MS).
+   */
+  private idempotency = new BoundedMap<{ body: unknown; at: string }>({
+    name: "care_idempotency",
+    maxSize: envInt("CARE_IDEM_MAX_SIZE", 10_000),
+    ttlMs: envInt("CARE_IDEM_TTL_MS", 48 * 60 * 60 * 1000),
+  });
   private dirty = false;
   /** Audit-only mutations (login, views) — do not force full care-graph flush. */
   private auditDirty = false;
@@ -86,6 +96,18 @@ export class PrismaCareStore implements CareStore {
   private flushInFlight: Promise<void> | null = null;
   private flushAgain = false;
   readonly backend = "prisma" as const;
+  /**
+   * Caps applied on startup load — cold historical rows remain durable in Prisma.
+   * Strategy E phase 2: bound process-retained volume for high-growth families.
+   * Active relationships/people/recipients/med schedules still load in full (hot).
+   */
+  private readonly auditLoadCap = envInt("CARE_AUDIT_LOAD_CAP", 5_000);
+  private readonly idemLoadCap = envInt("CARE_IDEM_LOAD_CAP", 5_000);
+  private readonly eventLoadCap = envInt("CARE_EVENT_LOAD_CAP", 3_000);
+  private readonly observationLoadCap = envInt("CARE_OBSERVATION_LOAD_CAP", 1_500);
+  private readonly medRecordLoadCap = envInt("CARE_MED_RECORD_LOAD_CAP", 2_000);
+  private readonly handoffLoadCap = envInt("CARE_HANDOFF_LOAD_CAP", 500);
+  private readonly updateLoadCap = envInt("CARE_UPDATE_LOAD_CAP", 2_000);
 
   static async create(opts?: { load?: boolean }): Promise<PrismaCareStore> {
     const store = new PrismaCareStore();
@@ -124,19 +146,49 @@ export class PrismaCareStore implements CareStore {
       prisma.careRecipientRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.careRelationshipRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.careConsentRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careEventRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careObservationRow.findMany({ where: { product_id: PRODUCT_ID } }),
+      prisma.careEventRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { occurred_at: "desc" },
+        take: this.eventLoadCap,
+      }),
+      prisma.careObservationRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { observed_at: "desc" },
+        take: this.observationLoadCap,
+      }),
       prisma.careAppointmentRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.careTaskRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.careMedScheduleRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careMedAdminRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careHandoffRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careUpdateRow.findMany({ where: { product_id: PRODUCT_ID } }),
+      prisma.careMedAdminRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { administered_at: "desc" },
+        take: this.medRecordLoadCap,
+      }),
+      prisma.careHandoffRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { created_at: "desc" },
+        take: this.handoffLoadCap,
+      }),
+      prisma.careUpdateRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        // updates lack a reliable order field on all schemas — load all up to cap via raw take
+        take: this.updateLoadCap,
+      }),
       prisma.careCorrectionRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.careSafetyReviewRow.findMany({ where: { product_id: PRODUCT_ID } }),
       prisma.carePreferenceRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careAuditRow.findMany({ where: { product_id: PRODUCT_ID } }),
-      prisma.careIdempotencyRow.findMany({ where: { product_id: PRODUCT_ID } }),
+      // Audits and idempotency grow without bound under validation traffic.
+      // Load only the most recent N into process memory; durable rows stay in Prisma.
+      prisma.careAuditRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { at: "desc" },
+        take: this.auditLoadCap,
+      }),
+      prisma.careIdempotencyRow.findMany({
+        where: { product_id: PRODUCT_ID },
+        orderBy: { at: "desc" },
+        take: this.idemLoadCap,
+      }),
     ]);
 
     for (const p of people) {
@@ -369,7 +421,9 @@ export class PrismaCareStore implements CareStore {
       });
       this.knownAuditIds.add(a.id);
     }
-    for (const i of idems) {
+    // Load oldest-first into BoundedMap so newest (loaded last) are retained if over max.
+    const idemsChrono = [...idems].reverse();
+    for (const i of idemsChrono) {
       this.idempotency.set(i.key, { body: i.body, at: i.at });
       this.knownIdempotencyKeys.add(i.key);
     }
@@ -990,7 +1044,7 @@ export class PrismaCareStore implements CareStore {
       }
       this.knownAuditIds.add(a.id);
     }
-    for (const [key, v] of this.idempotency) {
+    for (const [key, v] of this.idempotency.entries()) {
       if (this.knownIdempotencyKeys.has(key)) continue;
       await prisma.careIdempotencyRow.upsert({
         where: { key },
@@ -1003,6 +1057,20 @@ export class PrismaCareStore implements CareStore {
         update: { body: v.body as object, at: v.at },
       });
       this.knownIdempotencyKeys.add(key);
+    }
+    // Bound known-key set so process restart of knowledge does not grow forever
+    if (this.knownIdempotencyKeys.size > this.idemLoadCap * 2) {
+      this.knownIdempotencyKeys.clear();
+      for (const [key] of this.idempotency.entries()) {
+        this.knownIdempotencyKeys.add(key);
+      }
+    }
+    if (this.knownAuditIds.size > this.auditLoadCap * 2) {
+      // Keep only ids still in memory inventory (recent audits)
+      const live = new Set(this.memory.listAudit().map((a) => a.id));
+      for (const id of [...this.knownAuditIds]) {
+        if (!live.has(id)) this.knownAuditIds.delete(id);
+      }
     }
     this.dirty = false;
     this.auditDirty = false;
@@ -1031,10 +1099,65 @@ export class PrismaCareStore implements CareStore {
     return this.idempotency.get(key)?.body;
   }
 
+  /**
+   * Durable fallback for idempotency after in-process eviction/TTL.
+   * Prefer getIdempotent() for the hot path; use this on miss for safety.
+   */
+  async getIdempotentDurable(key: string): Promise<unknown | undefined> {
+    const hot = this.idempotency.get(key);
+    if (hot) return hot.body;
+    const row = await prisma.careIdempotencyRow.findUnique({ where: { key } });
+    if (!row || row.product_id !== PRODUCT_ID) return undefined;
+    this.idempotency.set(key, { body: row.body, at: row.at });
+    this.knownIdempotencyKeys.add(key);
+    return row.body;
+  }
+
   putIdempotent(key: string, body: unknown): void {
     this.idempotency.set(key, { body, at: new Date().toISOString() });
     this.knownIdempotencyKeys.delete(key); // force flush of new/updated body
     this.dirty = true;
+  }
+
+  /**
+   * Process memory inventory — counts only, no PHI.
+   */
+  memoryInventory(): {
+    store_backend: "prisma";
+    families: Record<string, number>;
+    idempotency: ReturnType<BoundedMap<{ body: unknown; at: string }>["stats"]>;
+    known_audit_ids: number;
+    known_idempotency_keys: number;
+    load_caps: {
+      audit: number;
+      idempotency: number;
+      events: number;
+      observations: number;
+      med_records: number;
+      handoffs: number;
+      updates: number;
+    };
+    dirty_flags: { structural: boolean; audit: boolean };
+    strategy: string;
+  } {
+    return {
+      store_backend: "prisma",
+      families: this.memory.inventoryCounts(),
+      idempotency: this.idempotency.stats(),
+      known_audit_ids: this.knownAuditIds.size,
+      known_idempotency_keys: this.knownIdempotencyKeys.size,
+      load_caps: {
+        audit: this.auditLoadCap,
+        idempotency: this.idemLoadCap,
+        events: this.eventLoadCap,
+        observations: this.observationLoadCap,
+        med_records: this.medRecordLoadCap,
+        handoffs: this.handoffLoadCap,
+        updates: this.updateLoadCap,
+      },
+      dirty_flags: { structural: this.dirty, audit: this.auditDirty },
+      strategy: "E_HYBRID_PHASE2_LOAD_CAPS",
+    };
   }
 
   /** Content-hash med duplicate check against memory + will flush to DB. */

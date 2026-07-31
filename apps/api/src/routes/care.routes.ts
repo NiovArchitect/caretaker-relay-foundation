@@ -271,6 +271,41 @@ export async function registerCareRoutes(
   });
 
   /**
+   * Protected memory / concurrency telemetry for ops and incident response.
+   * Requires CARE_OPS_TOKEN (header x-care-ops-token or Authorization: Bearer).
+   * Returns counts and process.memoryUsage only — never PHI or secrets.
+   */
+  app.get("/api/v1/care/ops/memory", async (request, reply) => {
+    const expected = process.env.CARE_OPS_TOKEN?.trim();
+    if (!expected) {
+      return reply.code(404).send({
+        ok: false,
+        code: "OPS_MEMORY_DISABLED",
+        message: "Set CARE_OPS_TOKEN to enable ops memory telemetry.",
+      });
+    }
+    const headerTok =
+      typeof request.headers["x-care-ops-token"] === "string"
+        ? request.headers["x-care-ops-token"]
+        : "";
+    const auth = typeof request.headers.authorization === "string"
+      ? request.headers.authorization
+      : "";
+    const bearer = auth.toLowerCase().startsWith("bearer ")
+      ? auth.slice(7).trim()
+      : "";
+    const provided = headerTok || bearer;
+    if (!provided || provided !== expected) {
+      return reply.code(401).send({
+        ok: false,
+        code: "UNAUTHORIZED",
+        message: "Invalid or missing ops token",
+      });
+    }
+    return reply.code(200).send(runtime.memoryTelemetry());
+  });
+
+  /**
    * Durable account registration — zero recipient memberships by default.
    * Role/relationship claim is metadata only; never grants recipient access.
    */
@@ -656,12 +691,28 @@ export async function registerCareRoutes(
             | "care_notes"
             | "handoffs")
         : "all";
-    const items = buildCareHistory(runtime.store, id, filter);
+    const rawLimit = Number.parseInt(
+      String((request.query as { limit?: string })?.limit ?? ""),
+      10,
+    );
+    // Server-enforced payload bound — prevents unbounded History serialization spikes.
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(rawLimit, 1), 200)
+      : 100;
+    const allItems = buildCareHistory(runtime.store, id, filter);
+    const sorted = [...allItems].sort((a, b) =>
+      (b.at ?? "").localeCompare(a.at ?? ""),
+    );
+    const items = sorted.slice(0, limit);
     return reply.code(200).send({
       ok: true,
       care_recipient_id: id,
       filter,
       items,
+      item_count: items.length,
+      total_available: sorted.length,
+      limit,
+      truncated: sorted.length > items.length,
       correlation_id: correlationId(request),
     });
   });
@@ -1208,9 +1259,28 @@ export async function registerCareRoutes(
     }
 
     const temporal = interpretHumanTime(text);
-    let result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
-      mode,
-    });
+    let result;
+    try {
+      const runPropose = () =>
+        runtime.loop.proposeFromInput(text, mapped.ctx, { mode });
+      // Bound concurrent LLM understand calls to limit heap spikes on starter instances.
+      result =
+        mode === "llm"
+          ? await runtime.withLlmConcurrency(runPropose)
+          : await runPropose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/queue full|care_llm/i.test(msg)) {
+        return reply.code(503).send({
+          ok: false,
+          code: "LLM_CONCURRENCY_LIMIT",
+          message:
+            "Too many concurrent understand requests. Retry shortly.",
+          correlation_id: correlationId(request),
+        });
+      }
+      throw err;
+    }
     // Provider failure on synthetic Grok: fall back to deterministic interpret (no false success)
     if (mode === "llm" && result.kind === "refusal" && /provider|unavailable|quota/i.test(result.message ?? "")) {
       result = await runtime.loop.proposeFromInput(text, mapped.ctx, {
@@ -1347,7 +1417,7 @@ export async function registerCareRoutes(
         : undefined;
 
     if (idem) {
-      const prior = runtime.getIdempotent(idem);
+      const prior = await runtime.getIdempotentDurable(idem);
       if (prior) {
         return reply.code(200).send({
           ...(prior as object),
@@ -2924,7 +2994,7 @@ export async function registerCareRoutes(
       ? `coord:${id}:${principal.carePersonId}:${idemKeyRaw}`
       : "";
     if (idemKey) {
-      const prior = runtime.getIdempotent(idemKey) as
+      const prior = (await runtime.getIdempotentDurable(idemKey)) as
         | Record<string, unknown>
         | undefined;
       if (prior && prior.ok === true) {
