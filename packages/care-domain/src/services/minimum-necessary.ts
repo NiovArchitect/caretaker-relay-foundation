@@ -315,16 +315,36 @@ export function projectRecipientProfile(
     }
   }
 
+  // Allergies: highly visible for any authorized direct-care membership (physician safety rule).
+  // Full diagnoses remain clinical-document gated.
+  const directCare =
+    caps.controlling ||
+    hasDomain(caps, "daily_observations") ||
+    hasDomain(caps, "medication_plan") ||
+    hasDomain(caps, "emergency_profile") ||
+    hasCapability(caps, "view_daily_care");
+  if (directCare) {
+    out.allergies = p.allergies;
+  } else if (p.allergies?.length) {
+    redacted.push("allergies");
+  }
+
   if (hasDomain(caps, "diagnoses") || hasCapability(caps, "view_clinical_documents") || caps.controlling) {
     out.confirmedConditions = p.confirmedConditions;
     out.healthConcerns = p.healthConcerns;
-    out.allergies = p.allergies;
     out.primaryProviderName = p.primaryProviderName;
     out.otherProviders = p.otherProviders;
   } else {
     if (p.confirmedConditions?.length) redacted.push("confirmedConditions");
-    if (p.allergies?.length) redacted.push("allergies");
     if (p.healthConcerns?.length) redacted.push("healthConcerns");
+    if (p.primaryProviderName) redacted.push("primaryProviderName");
+  }
+
+  // Behavioral-health notes: never via casual daily-care alone
+  if (hasDomain(caps, "behavioral_notes") || caps.controlling) {
+    // healthConcerns already handled under diagnoses/clinical for structured concerns
+  } else if (p.healthConcerns?.some((h) => /psych|behavior|mental health|mood/i.test(h))) {
+    if (!redacted.includes("healthConcerns")) redacted.push("behavioral_health_subset");
   }
 
   if (hasCapability(caps, "view_emergency_profile") || caps.controlling) {
@@ -333,6 +353,24 @@ export function projectRecipientProfile(
   } else {
     if (p.emergencyContacts?.length) redacted.push("emergencyContacts");
     if (p.safetyConsiderations?.length) redacted.push("safetyConsiderations");
+  }
+
+  // Advance-care / POLST / code status — legal authority domain (never free-text as verified)
+  if (
+    hasDomain(caps, "legal_representative") ||
+    hasCapability(caps, "view_legal_authority") ||
+    hasCapability(caps, "view_emergency_profile") ||
+    caps.controlling
+  ) {
+    out.advanceCareDocuments = p.advanceCareDocuments;
+  } else if (p.advanceCareDocuments?.length) {
+    redacted.push("advanceCareDocuments");
+  }
+
+  // Profile provenance metadata when any clinical/preference slice is visible
+  if (Object.keys(out).length > 0) {
+    out.profileVerifiedAt = p.profileVerifiedAt;
+    out.profileSourceSummary = p.profileSourceSummary;
   }
 
   return { ...base, profile: out, redacted_fields: redacted };

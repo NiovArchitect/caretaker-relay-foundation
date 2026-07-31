@@ -1844,55 +1844,47 @@ function composeAnswer(ctx: {
       );
     const todayFraming =
       onlyNow && !shiftFraming;
-    if (persona === "family") {
-      if (openFromHandoff.length) {
-        const head = onlyRemaining
-          ? "Still open / unfinished"
-          : shiftFraming
-            ? "On this shift, finish"
-            : todayFraming
-              ? "For today's plan, prioritize"
-              : "Still unfinished from the last handoff";
+    // Physician-validated shift-plan shape (server-owned): Now / Coming up / Before leaving / Watch for
+    const nowClock = new Date().toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    if (persona === "family" || persona === "professional_dsp" || todayFraming || shiftFraming) {
+      const nowItems = (
+        openFromHandoff.length
+          ? openFromHandoff
+          : proj.OPEN_UNCERTAINTIES
+      ).slice(0, onlyRemaining ? 5 : 3);
+      const coming = (proj.NEXT_24H_TASKS || []).slice(0, 4);
+      const watch = (proj.OPEN_UNCERTAINTIES || [])
+        .filter((u) => !nowItems.includes(u))
+        .slice(0, 3);
+      if (onlyRemaining) {
         parts.push(
-          `${head}:\n${openFromHandoff
-            .slice(0, onlyRemaining ? 5 : 3)
-            .map((x) => `• ${x}`)
-            .join("\n")}`,
+          nowItems.length
+            ? `Still open / unfinished:\n${nowItems.map((x) => `• ${x}`).join("\n")}`
+            : "No unfinished items are listed on the current care plan.",
         );
-        if (!onlyRemaining && proj.OPEN_UNCERTAINTIES.length) {
-          parts.push(`Also needs review:\n• ${proj.OPEN_UNCERTAINTIES[0]}`);
-        }
       } else {
+        parts.push(`It is ${nowClock}. Here is ${recipientName}'s current plan:`);
         parts.push(
-          proj.OPEN_UNCERTAINTIES.length
-            ? `${shiftFraming ? "This shift" : "Right now"}:\n• ${proj.OPEN_UNCERTAINTIES[0]}\nYou're okay to take this one step at a time.`
-            : shiftFraming
-              ? "Nothing additional is assigned on this shift beyond routine coverage."
-              : "Nothing urgent is flagged right now.",
+          nowItems.length
+            ? `Now\n${nowItems.map((x) => `• ${x}`).join("\n")}`
+            : "Now\n• No urgent open priorities are listed right now.",
         );
-      }
-      // Operating plan (TASKS_NOW) includes coming-up; pure unfinished stays open-only
-      if (!onlyRemaining) {
-        const up = proj.NEXT_24H_TASKS.slice(0, 3).map((t) => `• ${t}`).join("\n");
-        if (up) {
+        if (coming.length) {
+          parts.push(`Coming up\n${coming.map((t) => `• ${t}`).join("\n")}`);
+        }
+        if (shiftFraming || persona === "professional_dsp") {
           parts.push(
-            `${shiftFraming ? "Also on your shift plate" : "Coming up today"}:\n${up}`,
+            "Before leaving\n• Confirm open tasks are owned or handed off.\n• Leave walker / assistive devices available if listed on the care plan.",
           );
         }
-      }
-    } else if (persona === "professional_dsp") {
-      parts.push(onlyRemaining ? "Unfinished before leave:" : "During this visit, prioritize:");
-      parts.push(
-        (onlyRemaining
-          ? openFromHandoff.slice(0, 4)
-          : proj.NEXT_24H_TASKS.slice(0, 4)
-        )
-          .map((t) => `• ${t}`)
-          .join("\n") || "• Confirm open work with the care record",
-      );
-      if (!onlyRemaining && openFromHandoff.length) {
+        if (watch.length) {
+          parts.push(`Watch for\n${watch.map((x) => `• ${x}`).join("\n")}`);
+        }
         parts.push(
-          `From last handoff — still open:\n${openFromHandoff.slice(0, 3).map((x) => `• ${x}`).join("\n")}`,
+          "Every item above is drawn from the care plan, appointments, medications, handoff, or confirmed observations — not invented instructions.",
         );
       }
     } else {
