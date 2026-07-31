@@ -157,6 +157,7 @@ import {
   seedEvelynPrnOrders,
   ensurePrnOverdueEscalation,
   ensurePrnClarificationLifecycle,
+  buildSemanticTodaySlices,
   setPrnOrderStatus,
   listPrnOrders,
   listPrnEpisodes,
@@ -826,26 +827,24 @@ export async function registerCareRoutes(
     // Refresh handoff after overdue inject
     const handoffsAfter = runtime.store.getHandoffs(id);
     const latestHandoffAfter = handoffsAfter[handoffsAfter.length - 1] ?? latestHandoff;
-    // Signal-first bounds: client only needs recent slices for Today (not full history)
-    const events = (state?.events ?? []).slice(-12);
-    const tasks = (state?.tasks ?? [])
-      .filter((t) => {
-        const st = String((t as { status?: string }).status ?? "pending");
-        return !/^(done|completed|cancelled|canceled)$/i.test(st);
-      })
-      .slice(0, 20);
-    const observations = (state?.observations ?? []).slice(-12);
-    const appointments = (state?.appointments ?? []).slice(-20);
-    const openSafety = (state?.openSafetyReviews ?? []).slice(0, 8);
+    // Semantic eligibility first (operational meaning), then hard caps.
+    // History and Relay still use full canonical store — not this slice.
+    const slices = buildSemanticTodaySlices({
+      events: state?.events ?? [],
+      tasks: state?.tasks ?? [],
+      appointments: state?.appointments ?? [],
+      observations: state?.observations ?? [],
+      openSafetyReviews: state?.openSafetyReviews ?? [],
+    });
     return reply.code(200).send({
       ok: true,
       care_recipient_id: id,
       today: {
-        events,
-        tasks,
-        appointments,
-        observations,
-        open_safety_reviews: openSafety,
+        events: slices.events,
+        tasks: slices.tasks,
+        appointments: slices.appointments,
+        observations: slices.observations,
+        open_safety_reviews: slices.open_safety_reviews,
         latest_handoff: latestHandoffAfter,
         last_updated_at: state?.lastUpdatedAt ?? null,
         prn_attention: prnAttention,
@@ -868,6 +867,7 @@ export async function registerCareRoutes(
             overdue_minutes: e.overdueMinutes,
           })),
         },
+        selection: slices.meta,
       },
       durable: runtime.durable,
       store_backend: runtime.storeBackend,

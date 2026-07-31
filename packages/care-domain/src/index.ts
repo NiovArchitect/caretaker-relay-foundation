@@ -52,6 +52,7 @@ export * from "./services/notifications.js";
 export * from "./services/attention-groups.js";
 export * from "./services/medication-candidates.js";
 export * from "./services/prn-medication.js";
+export * from "./services/semantic-today.js";
 export * from "./services/orchestration.js";
 export * from "./services/care-team.js";
 export * from "./services/adversarial-guard.js";
