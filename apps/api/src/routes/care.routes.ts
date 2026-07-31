@@ -43,6 +43,8 @@ import {
   bindProvisionalToRecipient,
   activateProvisional,
   declineProvisional,
+  setupSelfCareSpace,
+  normalizeInviteRole,
   evaluateAiPhiGate,
   grokAssistPermitted,
   redactAuditDetails,
@@ -1987,7 +1989,9 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    const role = (body.role as CareRelationshipRole) || "family_caregiver";
+    const role = normalizeInviteRole(
+      typeof body.role === "string" ? body.role : "family_caregiver",
+    );
     const inv: CareInvitation = {
       id: runtime.store.newId("inv"),
       careRecipientId: id,
@@ -2002,9 +2006,11 @@ export async function registerCareRoutes(
       roleLabel:
         typeof body.role_label === "string"
           ? body.role_label
-          : role === "paid_caregiver"
-            ? "Professional caregiver"
-            : "Family / friend caregiver",
+          : role === "care_recipient"
+            ? "Care recipient (self)"
+            : role === "paid_caregiver"
+              ? "Professional caregiver"
+              : "Family / friend caregiver",
       status: "pending",
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
@@ -2125,7 +2131,8 @@ export async function registerCareRoutes(
         correlation_id: correlationId(request),
       });
     }
-    const access = defaultInviteAccess(inv.role);
+    const role = normalizeInviteRole(String(inv.role));
+    const access = defaultInviteAccess(role);
     const now = new Date().toISOString();
     // Reuse natural-key row ids so Prisma flush does not invent a second
     // relationship/consent id for the same (recipient, person) pair.
@@ -2146,16 +2153,28 @@ export async function registerCareRoutes(
         `rel-${inv.careRecipientId}-${inv.inviteePersonId}`,
       careRecipientId: inv.careRecipientId,
       personId: inv.inviteePersonId,
-      role: inv.role,
-      roleLabel: inv.roleLabel,
+      role,
+      roleLabel:
+        role === "care_recipient"
+          ? inv.roleLabel || "Care recipient (self)"
+          : inv.roleLabel,
       responsibilities: existingRel?.responsibilities?.length
         ? existingRel.responsibilities
-        : ["Care continuity"],
+        : role === "care_recipient"
+          ? ["Own care participation", "Preferences", "Observations"]
+          : ["Care continuity"],
       access,
       status: "active",
       startDate: existingRel?.startDate ?? now.slice(0, 10),
       endDate: undefined,
     });
+    if (role === "care_recipient") {
+      runtime.store.upsertPerson({
+        id: inv.inviteePersonId,
+        displayName: principal.displayName,
+        kind: "care_recipient",
+      });
+    }
     runtime.store.upsertConsent({
       id:
         existingConsent?.id ??
@@ -2488,6 +2507,64 @@ export async function registerCareRoutes(
         care_recipient_id: denied.careRecipientId,
         decided_at: denied.decidedAt,
       },
+      correlation_id: correlationId(request),
+    });
+  });
+
+  /**
+   * JOURNEY 1 — Create a recipient-self care space for the signed-in account.
+   * Works for any preferred name (not hard-coded to a lab recipient).
+   * Never links to an existing recipient by name or guessed id.
+   * Existing-recipient self access requires invitation (Journey 2).
+   */
+  app.post<{
+    Body: {
+      preferred_name?: string;
+      confirmation?: string;
+    };
+  }>("/api/v1/care/recipient-self/setup", async (request, reply) => {
+    const principal = await requireCareAuth(runtime, request, reply);
+    if (!principal) return;
+    const body = request.body ?? {};
+    const preferredName =
+      typeof body.preferred_name === "string" ? body.preferred_name.trim() : "";
+    if (preferredName.length < 2) {
+      return reply.code(400).send({
+        ok: false,
+        code: "BAD_REQUEST",
+        message: "preferred_name required",
+        correlation_id: correlationId(request),
+      });
+    }
+    const result = setupSelfCareSpace(runtime.store, {
+      actorPersonId: principal.carePersonId,
+      actorDisplayName: principal.displayName,
+      preferredName,
+      confirmation:
+        typeof body.confirmation === "string" ? body.confirmation : undefined,
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        ok: false,
+        code: result.code,
+        message: result.message,
+        correlation_id: correlationId(request),
+      });
+    }
+    await runtime.flush();
+    const memberships = runtime.listMemberships(principal.carePersonId);
+    return reply.code(result.created ? 201 : 200).send({
+      ok: true,
+      care_recipient_id: result.careRecipientId,
+      relationship_id: result.relationshipId,
+      relationship_type: "care_recipient",
+      verification_method: result.verificationMethod,
+      created: result.created,
+      authorized_recipients: memberships.length,
+      memberships,
+      note: result.created
+        ? "Recipient-self care space created. No existing recipient was merged by name."
+        : "Existing recipient-self membership returned (idempotent).",
       correlation_id: correlationId(request),
     });
   });

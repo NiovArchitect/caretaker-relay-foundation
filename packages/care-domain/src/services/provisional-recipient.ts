@@ -4,8 +4,14 @@
  * PRINCIPLE: No automatic merge by name; no PHI discovery of existing recipients.
  */
 
-import type { CareUpdate, SourceRef } from "../types.js";
+import type {
+  CareRelationship,
+  CareRecipient,
+  CareUpdate,
+  SourceRef,
+} from "../types.js";
 import type { CareStore } from "../store/memory-store.js";
+import { defaultInviteAccess } from "./invitation.js";
 
 const PROV_PREFIX = "PROVISIONAL_RECIPIENT_V1:";
 export const PROVISIONAL_BUCKET = "cr-provisional-recipients";
@@ -199,7 +205,10 @@ export function findProvisional(
 /**
  * Bind provisional → real recipient id.
  * SECURITY: Does not search existing recipients by name.
- * Caller must supply an explicit careRecipientId they already control.
+ * Binding to an *existing* recipient requires controlling authority on that
+ * recipient — knowing a recipient id alone is never sufficient (blocks takeover).
+ * Creator may only self-bind when activating a brand-new self care space
+ * via activateSelfCareSpace (creates the recipient first).
  */
 export function bindProvisionalToRecipient(
   store: CareStore,
@@ -223,33 +232,43 @@ export function bindProvisionalToRecipient(
       message: `Cannot bind from status ${provisional.status}`,
     };
   }
-  if (provisional.createdByPersonId !== input.actorPersonId) {
-    // Only creator or future controlling authority on the target may bind
-    const access = store.getRelationship(
-      input.careRecipientId,
-      input.actorPersonId,
-    );
-    if (
-      !access ||
-      access.status !== "active" ||
-      !(
-        access.access.allowedActions.includes("*") ||
-        access.access.informationCategories.includes("*")
-      )
-    ) {
-      return {
-        ok: false,
-        code: "FORBIDDEN",
-        message: "Not authorized to bind this provisional record",
-      };
-    }
-  }
   const recipient = store.getRecipient(input.careRecipientId);
   if (!recipient) {
     return {
       ok: false,
       code: "UNKNOWN_RECIPIENT",
       message: "Target recipient not found",
+    };
+  }
+  // Existing recipient: require controlling authority on the target.
+  // Creator status alone must NOT allow binding to arbitrary known ids.
+  const access = store.getRelationship(
+    input.careRecipientId,
+    input.actorPersonId,
+  );
+  const controlling =
+    access &&
+    access.status === "active" &&
+    (access.access.allowedActions.includes("*") ||
+      access.access.informationCategories.includes("*") ||
+      access.access.allowedActions.includes("invite") ||
+      access.access.allowedActions.includes("manage_membership"));
+  if (!controlling) {
+    store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: input.actorPersonId,
+      action: "PROVISIONAL_BIND_DENIED",
+      careRecipientId: input.careRecipientId,
+      details: {
+        provisional_id: provisional.id,
+        reason: "no_controlling_authority_on_target",
+      },
+    });
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message:
+        "Not authorized to bind this provisional to the target recipient. Use invitation or create your own care space.",
     };
   }
   const now = new Date().toISOString();
@@ -359,3 +378,173 @@ export function declineProvisional(
   });
   return next;
 }
+
+function isSelfAuthorityClaim(claimed: string): boolean {
+  const c = claimed.toLowerCase();
+  return (
+    /\bself\b/.test(c) ||
+    /receiving care/.test(c) ||
+    /i am the person/.test(c) ||
+    /for myself/.test(c) ||
+    /my own care/.test(c) ||
+    /care recipient/.test(c)
+  );
+}
+
+/**
+ * JOURNEY 1 — New recipient-self care space for any preferred name.
+ *
+ * Creates:
+ *  - one CareRecipient (new id; never merges by name)
+ *  - one active care_recipient relationship (recipient_self)
+ *  - one active consent scoped for self
+ *  - optional provisional marked active/bound for audit lineage
+ *
+ * SECURITY:
+ *  - claim:self alone is insufficient without this explicit setup call
+ *  - never links to an existing recipient by name or guessed id
+ *  - idempotent when actor already has an active care_recipient membership
+ */
+export function setupSelfCareSpace(
+  store: CareStore,
+  input: {
+    actorPersonId: string;
+    actorDisplayName: string;
+    preferredName: string;
+    confirmation?: string;
+    householdId?: string;
+  },
+):
+  | {
+      ok: true;
+      careRecipientId: string;
+      relationshipId: string;
+      created: boolean;
+      verificationMethod: "recipient_created_care_space";
+    }
+  | { ok: false; code: string; message: string } {
+  const preferredName = input.preferredName.trim();
+  if (preferredName.length < 2) {
+    return {
+      ok: false,
+      code: "BAD_REQUEST",
+      message: "preferred_name required (min 2 characters)",
+    };
+  }
+
+  // Idempotent: existing active care_recipient membership
+  const existingSelf = store
+    .getRelationshipsForPerson(input.actorPersonId)
+    .find((r) => r.status === "active" && r.role === "care_recipient");
+  if (existingSelf) {
+    store.writeAudit({
+      at: new Date().toISOString(),
+      actorPersonId: input.actorPersonId,
+      action: "RECIPIENT_SELF_SETUP_IDEMPOTENT",
+      careRecipientId: existingSelf.careRecipientId,
+      details: {
+        relationship_id: existingSelf.id,
+        verification_method: "recipient_created_care_space",
+      },
+    });
+    return {
+      ok: true,
+      careRecipientId: existingSelf.careRecipientId,
+      relationshipId: existingSelf.id,
+      created: false,
+      verificationMethod: "recipient_created_care_space",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const careRecipientId = store.newId("cr");
+  const householdId = input.householdId || store.newId("hh");
+  const recipient: CareRecipient = {
+    id: careRecipientId,
+    displayName: preferredName,
+    preferredName,
+    householdId,
+    profile: {
+      // Minimal self profile — no invented clinical facts
+    },
+  };
+  store.upsertRecipient(recipient);
+  store.upsertPerson({
+    id: input.actorPersonId,
+    displayName: input.actorDisplayName,
+    kind: "care_recipient",
+  });
+
+  const access = defaultInviteAccess("care_recipient");
+  const relationshipId = `rel-${careRecipientId}-${input.actorPersonId}`;
+  const relationship: CareRelationship = {
+    id: relationshipId,
+    careRecipientId,
+    personId: input.actorPersonId,
+    role: "care_recipient",
+    roleLabel: "Care recipient (self)",
+    responsibilities: ["Own care participation", "Preferences", "Observations"],
+    access,
+    status: "active",
+    startDate: now.slice(0, 10),
+  };
+  store.upsertRelationship(relationship);
+  store.upsertConsent({
+    id: `consent-${careRecipientId}-${input.actorPersonId}`,
+    careRecipientId,
+    granteePersonId: input.actorPersonId,
+    scope: access,
+    status: "active",
+    grantedAt: now,
+  });
+
+  // Audit-linked provisional draft → active for lineage (optional trail)
+  const p = createProvisionalRecipient(store, {
+    preferredName,
+    createdByPersonId: input.actorPersonId,
+    createdByDisplayName: input.actorDisplayName,
+    claimedAuthority: "I am the person receiving care (self)",
+    creatorNote: input.confirmation || "Recipient-created care space",
+  });
+  const activated: ProvisionalRecipient = {
+    ...p,
+    status: "active",
+    boundRecipientId: careRecipientId,
+    activatedAt: now,
+    updatedAt: now,
+  };
+  const source: SourceRef = {
+    id: store.newId("src"),
+    kind: "system_derived",
+    label: "Recipient-self care space created",
+    actorName: input.actorDisplayName,
+    actorPersonId: input.actorPersonId,
+    recordedAt: now,
+    whyVisible: "Account created their own care recipient record with self relationship",
+  };
+  store.addUpdate(encodeProvisionalUpdate(activated, source));
+  store.writeAudit({
+    at: now,
+    actorPersonId: input.actorPersonId,
+    action: "RECIPIENT_SELF_CARE_SPACE_CREATED",
+    careRecipientId,
+    details: {
+      relationship_id: relationshipId,
+      provisional_id: p.id,
+      verification_method: "recipient_created_care_space",
+      verification_status: "active",
+      preferred_name_length: preferredName.length,
+      // Do not store free-text PHI in audit beyond length
+    },
+  });
+
+  return {
+    ok: true,
+    careRecipientId,
+    relationshipId,
+    created: true,
+    verificationMethod: "recipient_created_care_space",
+  };
+}
+
+export { isSelfAuthorityClaim };

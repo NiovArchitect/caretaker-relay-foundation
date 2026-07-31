@@ -264,6 +264,40 @@ export function listCoordination(
 }
 
 export function defaultInviteAccess(role: CareRelationshipRole) {
+  if (role === "care_recipient") {
+    // Recipient-self: view own care; no caregiver assignment / invite / med-order authority.
+    return {
+      informationCategories: [
+        "Medications",
+        "Care plan",
+        "Appointments",
+        "Daily updates",
+        "Clinical documents",
+        "Demographics",
+        "Emergency",
+        "Advance care",
+        "Preferences",
+      ],
+      allowedActions: [
+        "view_plan",
+        "view_schedule",
+        "view_appointments",
+        "receive_updates",
+        "record_observations",
+        "correct",
+        "view_medications",
+        "view_history",
+        "message_care_team",
+      ],
+      canEscalate: false,
+      authorityLimits: [
+        "Recipient-self cannot invite caregivers",
+        "Recipient-self cannot change medication schedule",
+        "Recipient-self cannot reassign care work",
+        "Recipient-self cannot access caregiver-private coordination",
+      ],
+    };
+  }
   if (role === "paid_caregiver" || role === "direct_support_professional") {
     return {
       informationCategories: [
@@ -293,4 +327,18 @@ export function defaultInviteAccess(role: CareRelationshipRole) {
     canEscalate: true,
     authorityLimits: ["Cannot change medication schedule"],
   };
+}
+
+/** Normalize invitation role aliases (recipient_self → care_recipient). */
+export function normalizeInviteRole(role: string | undefined): CareRelationshipRole {
+  const r = (role || "family_caregiver").trim().toLowerCase();
+  if (
+    r === "care_recipient" ||
+    r === "recipient_self" ||
+    r === "self" ||
+    r === "receiving_care"
+  ) {
+    return "care_recipient";
+  }
+  return (role as CareRelationshipRole) || "family_caregiver";
 }

@@ -172,6 +172,8 @@ export type CareRelationshipRole =
   | "agency"
   | "home_health_organization"
   | "family_caregiver"
+  /** Signed-in person is the care-recipient subject (self). Not a caregiver role. */
+  | "care_recipient"
   | "other";
 
 export interface AccessScope {
