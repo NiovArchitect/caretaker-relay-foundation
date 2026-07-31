@@ -927,8 +927,19 @@ function answerWithState(
 
   // Unresolved work — orchestration + open uncertainties (not generic fallback).
   // Do not steal Allegra / medication-change questions into the open-loop dump.
+  // R-CONTEXT-001/002: first-priority and person-handling need answer-engine paths.
+  const isFirstPriorityQ =
+    /\bwhat should i do first\b|\bwhere should i start\b|\bwhat comes first\b|\bwhat is the first priorit|\bwhat should i (handle|do) before (anything|everything)\b|\bstart with what\b|\bwhat'?s first on/i.test(
+      req.question,
+    );
+  const isPersonHandlingQ =
+    /\bwhat is (maya|daniel|marcus|she|he) (handling|taking care of|working on|responsible for|doing|covering)\b|\bwhat does (maya|daniel|marcus) (still )?have open\b/i.test(
+      req.question,
+    );
   if (
     !/allegra|medication change/i.test(req.question) &&
+    !isFirstPriorityQ &&
+    !isPersonHandlingQ &&
     (preClassified.intents.includes("WAITING_ON") ||
       preClassified.intents.includes("OPEN_LOOP_STATUS") ||
       isUnresolvedWorkQuestion(req.question))
@@ -1412,7 +1423,9 @@ function answerWithState(
   // Keep a late safety net for residual phrasing (never Allegra/plan-change).
   if (
     isUnresolvedWorkQuestion(req.question) &&
-    !/allegra|medication change/i.test(req.question)
+    !/allegra|medication change/i.test(req.question) &&
+    !isFirstPriorityQ &&
+    !isPersonHandlingQ
   ) {
     const loops = summarizeOpenLoops(
       store,

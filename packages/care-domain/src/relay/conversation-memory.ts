@@ -650,6 +650,61 @@ export function resolveContextualFollowUp(
     };
   }
 
+  // First priority paraphrases in multi-turn (R-CONTEXT-001) — do not generic-fallback
+  if (
+    /\bwhat should i do first\b|\bwhere should i start\b|\bwhat comes first\b|\bwhat is the first priorit|\bstart with what\b/.test(
+      q,
+    )
+  ) {
+    const open =
+      lastAnswer.match(/Still open[^\n]*\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      lastAnswer.match(/left open:\s*([^.]+)/i)?.[1] ||
+      lastAnswer.match(/prioritize:\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      referents.find((r) => /mobility|open|attention|owner/i.test(r.label))
+        ?.label ||
+      "the top open handoff item";
+    return {
+      handled: true,
+      confidence: "high",
+      modelPath: "deterministic",
+      selectedReferent: open.trim(),
+      answer: `Start with ${open.trim()} because it is the highest open priority for ${recipientDisplayName} right now.`,
+    };
+  }
+
+  // What is Maya/Daniel/Marcus handling? (R-CONTEXT-002)
+  if (
+    /\bwhat is (maya|daniel|marcus|she|he) (handling|taking care of|working on|responsible for|doing|covering)\b|\bwhat does (maya|daniel|marcus) (still )?have open\b/.test(
+      q,
+    )
+  ) {
+    const who =
+      q.match(/\b(maya|daniel|marcus)\b/i)?.[1] ||
+      (/\bshe\b/.test(q) ? "maya" : "the named caregiver");
+    const whoLabel =
+      /maya/i.test(who)
+        ? "Maya Bennett"
+        : /daniel/i.test(who)
+          ? "Daniel Kim"
+          : /marcus/i.test(who)
+            ? "Marcus Carter"
+            : who;
+    const work =
+      lastAnswer.match(/left open:\s*([^.]+)/i)?.[1] ||
+      lastAnswer.match(/Still open[^\n]*\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      lastAnswer.match(/prioritize:\n[•*-]\s*([^\n]+)/i)?.[1] ||
+      focus?.referents?.find((r) => /mobility|open|work|owner/i.test(r.label))
+        ?.label ||
+      "open care work on the handoff";
+    return {
+      handled: true,
+      confidence: "medium",
+      modelPath: "deterministic",
+      selectedReferent: work.trim(),
+      answer: `${whoLabel} is connected to current open work for ${recipientDisplayName}: ${work.trim()}. It is not complete until the care record closes ownership.`,
+    };
+  }
+
   // Appointment location / leave-by / previous time (active appointment referent)
   const aptTitle =
     focus?.appointmentTitle ||

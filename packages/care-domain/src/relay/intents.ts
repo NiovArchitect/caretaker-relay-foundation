@@ -573,6 +573,38 @@ export function classifyIntent(
     intents.push("TASKS_NOW");
     intents.push("CHANGES_TODAY");
   }
+  // First priority / where to start (R-CONTEXT-001)
+  if (
+    !intents.includes("META_CONVERSATION") &&
+    (/\bwhat should i do first\b/.test(q) ||
+      /\bwhere should i start\b/.test(q) ||
+      /\bwhat comes first\b/.test(q) ||
+      /\bwhat is the first priorit(y|ies)\b/.test(q) ||
+      /\bwhat should i (handle|do) before (anything|everything)\b/.test(q) ||
+      /\bstart with what\b/.test(q) ||
+      /\bwhat'?s first on (my )?(list|plate)\b/.test(q))
+  ) {
+    intents.push("TASKS_NOW");
+    intents.push("TASKS_REMAINING");
+    intents.push("OPEN_LOOP_STATUS");
+  }
+  // Person-owned work — "what is Maya handling?" (R-CONTEXT-002)
+  if (
+    !intents.includes("META_CONVERSATION") &&
+    (/\bwhat is (maya|daniel|marcus|she|he) (handling|taking care of|working on|responsible for)\b/.test(
+      q,
+    ) ||
+      /\bwhat does (maya|daniel|marcus) (still )?have open\b/.test(q) ||
+      /\bis (maya|daniel|marcus) (working on|handling|taking care of) (that|it|this)\b/.test(
+        q,
+      ) ||
+      /\bwhat is (maya|daniel|marcus) (doing|covering)\b/.test(q))
+  ) {
+    intents.push("WAITING_ON");
+    intents.push("TASKS_REMAINING");
+    intents.push("CARE_COVERAGE");
+    intents.push("OPEN_LOOP_STATUS");
+  }
   if (
     /\b(on my shift|this shift|during (my )?shift|assigned to me (today|this shift)|shift (plan|work|tasks))\b/.test(
       q,

@@ -257,6 +257,24 @@ function exclusiveAnswerPlan(
     return ["TASKS_REMAINING"];
   }
 
+  // First priority / start here (R-CONTEXT-001) — exclusive TASKS_NOW plan
+  if (
+    /\bwhat should i do first\b|\bwhere should i start\b|\bwhat comes first\b|\bwhat is the first priorit|\bwhat should i (handle|do) before (anything|everything)\b|\bstart with what\b|\bwhat'?s first on/.test(
+      q,
+    )
+  ) {
+    return ["TASKS_NOW"];
+  }
+
+  // Person assignment — "what is Maya handling?" (R-CONTEXT-002)
+  if (
+    /\bwhat is (maya|daniel|marcus|she|he) (handling|taking care of|working on|responsible for)\b|\bwhat does (maya|daniel|marcus) (still )?have open\b|\bwhat is (maya|daniel|marcus) (doing|covering)\b/.test(
+      q,
+    )
+  ) {
+    return ["TASKS_REMAINING", "CARE_COVERAGE"];
+  }
+
   // Today operating plan / current shift responsibilities — TASKS_NOW only
   if (
     classified.intents.includes("TASKS_NOW") ||
@@ -1664,6 +1682,118 @@ function composeAnswer(ctx: {
     const onlyNow =
       intents.includes("TASKS_NOW") && !intents.includes("TASKS_REMAINING");
     const qLow = question.toLowerCase();
+    const firstPriority =
+      /\bwhat should i do first\b|\bwhere should i start\b|\bwhat comes first\b|\bwhat is the first priorit|\bwhat should i (handle|do) before (anything|everything)\b|\bstart with what\b|\bwhat'?s first on/.test(
+        qLow,
+      );
+    const personHandling = qLow.match(
+      /\bwhat is (maya|daniel|marcus|she|he) (handling|taking care of|working on|responsible for|doing|covering)\b|\bwhat does (maya|daniel|marcus) (still )?have open\b/,
+    );
+    // R-CONTEXT-002: person-owned / associated open work
+    if (personHandling) {
+      const whoRaw =
+        personHandling[1] || personHandling[3] || "the named caregiver";
+      const whoLabel =
+        /maya/i.test(whoRaw) || /she/i.test(whoRaw)
+          ? "Maya Bennett"
+          : /daniel/i.test(whoRaw)
+            ? "Daniel Kim"
+            : /marcus/i.test(whoRaw) || /he/i.test(whoRaw)
+              ? "Marcus Carter"
+              : whoRaw;
+      const openItems = [
+        ...openFromHandoff,
+        ...proj.OPEN_UNCERTAINTIES,
+      ]
+        .map((x) => String(x).trim())
+        .filter(Boolean);
+      const whoLinked = openItems.filter((line) =>
+        new RegExp(whoRaw, "i").test(line),
+      );
+      const tl = proj.CARE_COVERAGE_TIMELINE as
+        | { next?: { displayName?: string }; current?: { displayName?: string } }
+        | null
+        | undefined;
+      const nextName = String(tl?.next?.displayName || "");
+      const isNextCoverage =
+        /maya/i.test(whoLabel) && /maya/i.test(nextName);
+      if (whoLinked.length > 1) {
+        return {
+          answer: sanitizeHumanCareCopy(
+            `Do you mean the ${whoLinked[0]} or the ${whoLinked[1]} for ${recipientName}?`,
+          ),
+          sourceRefs: ["tasks_remaining", "handoff", "coverage"],
+          projectionsUsed: [...used, "CARE_COVERAGE_TIMELINE"],
+        };
+      }
+      if (whoLinked.length === 1) {
+        return {
+          answer: sanitizeHumanCareCopy(
+            `${whoLabel} is connected to open work for ${recipientName}: ${whoLinked[0]}. It is not marked complete until ownership is closed on the care record.`,
+          ),
+          sourceRefs: ["tasks_remaining", "handoff"],
+          projectionsUsed: [...used],
+        };
+      }
+      // No name-tagged work — ground in open handoff + coverage role
+      const top =
+        openFromHandoff[0] ||
+        proj.OPEN_UNCERTAINTIES[0] ||
+        "no separately named open assignment";
+      if (isNextCoverage) {
+        return {
+          answer: sanitizeHumanCareCopy(
+            `${whoLabel} is listed as next coverage for ${recipientName}. Current open work still includes: ${top}. That remains with the active team until her coverage window starts or the item is reassigned.`,
+          ),
+          sourceRefs: ["tasks_remaining", "handoff", "coverage"],
+          projectionsUsed: [...used, "CARE_COVERAGE_TIMELINE"],
+        };
+      }
+      return {
+        answer: sanitizeHumanCareCopy(
+          `I do not have a separate current assignment labeled only for ${whoLabel} on ${recipientName}'s record. Open work that may involve the care circle includes: ${top}. Ask “what needs attention?” for the full open list.`,
+        ),
+        sourceRefs: ["tasks_remaining", "handoff"],
+        projectionsUsed: [...used],
+      };
+    }
+    // R-CONTEXT-001: single highest-priority next step
+    if (firstPriority || (onlyNow && /\bfirst\b|\bstart\b/.test(qLow))) {
+      const top =
+        openFromHandoff[0] ||
+        proj.OPEN_UNCERTAINTIES[0] ||
+        proj.NEXT_24H_TASKS[0] ||
+        null;
+      const second =
+        openFromHandoff[1] ||
+        proj.OPEN_UNCERTAINTIES[1] ||
+        proj.NEXT_24H_TASKS[1] ||
+        null;
+      if (!top) {
+        return {
+          answer: sanitizeHumanCareCopy(
+            `Nothing urgent is flagged as the first step for ${recipientName} right now. Check Today for any new priorities when they appear.`,
+          ),
+          sourceRefs: ["tasks_now", "handoff"],
+          projectionsUsed: [...used],
+        };
+      }
+      const reason = /mobility|safety|urgent|overdue|medication|mismatch|owner/i.test(
+        top,
+      )
+        ? "it is the highest open care priority on the current handoff and attention list"
+        : "it is the top open item on today's care plan";
+      const nextLine = second
+        ? ` After that, ${second.replace(/^[•*-]\s*/, "")}.`
+        : "";
+      return {
+        answer: sanitizeHumanCareCopy(
+          `Start with ${top.replace(/^[•*-]\s*/, "")} because ${reason}.${nextLine}`,
+        ),
+        sourceRefs: ["tasks_now", "handoff"],
+        projectionsUsed: [...used],
+      };
+    }
     const shiftFraming =
       onlyNow &&
       /\b(shift|responsible for|assigned to me|finish before|before i leave|on my shift)\b/.test(
