@@ -100,6 +100,36 @@ export interface CareRecipientProfile {
   careLocationSummary?: string;
   profileVerifiedAt?: string;
   profileSourceSummary?: string;
+  /**
+   * Advance-care / portable medical orders — never treat free-text healthConcerns as verified.
+   * State-form integration is adapter-shaped; do not invent a universal national POLST schema.
+   */
+  advanceCareDocuments?: Array<{
+    documentType:
+      | "POLST"
+      | "ADVANCE_DIRECTIVE"
+      | "HCPOA"
+      | "CODE_STATUS_ORDER"
+      | "CAREGIVER_REPORT"
+      | "OTHER";
+    jurisdiction?: string;
+    sourceDocumentLabel?: string;
+    signer?: string;
+    signerRole?: string;
+    signedDate?: string;
+    effectiveDate?: string;
+    verificationState:
+      | "verified_medical_order"
+      | "reported_unverified"
+      | "document_missing"
+      | "superseded"
+      | "revoked"
+      | "expired";
+    reviewedDate?: string;
+    supersedesId?: string;
+    storageReference?: string;
+    currentStatusSummary?: string;
+  }>;
 }
 
 /**

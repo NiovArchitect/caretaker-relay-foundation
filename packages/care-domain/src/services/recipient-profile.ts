@@ -159,6 +159,159 @@ export function answerIdentityOverview(
   return parts.join("\n");
 }
 
+/**
+ * Read-only clinical retrieve answers — never invent orders or vitals.
+ * Used when caregivers ask for profile domains that may not be on file yet.
+ */
+export function answerClinicalRetrieve(
+  domain:
+    | "vitals"
+    | "oxygen"
+    | "surgeries"
+    | "therapies"
+    | "comorbidities"
+    | "code_status"
+    | "diet"
+    | "devices"
+    | "orientation"
+    | "mobility",
+  recipient: CareRecipient | undefined,
+): string {
+  const name =
+    recipient?.preferredName || recipient?.displayName || "this person";
+  const p = profileOf(recipient);
+  switch (domain) {
+    case "vitals": {
+      const notes = p.supportNeeds?.filter((s) =>
+        /vital|bp|blood pressure|heart|temp|spo2|weight/i.test(s),
+      );
+      if (notes?.length) {
+        return (
+          `Verified vital-related notes on file for ${name}:\n` +
+          notes.map((n) => `• ${n}`).join("\n") +
+          `\n\nNo automated vital-sign chart is attached. Open Health & Care Details or Care for documented measurements when available.`
+        );
+      }
+      return `No verified recent vital signs are currently on file for ${name}. This is an information gap — not a new charting action. An authorized person can record measurements or request them from the clinical team.`;
+    }
+    case "oxygen": {
+      const devices = p.assistiveDevices ?? [];
+      const ox = devices.filter((d) => /oxygen|o2|nasal|ventilat|airway/i.test(d));
+      const safety = p.safetyConsiderations?.filter((s) =>
+        /oxygen|o2|breath|airway|respiratory/i.test(s),
+      );
+      if (ox.length || safety?.length) {
+        return (
+          `Respiratory / oxygen-related items on file for ${name}:\n` +
+          [...ox, ...(safety ?? [])].map((x) => `• ${x}`).join("\n") +
+          `\n\nThese are profile notes — not a live device reading.`
+        );
+      }
+      return `No verified oxygen or airway-support device is currently listed for ${name}. That is not the same as “not on oxygen” if a clinician has ordered it elsewhere — check Health & Care Details or confirm with the clinical team.`;
+    }
+    case "surgeries":
+      return `No verified surgical history is currently on file for ${name}. This is an important gap. An authorized person can add it or request confirmation from her clinician.`;
+    case "therapies": {
+      const goals = p.careGoals?.filter((g) =>
+        /therap|pt|ot|speech|rehab|recovery|hip|mobility/i.test(g),
+      );
+      if (goals?.length) {
+        return (
+          `Therapy-related goals on file for ${name}:\n` +
+          goals.map((g) => `• ${g}`).join("\n") +
+          `\n\nUpcoming therapy appointments appear on Today / Schedule when scheduled.`
+        );
+      }
+      return `No verified ongoing therapy plan text is on file beyond scheduled appointments for ${name}. Check Today for PT/OT times, or open Health & Care Details when therapy goals are documented.`;
+    }
+    case "comorbidities":
+      return answerDiagnosisQuestion(recipient);
+    case "code_status": {
+      // Never invent POLST/DNR. Caregiver free-text healthConcerns are NOT verified orders.
+      const docs = p.advanceCareDocuments ?? [];
+      if (docs.length) {
+        const lines = docs.map((d) => {
+          const ver = d.verificationState.replace(/_/g, " ");
+          return (
+            `• ${d.documentType} — ${ver}` +
+            (d.currentStatusSummary ? `: ${d.currentStatusSummary}` : "") +
+            (d.signer ? ` · signer ${d.signer}` : "") +
+            (d.signerRole ? ` (${d.signerRole})` : "") +
+            (d.effectiveDate ? ` · effective ${d.effectiveDate}` : "") +
+            (d.jurisdiction ? ` · ${d.jurisdiction}` : "") +
+            (d.sourceDocumentLabel ? ` · source: ${d.sourceDocumentLabel}` : "")
+          );
+        });
+        return (
+          `Advance-care / code-status documents on file for ${name}:\n` +
+          lines.join("\n") +
+          `\n\nA POLST is a portable medical order (when valid in the applicable state). ` +
+          `An advance directive expresses broader wishes and may appoint a decision-maker. ` +
+          `Only verificationState “verified medical order” is treated as an order — not caregiver labels.`
+        );
+      }
+      const concerns = p.healthConcerns ?? [];
+      const codeish = concerns.filter((c) =>
+        /dnr|dni|polst|full code|advance directive|code status|comfort/i.test(c),
+      );
+      if (codeish.length) {
+        return (
+          `Unverified caregiver/care-plan notes mention code-status language for ${name}:\n` +
+          codeish.map((c) => `• ${c}`).join("\n") +
+          `\n\nThese are reported/unverified — not a signed POLST or medical order. ` +
+          `Do not treat them as Full Code / DNR / DNI orders. Confirm with the clinical team or document source.`
+        );
+      }
+      return `No verified code-status order (Full Code, DNR/DNI, POLST, or comfort-focused treatment) is currently on file for ${name}. Document missing — do not invent one. An authorized person can add the state-applicable form or request confirmation from her clinician.`;
+    }
+    case "diet": {
+      const diet = p.supportNeeds?.filter((s) =>
+        /diet|swallow|texture|food|meal|nutrition|puree|sodium|diabetic/i.test(s),
+      );
+      if (diet?.length) {
+        return (
+          `Diet / swallowing notes on file for ${name}:\n` +
+          diet.map((d) => `• ${d}`).join("\n")
+        );
+      }
+      return `No verified diet, texture, or swallowing instruction is currently on file for ${name}. Check the care plan or ask the clinical team before changing food or fluid texture.`;
+    }
+    case "devices": {
+      const devices = p.assistiveDevices ?? [];
+      if (devices.length) {
+        return (
+          `Devices and equipment on file for ${name}:\n` +
+          devices.map((d) => `• ${d}`).join("\n")
+        );
+      }
+      return `No medical or assistive devices are listed on file for ${name} yet.`;
+    }
+    case "orientation": {
+      const notes = [
+        ...(p.communicationNeeds ?? []),
+        ...(p.safetyConsiderations ?? []),
+        ...(p.healthConcerns ?? []),
+      ].filter((s) =>
+        /orient|cognit|memory|confus|acting like|baseline|dementia|alert/i.test(
+          s,
+        ),
+      );
+      if (notes.length) {
+        return (
+          `Orientation / cognitive baseline notes on file for ${name}:\n` +
+          notes.map((n) => `• ${n}`).join("\n") +
+          `\n\nIf they are not acting like themself right now, document a new observation — this answer is retrieve-only.`
+        );
+      }
+      return `No verified orientation or cognitive baseline is currently on file for ${name}. This is an information gap — not a charting action. An authorized person can add baseline notes or request them from the clinical team.`;
+    }
+    case "mobility":
+      return answerMobilitySupport(recipient);
+    default:
+      return `No verified information is on file for that clinical domain for ${name}.`;
+  }
+}
+
 export function emergencySnapshot(
   recipient: CareRecipient | undefined,
   medLines: string[],

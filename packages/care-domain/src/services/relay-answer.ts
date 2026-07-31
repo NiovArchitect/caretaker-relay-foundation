@@ -32,6 +32,7 @@ import {
   answerDiagnosisQuestion,
   answerIdentityOverview,
   answerMobilitySupport,
+  answerClinicalRetrieve,
   emergencySnapshot,
   syntheticProviderSlots,
 } from "./recipient-profile.js";
@@ -1080,6 +1081,68 @@ function answerWithState(
       ["coverage_timeline", isPreviousCaregiverQ ? "previous" : "next"],
       "COVERAGE_TIMELINE",
     );
+  }
+
+  // Clinical retrieve phrases (doctor validation) — before generic open-loop / appointment steal
+  {
+    const qClin = req.question.toLowerCase();
+    const recipient = store.getRecipient(req.careRecipientId);
+    let clinDomain:
+      | "vitals"
+      | "oxygen"
+      | "surgeries"
+      | "therapies"
+      | "comorbidities"
+      | "code_status"
+      | "diet"
+      | "devices"
+      | "orientation"
+      | "mobility"
+      | null = null;
+    if (/\b(vital|vitals|blood pressure|heart rate|temperature|spo2)\b/.test(qClin))
+      clinDomain = "vitals";
+    else if (/\b(oxygen|on oxygen|o2\b|airway|trache)\b/.test(qClin))
+      clinDomain = "oxygen";
+    else if (/\b(surger|surgical|operation)\b/.test(qClin)) clinDomain = "surgeries";
+    else if (
+      /\b(therap(y|ies)|physical therapy|occupational|speech therapy|\bot\b)\b/.test(
+        qClin,
+      ) &&
+      !/\bappointment\b|\bwhen is\b|\bwhat time\b/.test(qClin)
+    )
+      clinDomain = "therapies";
+    else if (/\b(comorbid|diagnos|condition)\b/.test(qClin))
+      clinDomain = "comorbidities";
+    else if (
+      /\b(code status|dnr|dni|polst|advance directive|full code|do not resuscitat)\b/.test(
+        qClin,
+      )
+    )
+      clinDomain = "code_status";
+    else if (/\b(diet|swallow|texture|nutrition|what can (she|he|they) eat)\b/.test(qClin))
+      clinDomain = "diet";
+    else if (
+      /\b(orient|orientation status|acting like (her|him|them)self|cognitive baseline)\b/.test(
+        qClin,
+      )
+    )
+      clinDomain = "orientation";
+    else if (
+      /\b(ambulat|mobility status|weight[- ]?bearing|walk(s|ing)? by (her|him|them)self|transfer)\b/.test(
+        qClin,
+      )
+    )
+      clinDomain = "mobility";
+    else if (/\b(device|machine|equipment|catheter|feeding tube|walker|cane)\b/.test(qClin))
+      clinDomain = "devices";
+    if (clinDomain) {
+      return persistDeterministicAnswer(
+        req,
+        answerClinicalRetrieve(clinDomain, recipient),
+        ["recipient_profile", clinDomain],
+        "RECIPIENT_PROFILE",
+      );
+    }
   }
 
   const personIntent = preClassified.intents.find((i) =>

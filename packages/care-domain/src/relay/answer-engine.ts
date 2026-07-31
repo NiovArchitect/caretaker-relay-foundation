@@ -804,18 +804,61 @@ function composeAnswer(ctx: {
 
   function medBlock(): string {
     used.add("CURRENT_MEDICATIONS");
-    if (!primaryMed) return `I don't have a medication schedule on file for ${recipientName}.`;
+    const meds = (proj.CURRENT_MEDICATIONS ?? []) as Array<Record<string, unknown>>;
+    const list = meds.length
+      ? meds
+      : primaryMed
+        ? [primaryMed as Record<string, unknown>]
+        : [];
+    if (!list.length) {
+      return `I don't have a medication schedule on file for ${recipientName}.`;
+    }
     refs.push("provider_instruction");
-    const lines = [
-      `${str(primaryMed.name)} ${str(primaryMed.dose)}`.trim(),
-      str(primaryMed.scheduleTime) ? `Take at ${str(primaryMed.scheduleTime)}` : str(primaryMed.scheduleLabel),
-      str(primaryMed.windowStart) && str(primaryMed.windowEnd)
-        ? `Window ${str(primaryMed.windowStart)} – ${str(primaryMed.windowEnd)}`
-        : "",
-      str(primaryMed.mealRelation),
-      str(primaryMed.authorizedBy) ? `Authorized by ${str(primaryMed.authorizedBy)}` : "",
-    ].filter(Boolean);
-    return lines.join("\n");
+    // Physician validation: a medication list without frequency is incomplete.
+    // Never invent pre-dose checks, routes, or instructions not on the authorized order.
+    return list
+      .slice(0, 12)
+      .map((m) => {
+        const name = str(m.name) || "Medication";
+        const strength = str(m.strength);
+        const dose = str(m.dose);
+        const route = str(m.route);
+        const freq =
+          str(m.scheduleLabel) ||
+          str(m.frequency) ||
+          (str(m.scheduleTime) ? `scheduled ${str(m.scheduleTime)}` : "");
+        const times = str(m.scheduleTime);
+        const window =
+          str(m.windowStart) && str(m.windowEnd)
+            ? `${str(m.windowStart)} – ${str(m.windowEnd)}`
+            : "";
+        const food = str(m.mealRelation);
+        const next = str(m.nextDueLabel);
+        const last = str(m.lastAdministeredAt);
+        const auth = str(m.authorizedBy);
+        const authAt = str(m.authorizedAt);
+        const special = str(m.specialInstructions);
+        const bits = [
+          `• ${name}${strength ? ` · strength ${strength}` : ""}${dose ? ` · dose ${dose}` : ""}`,
+          route ? `  Route: ${route}` : "  Route: not recorded on the care plan",
+          freq
+            ? `  Frequency / schedule: ${freq}`
+            : "  Frequency: not recorded — this list is incomplete without frequency",
+          times ? `  Time: ${times}` : "",
+          window ? `  Window: ${window}` : "",
+          food ? `  Food: ${food}` : "  Food relation: not recorded",
+          special
+            ? `  Ordered instructions: ${special}`
+            : "  Pre-dose checks: none recorded on the authorized plan (do not invent)",
+          last ? `  Last given: ${last}` : "  Last given: not charted here",
+          next ? `  Next due: ${next}` : "",
+          auth
+            ? `  Prescriber / authorizer: ${auth}${authAt ? ` · verified ${authAt}` : ""}`
+            : "  Source / verification: incomplete on file",
+        ].filter(Boolean);
+        return bits.join("\n");
+      })
+      .join("\n\n");
   }
 
   function adminRecords() {
