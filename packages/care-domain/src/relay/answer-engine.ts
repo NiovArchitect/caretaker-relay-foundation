@@ -204,7 +204,23 @@ function exclusiveAnswerPlan(
     return ["HANDOFF_PREP"];
   }
 
-  // Yesterday wellbeing — exclusive
+  // Medication administration history — exclusive before yesterday-wellbeing steal
+  // (e.g. "When did Maya give Evelyn's lunch medication yesterday?")
+  if (
+    primary === "MEDICATION_ADMINISTRATION_HISTORY" ||
+    classified.intents.includes("MEDICATION_ADMINISTRATION_HISTORY") ||
+    /\b(was medication administered|who gave|last (dose|med)|administration history)\b/i.test(
+      q,
+    ) ||
+    /\b(when did|did)\b.{0,40}\b(give|gave|administer)\b/i.test(q) ||
+    /\b(already give|already gave|anyone (already )?(give|gave)|give her lunch med)\b/i.test(
+      q,
+    )
+  ) {
+    return ["MEDICATION_ADMINISTRATION_HISTORY"];
+  }
+
+  // Yesterday wellbeing — exclusive (not medication administration)
   if (
     primary === "YESTERDAY_WELLBEING" ||
     classified.intents.includes("YESTERDAY_WELLBEING") ||
@@ -308,9 +324,6 @@ function exclusiveAnswerPlan(
   if (/allegra|medication change|pending review|waiting for review/i.test(q)) {
     return ["MEDICATION_CHANGE"];
   }
-  if (/was medication administered|who gave|last (dose|med)|administration history/i.test(q)) {
-    return ["MEDICATION_ADMINISTRATION_HISTORY"];
-  }
   if (/medication is due|med(s)? due|next (med|dose)|is metformin due/i.test(q)) {
     return ["MEDICATION_DUE"];
   }
@@ -318,15 +331,24 @@ function exclusiveAnswerPlan(
     return [primary];
   }
 
-  // Appointments
+  // Appointments — preserve reschedule/cancel/new vs next
   if (
     primary.startsWith("APPOINTMENT_") ||
     /\b(appointment|personal training|physical therapy|\bpt\b|clinic visit)\b/.test(q)
   ) {
+    if (/\breschedule\b|\bmove (the |her |his )?appointment\b|\bchange (the )?time\b/i.test(q)) {
+      return ["APPOINTMENT_RESCHEDULE"];
+    }
+    if (/\bcancel\b/.test(q) && /\bappointment\b/.test(q)) {
+      return ["APPOINTMENT_CANCEL"];
+    }
     if (/where|location|address|leave|travel|maps/.test(q)) return ["APPOINTMENT_LOGISTICS"];
     if (/old time|previous time|was the time|before (it |we )?moved|history/.test(q)) {
       return ["APPOINTMENT_NEXT"];
     }
+    if (primary === "APPOINTMENT_RESCHEDULE") return ["APPOINTMENT_RESCHEDULE"];
+    if (primary === "APPOINTMENT_CANCEL") return ["APPOINTMENT_CANCEL"];
+    if (primary === "APPOINTMENT_REQUEST_NEW") return ["APPOINTMENT_REQUEST_NEW"];
     return ["APPOINTMENT_NEXT"];
   }
 
@@ -662,6 +684,7 @@ function composeAnswer(ctx: {
     used.add("ACTIVE_HANDOFF");
     // Build human category facts for state changes — not raw domain labels.
     // Prefer corrections/completions/new reports over long-standing pending Allegra.
+    // Include handoff whatChanged so shift-to-shift evolution is visible.
     const stripFrom = (s: string) => s.replace(/\s*\(from [^)]+\)\s*$/i, "").trim();
     const naturalizeToday = (c: string): string | null => {
       const s = stripFrom(c);
@@ -702,10 +725,15 @@ function composeAnswer(ctx: {
         if (!body || /allegra/i.test(body)) return null;
         return body.charAt(0).toUpperCase() + body.slice(1);
       }
+      // Preserve plain shift observations (mobility, mood, meals) for evolution tests
+      if (s && s.length > 8 && !/^event\b/i.test(s)) {
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      }
       return null;
     };
+    const handoffChanged = proj.ACTIVE_HANDOFF?.whatChanged ?? [];
     const ranked = semanticDedupeLines(
-      cleanChanges
+      [...cleanChanges, ...handoffChanged]
         .map(naturalizeToday)
         .filter((x): x is string => !!x),
     );

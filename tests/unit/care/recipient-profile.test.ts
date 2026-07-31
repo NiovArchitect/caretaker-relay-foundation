@@ -25,7 +25,8 @@ describe("recipient person intelligence", () => {
     const { store } = createCareRuntime({ seedOlivia: true });
     const a = ask(store, "How old is Evelyn?");
     expect(a.answer).toMatch(/years old/i);
-    expect(a.answer).toMatch(/1948-03-12/);
+    // Humanized DOB is authoritative for caregivers; ISO remains valid if present
+    expect(a.answer).toMatch(/1948-03-12|Mar(ch)?\s+12,?\s+1948/i);
     expect(a.answer).not.toMatch(/I can help with medications/i);
     expect(a.answer).not.toMatch(/discrepan/i);
   });

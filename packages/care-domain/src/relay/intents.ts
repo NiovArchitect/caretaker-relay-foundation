@@ -623,7 +623,10 @@ export function classifyIntent(
       intents.push("RECIPIENT_PROFILE");
       intents.push("RECIPIENT_DIAGNOSIS");
     }
-    if (/\b(therap(y|ies)|physical therapy|\bot\b|occupational|speech therapy)\b/.test(q)) {
+    if (
+      /\b(therap(y|ies)|physical therapy|\bot\b|occupational|speech therapy)\b/.test(q) &&
+      !/\b(reschedule|cancel|move|appointment|when is|what time)\b/.test(q)
+    ) {
       intents.push("RECIPIENT_PROFILE");
       intents.push("APPOINTMENT_NEXT");
     }

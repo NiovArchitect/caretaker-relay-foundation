@@ -114,7 +114,7 @@ const MED_SOFT_NORMALIZE: Record<string, string> = {
 };
 
 const STOP_MED_WORDS =
-  /^(for|the|her|his|their|with|and|please|new|dose|dosage|mg|ml|pill|pills|tablet|tablets|medicine|medication|med|drug|today|now|again|some|any|this|that|from|after|before|almost|out)$/i;
+  /^(for|the|her|his|their|with|and|please|new|dose|dosage|mg|ml|pill|pills|tablet|tablets|medicine|medication|med|drug|today|now|again|some|any|this|that|from|after|before|almost|out|lunch|breakfast|dinner|supper|snack|meal|usual|more|than)$/i;
 
 export type ExtractedMedName = {
   /** Exact token as reported by the caregiver (preferred in UI). */
@@ -347,8 +347,18 @@ export function fixtureExtract(
     return emptySlice(ctx, careRecipientName, text, "FIXTURE");
   }
 
-  // Meal (word-boundary: do not treat "afternoon" as noon meal)
-  if (/\bate\b|\bmeal\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\baround noon\b|\bat noon\b|\bnoon\b|\b12\s*pm\b|\b12:00\b/.test(lower)) {
+  // Meal (word-boundary: do not treat "afternoon" as noon meal).
+  // If the phrase is primarily a tired/energy observation "after lunch", skip meal
+  // so wellbeing observation is not stolen by the lunch token.
+  const primarilyTiredAfterMeal =
+    /\b(seemed|seems|more)\b.{0,20}\b(tired|fatigue|exhausted)\b/i.test(lower) &&
+    /\bafter (lunch|breakfast|dinner|the meal)\b/i.test(lower);
+  if (
+    !primarilyTiredAfterMeal &&
+    /\bate\b|\bmeal\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\baround noon\b|\bat noon\b|\bnoon\b|\b12\s*pm\b|\b12:00\b/.test(
+      lower,
+    )
+  ) {
     const aroundNoon = /around noon|at noon|\bnoon\b|12\s*pm|12:00/.test(lower);
     const aroundNine =
       /around nine|at nine|about nine|9\s*(am|a\.m\.)?|nine o'?clock/.test(
@@ -537,9 +547,11 @@ export function fixtureExtract(
     /tired|fatigue|fatigued|exhausted|weaker|seemed|dizzy|dizziness|light[- ]?headed/.test(
       lower,
     ) &&
-    // Medication-effect linkage wins: "dizzy after Advil" is not generic dizziness
+    // Medication-effect linkage wins: "dizzy after Advil" is not generic dizziness.
+    // Meal anchors ("after lunch") must NOT count as medication topics.
     !(
       /\b(after|following)\b/i.test(lower) &&
+      !/\bafter (lunch|breakfast|dinner|supper|the meal|eating)\b/i.test(lower) &&
       (/\b(pill|tablet|dose|medication|medicine|med|cream|drops?)\b/i.test(
         lower,
       ) ||

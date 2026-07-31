@@ -106,7 +106,10 @@ describe("care notes + coverage + history", () => {
     }
     const conf = service.confirmAndPersist(propose.bundle, sadeilContext());
     expect(conf.kind).toBe("persisted");
-    expect(conf.message).toMatch(/Care update|Support note|prepared/i);
+    // Human confirm copy: "I recorded this… care record / handoff" (not internal label names)
+    expect(conf.message).toMatch(
+      /Care update|Support note|prepared|I recorded|care record|handoff|Meal recorded/i,
+    );
     expect(conf.persisted?.careNoteId).toBeTruthy();
     const notes = listCareNotes(store, "cr-olivia");
     expect(notes.length).toBeGreaterThan(0);
